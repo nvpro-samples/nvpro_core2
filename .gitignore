@@ -1,0 +1,13 @@
+# Directories to ignore
+build/
+cmake_build/
+_install/
+_bin/
+.vscode/
+
+# Files to ignore
+imgui.ini
+vk_new_latest.txt
+
+# Don't ignore zstd's build folder, which includes its CMake files.
+!/third_party/zstd/build

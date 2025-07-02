@@ -1,0 +1,413 @@
+/*
+ * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <cinttypes>
+#include <numeric>
+
+#include <nvutils/alignment.hpp>
+#include <nvutils/logger.hpp>
+#include <nvutils/timers.hpp>
+#include <nvvk/check_error.hpp>
+#include <nvvk/debug_util.hpp>
+
+#include "scene_rtx.hpp"
+#include "scene_vk.hpp"
+#include "tinygltf_utils.hpp"
+
+// Initialize the scene for ray tracing
+void nvvkgltf::SceneRtx::init(nvvk::ResourceAllocator* alloc)
+{
+  m_device         = alloc->getDevice();
+  m_physicalDevice = alloc->getPhysicalDevice();
+  m_alloc          = alloc;
+
+  // Requesting ray tracing properties
+  VkPhysicalDeviceProperties2 prop2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+  m_rtProperties.pNext = &m_rtASProperties;
+  prop2.pNext          = &m_rtProperties;
+  vkGetPhysicalDeviceProperties2(m_physicalDevice, &prop2);
+
+  m_blasBuilder = std::make_unique<nvvk::AccelerationStructureBuilder>();
+  m_blasBuilder->init(alloc);
+}
+
+// Create the acceleration structure
+void nvvkgltf::SceneRtx::create(VkCommandBuffer                      cmd,
+                                nvvk::StagingUploader&               staging,
+                                const nvvkgltf::Scene&               scn,
+                                const SceneVk&                       scnVk,
+                                VkBuildAccelerationStructureFlagsKHR flags)
+{
+  // Create the bottom-level acceleration structure
+  createBottomLevelAccelerationStructure(scn, scnVk, flags);
+
+  bool finished = false;
+  do
+  {
+    // This won't compact the BLAS, but will create the acceleration structure
+    finished = cmdBuildBottomLevelAccelerationStructure(cmd, 512'000'000);
+  } while(!finished);
+
+  cmdCreateBuildTopLevelAccelerationStructure(cmd, staging, scn);
+}
+
+// Get the top-level acceleration structure
+VkAccelerationStructureKHR nvvkgltf::SceneRtx::tlas()
+{
+  return m_tlasAccel.accel;
+}
+
+// Destroy the acceleration structure
+void nvvkgltf::SceneRtx::destroy()
+{
+  for(auto& blas : m_blasAccel)
+    m_alloc->destroyAcceleration(blas);
+
+  m_alloc->destroyBuffer(m_instancesBuffer);
+  destroyScratchBuffers();
+
+  m_alloc->destroyAcceleration(m_tlasAccel);
+  m_blasAccel     = {};
+  m_blasBuildData = {};
+  m_tlasAccel     = {};
+  m_tlasBuildData = {};
+  m_blasBuilder->deinit();
+  m_blasBuilder.reset();
+}
+
+// Destroy the scratch buffers
+void nvvkgltf::SceneRtx::destroyScratchBuffers()
+{
+  m_alloc->destroyBuffer(m_tlasScratchBuffer);
+  m_alloc->destroyBuffer(m_blasScratchBuffer);
+}
+
+//--------------------------------------------------------------------------------------------------
+// Converting a PrimitiveMesh as input for BLAS
+//
+// Convert a RenderPrimitive to an AccelerationStructureGeometryInfo
+// This function takes a RenderPrimitive and converts it into an AccelerationStructureGeometryInfo
+// The resulting structure is used to build the bottom-level acceleration structure (BLAS)
+//
+nvvk::AccelerationStructureGeometryInfo nvvkgltf::SceneRtx::renderPrimitiveToAsGeometry(const nvvkgltf::RenderPrimitive& prim,  // The RenderPrimitive to convert
+                                                                                        VkDeviceAddress vertexAddress,  // The device address of the vertex buffer
+                                                                                        VkDeviceAddress indexAddress)  // The device address of the index buffer
+{
+  nvvk::AccelerationStructureGeometryInfo result;
+  uint32_t                                numTriangles = prim.indexCount / 3;
+
+  // Describe buffer as array of VertexObj.
+  VkAccelerationStructureGeometryTrianglesDataKHR triangles{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR};
+  triangles.vertexFormat             = VK_FORMAT_R32G32B32_SFLOAT;  // vec3 vertex position data.
+  triangles.vertexData.deviceAddress = vertexAddress;
+  triangles.vertexStride             = sizeof(glm::vec3);
+  triangles.indexType                = VK_INDEX_TYPE_UINT32;
+  triangles.indexData.deviceAddress  = indexAddress;
+  triangles.maxVertex                = prim.vertexCount - 1;
+  //triangles.transformData; // Identity
+
+  // Identify the above data as containing opaque triangles.
+  result.geometry.sType              = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+  result.geometry.geometryType       = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+  result.geometry.flags              = VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR;
+  result.geometry.geometry.triangles = triangles;
+
+  result.rangeInfo.firstVertex     = 0;
+  result.rangeInfo.primitiveCount  = numTriangles;
+  result.rangeInfo.primitiveOffset = 0;
+  result.rangeInfo.transformOffset = 0;
+
+  return result;
+}
+
+//--------------------------------------------------------------------------------------------------
+// Create the bottom-level acceleration structure
+//
+// This function creates the bottom-level acceleration structure (BLAS)
+// It takes a nvvkgltf::Scene and a SceneVk object as input
+//
+
+void nvvkgltf::SceneRtx::createBottomLevelAccelerationStructure(const nvvkgltf::Scene& scene,  // The nvvkgltf::Scene object
+                                                                const SceneVk& sceneVk,        // The SceneVk object
+                                                                VkBuildAccelerationStructureFlagsKHR flags)  // The flags for the acceleration structure
+{
+  nvutils::ScopedTimer st(__FUNCTION__);
+
+  destroy();  // Make sure not to leave allocated buffers
+
+  auto& renderPrimitives = scene.getRenderPrimitives();
+
+  // BLAS - Storing each primitive in a geometry
+  m_blasBuildData.resize(renderPrimitives.size());
+  m_blasAccel.resize(m_blasBuildData.size());
+
+  // Retrieve the array of primitive buffers (see in SceneVk)
+  const auto& vertexBuffers = sceneVk.vertexBuffers();
+  const auto& indices       = sceneVk.indices();
+
+  for(uint32_t p_idx = 0; p_idx < renderPrimitives.size(); p_idx++)
+  {
+    auto& blasData  = m_blasBuildData[p_idx];
+    blasData.asType = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+
+    // Converting each primitive into the required format for the BLAS
+    VkDeviceAddress vertexAddress = vertexBuffers[p_idx].position.address;
+    VkDeviceAddress indexAddress  = indices[p_idx].address;
+    // Fill the BLAS information
+    auto geo = renderPrimitiveToAsGeometry(renderPrimitives[p_idx], vertexAddress, indexAddress);
+    blasData.addGeometry(geo);
+    VkAccelerationStructureBuildSizesInfoKHR sizeInfo = blasData.finalizeGeometry(m_device, flags);  // Will query the size of the resulting BLAS
+  }
+
+  // Create the bottom-level acceleration structure Builder and query pool for compaction
+  m_blasBuilder = std::make_unique<nvvk::AccelerationStructureBuilder>();
+  m_blasBuilder->init(m_alloc);
+}
+
+//--------------------------------------------------------------------------------------------------
+// Build the bottom-level acceleration structure
+//
+// This function builds the bottom-level acceleration structure (BLAS)
+// It takes a VkCommandBuffer and a VkDeviceSize as input
+//
+bool nvvkgltf::SceneRtx::cmdBuildBottomLevelAccelerationStructure(VkCommandBuffer cmd, VkDeviceSize hintMaxBudget /*= 512'000'000*/)
+{
+  nvutils::ScopedTimer st(__FUNCTION__);
+  assert(m_blasBuilder);
+
+  destroyScratchBuffers();
+
+  uint32_t minAlignment = m_rtASProperties.minAccelerationStructureScratchOffsetAlignment;
+  // 1) finding the largest scratch size
+  VkDeviceSize scratchSize = m_blasBuilder->getScratchSize(hintMaxBudget, m_blasBuildData);
+  // 2) allocating the scratch buffer
+  NVVK_CHECK(m_alloc->createBuffer(m_blasScratchBuffer, scratchSize,
+                                   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+                                       | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
+  NVVK_DBG_NAME(m_blasScratchBuffer.buffer);
+
+  std::span<nvvk::AccelerationStructureBuildData> blasBuildData(m_blasBuildData);
+  std::span<nvvk::AccelerationStructure>          blasAccel(m_blasAccel);
+
+  // Building all BLAS in parallel, as long as there are enough budget
+  VkResult result = m_blasBuilder->cmdCreateBlas(cmd, blasBuildData, blasAccel, m_blasScratchBuffer.address,
+                                                 m_blasScratchBuffer.bufferSize, hintMaxBudget);
+  if(result != VK_SUCCESS && result != VK_INCOMPLETE)
+  {
+    nvvk::CheckError::getInstance().check(result, "m_blasBuilder->cmdCreateBlas", __FILE__, __LINE__);
+    // must return true, otherwise calling function can do infinite loop
+    // although above should actually terminate the app
+    return true;
+  }
+  return result == VK_SUCCESS;
+}
+
+//--------------------------------------------------------------------------------------------------
+// Get the instance flag,
+// The instance flag is used to determine if the material is opaque or not, and if the material is double sided or not
+//
+VkGeometryInstanceFlagsKHR getInstanceFlag(const tinygltf::Material& mat)
+{
+  VkGeometryInstanceFlagsKHR         instanceFlags{};
+  KHR_materials_transmission         transmission        = tinygltf::utils::getTransmission(mat);
+  KHR_materials_volume               volume              = tinygltf::utils::getVolume(mat);
+  KHR_materials_diffuse_transmission diffuseTransmission = tinygltf::utils::getDiffuseTransmission(mat);
+
+  // Check if the material is opaque, if so, we can skip the anyhit
+  bool isOpaque = ((transmission.factor == 0.0f) && (mat.alphaMode == "OPAQUE")
+                   && (diffuseTransmission.diffuseTransmissionFactor == 0.0F));
+
+  // Always opaque, no need to use ANYHIT (faster)
+  if(isOpaque)
+  {
+    instanceFlags |= VK_GEOMETRY_INSTANCE_FORCE_OPAQUE_BIT_KHR;
+  }
+
+  // Need to skip the cull flag in traceray_rtx for double sided materials
+  if(mat.doubleSided == 1 || volume.thicknessFactor > 0.0F || transmission.factor > 0.0F)
+  {
+    instanceFlags |= VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+  }
+
+  return instanceFlags;
+}
+
+//--------------------------------------------------------------------------------------------------
+// Create the top-level acceleration structure from all the BLAS
+//
+void nvvkgltf::SceneRtx::cmdCreateBuildTopLevelAccelerationStructure(VkCommandBuffer        cmd,
+                                                                     nvvk::StagingUploader& staging,
+                                                                     const nvvkgltf::Scene& scene)
+{
+  nvutils::ScopedTimer st(__FUNCTION__);
+  const auto&          materials   = scene.getModel().materials;
+  const auto&          drawObjects = scene.getRenderNodes();
+
+  uint32_t instanceCount = static_cast<uint32_t>(drawObjects.size());
+
+  m_tlasInstances.clear();
+  m_tlasInstances.reserve(instanceCount);
+  for(const auto& object : drawObjects)
+  {
+    const tinygltf::Material&  mat           = materials[object.materialID];
+    VkGeometryInstanceFlagsKHR instanceFlags = getInstanceFlag(mat);
+
+    VkDeviceAddress blasAddress = m_blasAccel[object.renderPrimID].address;
+    if(!object.visible)
+      blasAddress = 0;  // The instance is added, but the BLAS is set to null making it invisible
+
+    VkAccelerationStructureInstanceKHR asInstance{};
+    asInstance.transform           = nvvk::toTransformMatrixKHR(object.worldMatrix);  // Position of the instance
+    asInstance.instanceCustomIndex = object.renderPrimID;                             // gl_InstanceCustomIndexEXT
+    asInstance.accelerationStructureReference         = blasAddress;                  // The reference to the BLAS
+    asInstance.instanceShaderBindingTableRecordOffset = 0;     // We will use the same hit group for all objects
+    asInstance.mask                                   = 0x01;  // Visibility mask
+    asInstance.flags                                  = instanceFlags;
+
+    // Storing the instance
+    m_tlasInstances.push_back(asInstance);
+  }
+
+  VkBuildAccelerationStructureFlagsKHR buildFlags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+  //if(scene.hasAnimation())
+  {
+    buildFlags |= VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+  }
+
+  // Create a buffer holding the actual instance data (matrices++) for use by the AS builder
+  NVVK_CHECK(m_alloc->createBuffer(m_instancesBuffer, std::span(m_tlasInstances).size_bytes(),
+                                   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+                                       | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR));
+  NVVK_CHECK(staging.appendBuffer(m_instancesBuffer, 0, std::span(m_tlasInstances)));
+  NVVK_DBG_NAME(m_instancesBuffer.buffer);
+
+  m_tlasBuildData.asType = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+  auto geo               = m_tlasBuildData.makeInstanceGeometry(m_tlasInstances.size(), m_instancesBuffer.address);
+  m_tlasBuildData.addGeometry(geo);
+
+  staging.cmdUploadAppended(cmd);
+
+  // Make sure the copy of the instance buffer are copied before triggering the acceleration structure build
+  nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
+
+  // Calculate the amount of scratch memory needed to build the TLAS
+  VkAccelerationStructureBuildSizesInfoKHR sizeInfo = m_tlasBuildData.finalizeGeometry(m_device, buildFlags);
+
+  // Create the scratch buffer needed during build of the TLAS
+  NVVK_CHECK(m_alloc->createBuffer(m_tlasScratchBuffer, sizeInfo.buildScratchSize,
+                                   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+                                       | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
+  NVVK_DBG_NAME(m_tlasScratchBuffer.buffer);
+
+  VkAccelerationStructureCreateInfoKHR createInfo = m_tlasBuildData.makeCreateInfo();
+  NVVK_CHECK(m_alloc->createAcceleration(m_tlasAccel, createInfo));
+  NVVK_DBG_NAME(m_tlasAccel.accel);
+
+
+  // Build the TLAS
+  m_tlasBuildData.cmdBuildAccelerationStructure(cmd, m_tlasAccel.accel, m_tlasScratchBuffer.address);
+
+  // Make sure to have the TLAS ready before using it
+  nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR, VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR);
+}
+
+
+// This function is called when the scene has been updated
+void nvvkgltf::SceneRtx::updateTopLevelAS(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scene)
+{
+  //nvh::ScopedTimer st(__FUNCTION__);
+  const std::vector<nvvkgltf::RenderNode>& drawObjects = scene.getRenderNodes();
+  const auto&                              materials   = scene.getModel().materials;
+
+  uint32_t numVisibleElement = 0;
+  // Updating all matrices
+  for(size_t i = 0; i < drawObjects.size(); i++)
+  {
+    auto&                     object      = drawObjects[i];
+    const tinygltf::Material& mat         = materials[object.materialID];
+    VkDeviceAddress           blasAddress = m_blasAccel[object.renderPrimID].address;
+
+    m_tlasInstances[i].transform = nvvk::toTransformMatrixKHR(object.worldMatrix);  // Position of the instance
+    m_tlasInstances[i].flags     = getInstanceFlag(mat);
+    m_tlasInstances[i].accelerationStructureReference = (object.visible ? blasAddress : 0);  // The reference to the BLAS
+    numVisibleElement += object.visible;
+  }
+
+  // Update the instance buffer
+  staging.appendBuffer(m_instancesBuffer, 0, std::span(m_tlasInstances));
+  staging.cmdUploadAppended(cmd);
+
+  // Make sure the copy of the instance buffer are copied before triggering the acceleration structure build
+  nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
+
+  if(m_tlasScratchBuffer.buffer == VK_NULL_HANDLE)
+  {
+    NVVK_CHECK(m_alloc->createBuffer(m_tlasScratchBuffer, m_tlasBuildData.sizeInfo.buildScratchSize,
+                                     VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT));
+    NVVK_DBG_NAME(m_tlasScratchBuffer.buffer);
+  }
+
+  // Building or updating the top-level acceleration structure
+  if(m_numVisibleElement != numVisibleElement)
+  {
+    m_tlasBuildData.cmdBuildAccelerationStructure(cmd, m_tlasAccel.accel, m_tlasScratchBuffer.address);
+  }
+  else
+  {
+    m_tlasBuildData.cmdUpdateAccelerationStructure(cmd, m_tlasAccel.accel, m_tlasScratchBuffer.address);
+  }
+
+  m_numVisibleElement = numVisibleElement;
+
+  // Make sure to have the TLAS ready before using it
+  nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR, VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR);
+}
+
+void nvvkgltf::SceneRtx::updateBottomLevelAS(VkCommandBuffer cmd, const nvvkgltf::Scene& scene)
+{
+  // #TODO - Check that primID aren't duplicated
+  for(auto& primID : scene.getMorphPrimitives())
+  {
+    m_blasBuildData[primID].cmdUpdateAccelerationStructure(cmd, m_blasAccel[primID].accel, m_blasScratchBuffer.address);
+  }
+  for(auto& skinNode : scene.getSkinNodes())  // Update the BLAS
+  {
+    int primID = scene.getRenderNodes()[skinNode].renderPrimID;
+    m_blasBuildData[primID].cmdUpdateAccelerationStructure(cmd, m_blasAccel[primID].accel, m_blasScratchBuffer.address);
+  }
+}
+
+VkResult nvvkgltf::SceneRtx::cmdCompactBlas(VkCommandBuffer cmd)
+{
+  nvutils::ScopedTimer st(__FUNCTION__ + std::string("\n"));
+
+  std::span<nvvk::AccelerationStructureBuildData> blasBuildData(m_blasBuildData);
+  std::span<nvvk::AccelerationStructure>          blasAccel(m_blasAccel);
+
+  VkResult result = m_blasBuilder->cmdCompactBlas(cmd, blasBuildData, blasAccel);
+
+  auto stats = m_blasBuilder->getStatistics().toString();
+  LOGI("%s%s\n", nvutils::ScopedTimer::indent().c_str(), stats.c_str());
+  return result;
+}
+
+void nvvkgltf::SceneRtx::destroyNonCompactedBlas()
+{
+  m_blasBuilder->destroyNonCompactedBlas();
+}
