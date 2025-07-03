@@ -87,7 +87,10 @@ void nvvkgltf::SceneRtx::destroy()
   m_blasBuildData = {};
   m_tlasAccel     = {};
   m_tlasBuildData = {};
-  m_blasBuilder->deinit();
+  if(m_blasBuilder)
+  {
+    m_blasBuilder->deinit();
+  }
   m_blasBuilder.reset();
 }
 
