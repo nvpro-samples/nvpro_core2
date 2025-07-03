@@ -18,6 +18,7 @@
  */
 
 #pragma once
+#include <cassert>
 #include <string>
 #include <sstream>
 #include <queue>
@@ -67,10 +68,13 @@ This function converts a `glm::mat4` matrix to the matrix format required by acc
 // Helper function to insert a memory barrier for acceleration structures
 inline void accelerationStructureBarrier(VkCommandBuffer cmd, VkAccessFlags src, VkAccessFlags dst)
 {
+  assert(src == VK_ACCESS_TRANSFER_WRITE_BIT || src == VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
+  assert(dst == VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR || dst == VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
+
   VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
   barrier.srcAccessMask = src;
   barrier.dstAccessMask = dst;
-  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+  vkCmdPipelineBarrier(cmd, src == VK_ACCESS_TRANSFER_WRITE_BIT ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
                        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &barrier, 0, nullptr, 0, nullptr);
 }
 
