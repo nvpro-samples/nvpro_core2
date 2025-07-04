@@ -290,21 +290,15 @@ bool InputIntClamped(const char* label, int* v, int min, int max, int step, int 
   int  tv      = *v;
   bool changed = entry(
       label,
-      [&] {
-        return Clamped(ImGui::InputInt("##hidden", &tv, step, step_fast, (flags & ~ImGuiInputTextFlags_EnterReturnsTrue)),
-                       v, min, max);
-      },
-      tooltip);
+      [&] { return ImGui::InputInt("##hidden", &tv, step, step_fast, (flags & ~ImGuiInputTextFlags_EnterReturnsTrue)); }, tooltip);
 
-  if(changed && (!(flags & ImGuiInputTextFlags_EnterReturnsTrue) || (ImGui::IsItemDeactivatedAfterEdit() || ImGui::IsItemClicked())))
+  changed = changed
+            && (!(flags & ImGuiInputTextFlags_EnterReturnsTrue) || (ImGui::IsItemDeactivatedAfterEdit() || ImGui::IsItemClicked()));
+  if(changed)
   {
     *v = tv;
-    return true;
   }
-  else
-  {
-    return false;
-  }
+  return Clamped(changed, v, min, max);
 }
 bool InputInt2(const char* label, int v[2], ImGuiInputTextFlags flags, const std::string& tooltip)
 {
