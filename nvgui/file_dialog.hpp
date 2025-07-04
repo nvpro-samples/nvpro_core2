@@ -23,11 +23,14 @@
 #include <filesystem>
 
 // The API
+
+struct GLFWwindow;
+
 namespace nvgui {
 
 // opens a file chooser dialog and returns the selected path as a string
-std::filesystem::path windowOpenFileDialog(struct GLFWwindow* glfwin, const char* title, const char* exts);
+std::filesystem::path windowOpenFileDialog(GLFWwindow* glfwin, const char* title, const char* exts);
 // opens a file chooser dialog and returns the selected path as a string
-std::filesystem::path windowSaveFileDialog(struct GLFWwindow* glfwin, const char* title, const char* exts);
+std::filesystem::path windowSaveFileDialog(GLFWwindow* glfwin, const char* title, const char* exts);
 
 };  // namespace nvgui
