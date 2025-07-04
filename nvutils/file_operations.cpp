@@ -167,19 +167,19 @@ std::filesystem::path nvutils::pathFromUtf8(const char* utf8) noexcept
     const size_t utf8Bytes = strlen(utf8);
     if(utf8Bytes == 0)
     {
-      return "";
+      return L"";
     }
     if(utf8Bytes > std::numeric_limits<int>::max())
     {
       LOGE("%s: Input had too many characters to store in an int.\n", __func__);
-      return "";
+      return L"";
     }
     const int utf8BytesI      = static_cast<int>(utf8Bytes);
     const int utf16Characters = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8, utf8BytesI, nullptr, 0);
     if(utf16Characters <= 0)
     {
       LOGE("%s: MultiByteToWideChar failed. The input is probably not valid UTF-8.\n", __func__);
-      return "";
+      return L"";
     }
     static_assert(std::is_same_v<std::filesystem::path::string_type, std::wstring>);
     std::wstring result(utf16Characters, wchar_t(0));
@@ -192,7 +192,11 @@ std::filesystem::path nvutils::pathFromUtf8(const char* utf8) noexcept
   catch(const std::exception& e)
   {
     LOGE("%s threw an exception: %s\n", __func__, e.what());
+#ifdef _WIN32  // Avoid _convert_narrow_to_wide, just in case
+    return L"";
+#else
     return "";
+#endif
   }
 }
 

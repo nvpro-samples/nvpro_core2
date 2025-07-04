@@ -19,8 +19,9 @@
 
 
 #include <csignal>
-#include <stdexcept>
 #include <cstring>
+#include <sstream>
+#include <stdexcept>
 #include <unordered_set>
 
 #include <volk.h>
@@ -547,8 +548,10 @@ VkResult nvvk::Context::printVulkanVersion()
 {
   uint32_t version;
   NVVK_FAIL_RETURN(vkEnumerateInstanceVersion(&version));
-  LOGI("\n_________________________________________________\n");
-  LOGI("Vulkan Version:  %d.%d.%d\n", VK_VERSION_MAJOR(version), VK_VERSION_MINOR(version), VK_VERSION_PATCH(version));
+  LOGI(
+      "\n_________________________________________________\n"
+      "Vulkan Version:  %d.%d.%d\n",
+      VK_VERSION_MAJOR(version), VK_VERSION_MINOR(version), VK_VERSION_PATCH(version));
   return VK_SUCCESS;
 }
 
@@ -560,13 +563,18 @@ VkResult nvvk::Context::printInstanceLayers()
   NVVK_FAIL_RETURN(vkEnumerateInstanceLayerProperties(&count, nullptr));
   layerProperties.resize(count);
   NVVK_FAIL_RETURN(vkEnumerateInstanceLayerProperties(&count, layerProperties.data()));
-  LOGI("_________________________________________________\n");
-  LOGI("Available Instance Layers :\n");
+  std::stringstream textBlock;
   for(auto& it : layerProperties)
   {
-    LOGI("%s (v. %d.%d.%d %x) : %s\n", it.layerName, VK_VERSION_MAJOR(it.specVersion), VK_VERSION_MINOR(it.specVersion),
-         VK_VERSION_PATCH(it.specVersion), it.implementationVersion, it.description);
+    textBlock << it.layerName << " (v. " << VK_VERSION_MAJOR(it.specVersion) << '.' << VK_VERSION_MINOR(it.specVersion) << '.'
+              << VK_VERSION_PATCH(it.specVersion) << ' ' << it.implementationVersion << ") : " << it.description << '\n';
   }
+  LOGI(
+      "\n"
+      "_________________________________________________\n"
+      "Available Instance Layers :\n"
+      "%s",
+      textBlock.str().c_str());
   return VK_SUCCESS;
 }
 
@@ -581,13 +589,18 @@ VkResult nvvk::Context::printInstanceExtensions(const std::vector<const char*> e
   NVVK_FAIL_RETURN(vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr));
   extensionProperties.resize(count);
   NVVK_FAIL_RETURN(vkEnumerateInstanceExtensionProperties(nullptr, &count, extensionProperties.data()));
-  LOGI("_________________________________________________\n");
-  LOGI("Available Instance Extensions :\n");
+  std::stringstream textBlock;
   for(const VkExtensionProperties& it : extensionProperties)
   {
-    LOGI("[%s] ", (exist.find(it.extensionName) != exist.end()) ? "x" : " ");
-    LOGI("%s (v. %d)\n", it.extensionName, it.specVersion);
+    const char exists = ((exist.find(it.extensionName) != exist.end()) ? 'x' : ' ');
+    textBlock << '[' << exists << "] " << it.extensionName << " (v. " << it.specVersion << ")\n";
   }
+  LOGI(
+      "\n"
+      "_________________________________________________\n"
+      "Available Instance Extensions :\n"
+      "%s",
+      textBlock.str().c_str());
   return VK_SUCCESS;
 }
 
@@ -615,12 +628,18 @@ VkResult nvvk::Context::printDeviceExtensions(VkPhysicalDevice physicalDevice, c
   NVVK_FAIL_RETURN(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, nullptr));
   extensionProperties.resize(count);
   NVVK_FAIL_RETURN(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, extensionProperties.data()));
-  LOGI("_________________________________________________\n");
-  LOGI("Available Device Extensions :\n");
+  std::stringstream textBlock;
   for(const VkExtensionProperties& it : extensionProperties)
   {
-    LOGI("[%s] %s (v. %d)\n", (exist.find(it.extensionName) != exist.end()) ? "x" : " ", it.extensionName, it.specVersion);
+    const char exists = ((exist.find(it.extensionName) != exist.end()) ? 'x' : ' ');
+    textBlock << '[' << exists << "] " << it.extensionName << " (v. " << it.specVersion << ")\n";
   }
+  LOGI(
+      "\n"
+      "_________________________________________________\n"
+      "Available Device Extensions :\n"
+      "%s",
+      textBlock.str().c_str());
   return VK_SUCCESS;
 }
 
@@ -630,15 +649,20 @@ VkResult nvvk::Context::printGpus(VkInstance instance, VkPhysicalDevice usedGpu)
   NVVK_FAIL_RETURN(vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr));
   std::vector<VkPhysicalDevice> gpus(deviceCount);
   NVVK_FAIL_RETURN(vkEnumeratePhysicalDevices(instance, &deviceCount, gpus.data()));
-  LOGI("_________________________________________________\n");
-  LOGI("Available GPUs: %d\n", deviceCount);
 
+  std::stringstream          textBlock;
   VkPhysicalDeviceProperties properties;
   for(uint32_t d = 0; d < deviceCount; d++)
   {
     vkGetPhysicalDeviceProperties(gpus[d], &properties);
-    LOGI(" - %d) %s\n", d, properties.deviceName);
+    textBlock << " - " << d << ") " << properties.deviceName << "\n";
   }
+  LOGI(
+      "\n"
+      "_________________________________________________\n"
+      "Available GPUs: %d\n"
+      "%s",
+      deviceCount, textBlock.str().c_str());
   if(usedGpu == VK_NULL_HANDLE)
   {
     LOGE("No compatible GPU\n");
