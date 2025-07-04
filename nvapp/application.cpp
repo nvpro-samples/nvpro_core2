@@ -260,6 +260,8 @@ void nvapp::Application::close()
 void nvapp::Application::run()
 {
   LOGI("Running application\n");
+  // Re-load ImGui settings from disk, as there might be application elements with settings to restore.
+  ImGui::LoadIniSettingsFromDisk(m_iniFilename.c_str());
 
   // Handle headless mode
   if(m_headless)
