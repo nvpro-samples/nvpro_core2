@@ -212,6 +212,8 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
     subAllocation.allocator = this;
 #endif
 
+    // dedicated blocks are _not_ thrown into the active block list (m_activeBlockIndex)
+
     return VK_SUCCESS;
   }
 
@@ -235,11 +237,15 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
   uint32_t allocatorUnits = static_cast<uint32_t>((sizeAllocate + m_info.minAlignment - 1) / m_info.minAlignment);
 
 
+  // iterate over active blocks to find allocation
+
   uint32_t activeBlockIndex = m_activeBlockIndex;
 
   while(activeBlockIndex != INVALID_BLOCK_INDEX)
   {
     Block& block = m_blocks[activeBlockIndex];
+
+    // attempt to sub allocate from active blocks
 
     OffsetAllocator::Allocation allocation = block.offsetAllocator->allocate(allocatorUnits);
 
@@ -267,8 +273,9 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
     return VK_ERROR_OUT_OF_DEVICE_MEMORY;
   }
 
-  // add new block
   {
+    // add new block
+
     uint32_t freeBlockIndex = acquireBlockIndex();
 
     Block& block = m_blocks[freeBlockIndex];
@@ -276,28 +283,29 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
     NVVK_FAIL_RETURN(createNewBuffer(block.buffer, VkDeviceSize(m_internalBlockUnits) * m_info.minAlignment,
                                      m_info.minAlignment, freeBlockIndex));
 
+    // insert block into active block list
     if(m_activeBlockIndex != INVALID_BLOCK_INDEX)
     {
       m_blocks[m_activeBlockIndex].prevActiveIndex = freeBlockIndex;
     }
 
     block.nextActiveIndex = m_activeBlockIndex;
-    m_activeBlockIndex    = freeBlockIndex;
+
+    // make it new list head
+    m_activeBlockIndex = freeBlockIndex;
     m_activeBlockCount++;
-  }
 
-  // sub allocate from last block
-  {
-    Block& it = m_blocks.back();
 
-    OffsetAllocator::Allocation allocation = it.offsetAllocator->allocate(allocatorUnits);
+    // sub allocate from new block
+
+    OffsetAllocator::Allocation allocation = block.offsetAllocator->allocate(allocatorUnits);
 
     if(allocation.offset != OffsetAllocator::Allocation::NO_SPACE)
     {
       subAllocation.allocation        = allocation;
       subAllocation.size              = static_cast<uint32_t>(size);
       subAllocation.alignmentMinusOne = alignment - 1;
-      subAllocation.block             = uint16_t(m_blocks.size() - 1);
+      subAllocation.block             = uint16_t(freeBlockIndex);
 #ifdef _DEBUG
       subAllocation.allocator = this;
 #endif

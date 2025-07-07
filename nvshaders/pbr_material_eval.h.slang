@@ -339,10 +339,10 @@ PbrMaterial evaluateMaterial(in GltfShadeMaterial material, MeshState state, Sam
   if(needsTangentUpdate)
   {
     // Ensure T, B, and N are orthonormal
-    pbrMat.B            = cross(pbrMat.N, pbrMat.T);
+    pbrMat.B            = normalize(cross(pbrMat.N, pbrMat.T));
     float bitangentSign = sign(dot(state.B, pbrMat.B));
     pbrMat.B            = pbrMat.B * bitangentSign;
-    pbrMat.T            = cross(pbrMat.B, pbrMat.N) * bitangentSign;
+    pbrMat.T            = normalize(cross(pbrMat.B, pbrMat.N) * bitangentSign);
   }
 
   // KHR_materials_sheen

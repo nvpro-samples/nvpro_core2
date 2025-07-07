@@ -61,9 +61,12 @@ nvutils::IDPool& IDPool::operator=(IDPool&& other) noexcept
 // most of the following code is taken from Emil Persson's MakeID
 // http://www.humus.name/3D/MakeID.h (v1.02)
 
-void IDPool::init(const uint32_t maxID)
+void IDPool::init(const uint32_t poolSize)
 {
   assert(!m_ranges && "init called multiple times");
+  assert(poolSize);
+
+  uint32_t maxID = poolSize - 1;
 
   // Start with a single range, from 0 to max allowed ID (specified)
   m_ranges = static_cast<Range*>(::malloc(sizeof(Range)));
@@ -78,10 +81,10 @@ void IDPool::init(const uint32_t maxID)
 
 void IDPool::destroyAll()
 {
-  uint32_t maxID = m_maxID;
-  m_usedIDs      = 0;
+  uint32_t poolSize = m_maxID + 1;
+  m_usedIDs         = 0;
   deinit();
-  init(maxID);
+  init(poolSize);
 }
 
 void IDPool::deinit()
@@ -336,7 +339,7 @@ void IDPool::destroyRange(const uint32_t index)
 static void usage_IDPool()
 {
   // let's allow up to 16-bit worth of textures
-  nvutils::IDPool idGen(0xFFFF);
+  nvutils::IDPool idGen(1 << 16);
 
   uint32_t bindlessTextureID;
   idGen.createID(bindlessTextureID);

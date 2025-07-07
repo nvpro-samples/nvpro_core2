@@ -32,7 +32,11 @@ class IDPool
 
 public:
   IDPool() = default;
-  IDPool(uint32_t maxID) { init(maxID); }
+
+  // number of elements in pool
+  // poolSize must be >= 1
+  // highest id is `poolSize-1`
+  IDPool(uint32_t poolSize) { init(poolSize); }
 
   IDPool(const IDPool& other)            = delete;
   IDPool& operator=(const IDPool& other) = delete;
@@ -42,8 +46,10 @@ public:
 
   ~IDPool() { deinit(); }
 
-  // `maxID` is the highest ID value, e.g. `0xFFFF` for 16 bit
-  void init(const uint32_t maxID);
+  // number of elements in pool
+  // poolSize must be >= 1
+  // highest id is `poolSize-1`
+  void init(const uint32_t poolSize);
   void deinit();
 
   // operations return true on success

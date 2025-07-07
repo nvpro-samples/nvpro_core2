@@ -127,7 +127,8 @@ void AccelerationStructureBuildData::cmdBuildAccelerationStructure(VkCommandBuff
   buildInfo.srcAccelerationStructure  = VK_NULL_HANDLE;
   buildInfo.dstAccelerationStructure  = accelerationStructure;
   buildInfo.scratchData.deviceAddress = scratchAddress;
-  buildInfo.pGeometries = asGeometry.data();  // In case the structure was copied, we need to update the pointer
+  buildInfo.pGeometries   = asGeometry.data();  // In case the structure was copied, we need to update the pointer
+  buildInfo.geometryCount = static_cast<uint32_t>(asGeometry.size());
 
   vkCmdBuildAccelerationStructuresKHR(cmd, 1, &buildInfo, &rangeInfo);
 
