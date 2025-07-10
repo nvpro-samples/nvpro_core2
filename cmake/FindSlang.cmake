@@ -12,7 +12,7 @@
 #
 # Creates an imported library, `Slang`, that can be linked against.
 
-set(Slang_VERSION "2025.6.3")
+set(Slang_VERSION "2025.12.1")
 
 string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" ARCH_PROC)
 if(ARCH_PROC MATCHES "^(arm|aarch64)")
@@ -83,6 +83,14 @@ find_program(Slang_SLANGC_EXECUTABLE
   DOC "Slang compiler (slangc)"
 )
 mark_as_advanced(Slang_SLANGC_EXECUTABLE)
+
+find_program(Slang_SLANGD_EXECUTABLE
+  NAMES slangd
+  HINTS ${Slang_SOURCE_DIR}/bin
+  NO_DEFAULT_PATH
+  DOC "Slang language server (slangd)"
+)
+mark_as_advanced(Slang_SLANGD_EXECUTABLE)
 
 find_library(Slang_LIBRARY
   NAMES slang

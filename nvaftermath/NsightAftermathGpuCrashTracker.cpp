@@ -147,7 +147,7 @@ void GpuCrashTracker::OnResolveMarker(const void* pMarkerData, const uint32_t ma
 // Helper for writing a GPU crash dump to a file
 void GpuCrashTracker::WriteGpuCrashDumpToFile(const void* pGpuCrashDump, const uint32_t gpuCrashDumpSize)
 {
-  LOGE("--------------------------------------------------------------\n");
+  LOGW("--------------------------------------------------------------\n");
 
   // Create a GPU crash dump decoder object for the GPU crash dump.
   GFSDK_Aftermath_GpuCrashDump_Decoder decoder = {};
@@ -188,7 +188,7 @@ void GpuCrashTracker::WriteGpuCrashDumpToFile(const void* pGpuCrashDump, const u
     dumpFile.write((const char*)pGpuCrashDump, gpuCrashDumpSize);
     dumpFile.close();
   }
-  LOGE("Writing Aftermath dump file to:\n  %s\n", nvutils::utf8FromPath(crashDumpFileName).c_str());
+  LOGW("Writing Aftermath dump file to:\n  %s\n", nvutils::utf8FromPath(crashDumpFileName).c_str());
 
   // Decode the crash dump to a JSON string.
   // Step 1: Generate the JSON and get the size.
@@ -209,11 +209,11 @@ void GpuCrashTracker::WriteGpuCrashDumpToFile(const void* pGpuCrashDump, const u
     jsonFile.write(json.data(), json.size() - 1);
     jsonFile.close();
   }
-  LOGE("Writing JSON dump file to:\n  %s\n", nvutils::utf8FromPath(jsonFileName).c_str());
+  LOGW("Writing JSON dump file to:\n  %s\n", nvutils::utf8FromPath(jsonFileName).c_str());
 
   // Destroy the GPU crash dump decoder object.
   AFTERMATH_CHECK_ERROR(GFSDK_Aftermath_GpuCrashDump_DestroyDecoder(decoder));
-  LOGE("--------------------------------------------------------------\n");
+  LOGW("--------------------------------------------------------------\n");
 }
 
 // Helper for writing shader debug information to a file
@@ -232,7 +232,7 @@ void GpuCrashTracker::WriteShaderDebugInformationToFile(GFSDK_Aftermath_ShaderDe
   {
     f.write((const char*)pShaderDebugInfo, shaderDebugInfoSize);
   }
-  LOGE("Saved %s\n", nvutils::utf8FromPath(filePath).c_str());
+  LOGW("Saved %s\n", nvutils::utf8FromPath(filePath).c_str());
 }
 
 

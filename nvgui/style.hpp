@@ -30,7 +30,7 @@ namespace nvgui {
 // Setting a dark style for the GUI
 // The colors were coded in sRGB color space, set the useLinearColor
 // flag to convert to linear color space.
-void setStyle(bool useLinearColor)
+inline void setStyle(bool useLinearColor)
 {
   typedef ImVec4 (*srgbFunction)(float, float, float, float);
   srgbFunction passthrough = [](float r, float g, float b, float a) -> ImVec4 { return ImVec4(r, g, b, a); };

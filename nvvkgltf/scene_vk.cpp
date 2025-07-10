@@ -494,8 +494,7 @@ bool updateAttributeBuffer(VkCommandBuffer            cmd,            // Command
                            const tinygltf::Primitive& primitive,      // GLTF primitive
                            nvvk::ResourceAllocator*   alloc,          // Allocator to create the buffer
                            nvvk::StagingUploader*     staging,
-                           nvvk::Buffer&              attributeBuffer,  // Buffer to be created
-                           VkBufferUsageFlags         extraUsageFlag = 0)       // Usage flag for the buffer
+                           nvvk::Buffer&              attributeBuffer)  // Buffer to be created
 {
   const auto& findResult = primitive.attributes.find(attributeName);
   if(findResult != primitive.attributes.end())
@@ -510,7 +509,9 @@ bool updateAttributeBuffer(VkCommandBuffer            cmd,            // Command
 
     if(attributeBuffer.buffer == VK_NULL_HANDLE)
     {
-      VkBufferUsageFlags bufferUsageFlag = s_bufferUsageFlag | extraUsageFlag;  // Used for vertex input
+      // We add VK_BUFFER_USAGE_VERTEX_BUFFER_BIT so it can be bound to
+      // a vertex input binding:
+      VkBufferUsageFlags bufferUsageFlag = s_bufferUsageFlag | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
       NVVK_CHECK(alloc->createBuffer(attributeBuffer, std::span(data).size_bytes(), bufferUsageFlag));
       NVVK_CHECK(staging->appendBuffer(attributeBuffer, 0, std::span(data)));
       return true;
@@ -547,8 +548,7 @@ void nvvkgltf::SceneVk::createVertexBuffers(VkCommandBuffer cmd, nvvk::StagingUp
     const tinygltf::Mesh&      mesh          = model.meshes[scn.getRenderPrimitive(primID).meshID];
     VertexBuffers&             vertexBuffers = m_vertexBuffers[primID];
 
-    updateAttributeBuffer<glm::vec3>(cmd, "POSITION", model, primitive, m_alloc, &staging, vertexBuffers.position,
-                                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    updateAttributeBuffer<glm::vec3>(cmd, "POSITION", model, primitive, m_alloc, &staging, vertexBuffers.position);
     updateAttributeBuffer<glm::vec3>(cmd, "NORMAL", model, primitive, m_alloc, &staging, vertexBuffers.normal);
     updateAttributeBuffer<glm::vec2>(cmd, "TEXCOORD_0", model, primitive, m_alloc, &staging, vertexBuffers.texCoord0);
     updateAttributeBuffer<glm::vec2>(cmd, "TEXCOORD_1", model, primitive, m_alloc, &staging, vertexBuffers.texCoord1);
@@ -582,7 +582,8 @@ void nvvkgltf::SceneVk::createVertexBuffers(VkCommandBuffer cmd, nvvk::StagingUp
         assert(!"Unknown color type");
       }
 
-      NVVK_CHECK(m_alloc->createBuffer(vertexBuffers.color, std::span(tempIntData).size_bytes(), s_bufferUsageFlag));
+      NVVK_CHECK(m_alloc->createBuffer(vertexBuffers.color, std::span(tempIntData).size_bytes(),
+                                       s_bufferUsageFlag | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT));
       NVVK_CHECK(staging.appendBuffer(vertexBuffers.color, 0, std::span(tempIntData)));
     }
 

@@ -23,10 +23,6 @@ target_include_directories(${LIB_NAME} PUBLIC ${PARENT_DIR})
 
 if(WIN32)
   target_compile_definitions(${LIB_NAME} PRIVATE WIN32_LEAN_AND_MEAN)
-  # This propagates the /INCLUDE:NvOptimusEnablement linker option to any target
-  # that links against the nvgl library. It ensures that the NVIDIA Optimus
-  # driver detects the application and uses the high-performance GPU.
-  target_link_options(${LIB_NAME} INTERFACE /INCLUDE:NvOptimusEnablement)
 endif()
 
 target_link_libraries(

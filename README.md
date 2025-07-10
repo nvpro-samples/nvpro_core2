@@ -18,7 +18,7 @@ Vulkan:
 
 OpenGL:
 - [**nvgl**](nvgl): OpenGL helper functions and legacy application framework
-- 
+
 Generic:
 - [**nvutils**](nvutils): Utility functions and common data structures
 - [**nvgui**](nvgui): GUI components and ImGui integration

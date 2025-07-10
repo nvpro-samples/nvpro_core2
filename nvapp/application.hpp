@@ -159,6 +159,10 @@ struct ApplicationCreateInfo
   // Headless
   bool     headless{false};        // Run without a window
   uint32_t headlessFrameCount{1};  // Frames to render in headless mode
+
+  // Swapchain
+  // VK_PRESENT_MODE_MAX_ENUM_KHR means no preference
+  VkPresentModeKHR preferredVsyncOffMode = VK_PRESENT_MODE_MAX_ENUM_KHR;
 };
 
 

@@ -27,20 +27,22 @@
 #include "swapchain.hpp"
 
 
-VkResult nvvk::Swapchain::init(VkPhysicalDevice physicalDevice, VkDevice device, const QueueInfo& queue, VkSurfaceKHR surface, VkCommandPool cmdPool)
+VkResult nvvk::Swapchain::init(const InitInfo& info)
 {
-  m_physicalDevice = physicalDevice;
-  m_device         = device;
-  m_queue          = queue;
-  m_surface        = surface;
-  m_cmdPool        = cmdPool;
+  m_physicalDevice        = info.physicalDevice;
+  m_device                = info.device;
+  m_queue                 = info.queue;
+  m_surface               = info.surface;
+  m_cmdPool               = info.cmdPool;
+  m_preferredVsyncOffMode = info.preferredVsyncOffMode;
 
   VkBool32 supportsPresent = VK_FALSE;
-  VkResult result = vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, queue.familyIndex, surface, &supportsPresent);
+  VkResult result =
+      vkGetPhysicalDeviceSurfaceSupportKHR(info.physicalDevice, info.queue.familyIndex, info.surface, &supportsPresent);
 
   if(supportsPresent != VK_TRUE)
   {
-    LOGW("Selected queue family %d cannot present on surface %px. Swapchain creation failed.\n", queue.familyIndex, surface);
+    LOGW("Selected queue family %d cannot present on surface %px. Swapchain creation failed.\n", info.queue.familyIndex, info.surface);
     return VK_ERROR_INITIALIZATION_FAILED;
   }
   return result;
@@ -304,6 +306,9 @@ VkPresentModeKHR nvvk::Swapchain::selectSwapPresentMode(const std::vector<VkPres
 
   for(VkPresentModeKHR mode : availablePresentModes)
   {
+    if(mode == m_preferredVsyncOffMode)
+      return mode;
+
     if(mode == VK_PRESENT_MODE_MAILBOX_KHR)
       mailboxSupported = true;
     if(mode == VK_PRESENT_MODE_IMMEDIATE_KHR)

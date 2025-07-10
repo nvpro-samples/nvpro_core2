@@ -48,14 +48,6 @@
 #include <stb_image_write.h>
 
 
-// Executables (but not DLLs) exporting this symbol with this value will be
-// automatically directed to the high-performance GPU on Nvidia Optimus systems
-// with up-to-date drivers
-//
-extern "C" {
-__declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
-}
-
 // from https://docs.microsoft.com/en-us/windows/desktop/gdi/capturing-an-image
 
 static int CaptureAnImage(HWND hWnd, const char* filename)

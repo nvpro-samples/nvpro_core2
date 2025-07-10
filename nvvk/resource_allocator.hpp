@@ -30,7 +30,9 @@
 // to find resource creations that lack an appropriate destroy.
 // VMA will report allocations as "nvvkAllocID: <uint32_t id>"
 #include <nvutils/logger.hpp>
-#define VMA_LEAK_LOG_FORMAT(format, ...) LOGW(format, __VA_ARGS__)
+#define VMA_LEAK_LOG_FORMAT(format, ...)                                                                               \
+  LOGW(format, __VA_ARGS__);                                                                                           \
+  LOGW("\n")
 #endif
 
 #ifndef VMA_ASSERT_LEAK

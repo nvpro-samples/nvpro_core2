@@ -36,7 +36,7 @@ public:
   void setCallbackFunction(Callback&& callback) { m_callback = std::forward<Callback>(callback); }
 
   // If result is an error, logs an error with the given expression, file,
-  // and line, calls the callback, and asserts false.
+  // and line, calls the callback, and asserts false and always calls exit(EXIT_FAILURE).
   void check(VkResult result, const char* expression, const char* file, int line);
 
   // Same as `check`, but is "recoverable"; prints an error and returns the value.
@@ -55,8 +55,8 @@ private:
 
 // Use NVVK_CHECK to check the result of a Vulkan function call.
 // If the input is an error, it will print an error message, call the
-// callback function, and assert -- basically treating errors as fatal.
-// Future versions of nvpro_core2 may call exit(EXIT_FAILURE) as well.
+// callback function, and assert as well as call exit(EXIT_FAILURE)
+// -- basically treating errors as fatal.
 #define NVVK_CHECK(vkFnc)                                                                                              \
   {                                                                                                                    \
     const VkResult checkResult = (vkFnc);                                                                              \

@@ -57,8 +57,18 @@ public:
   }
   VkSemaphore getRenderFinishedSemaphore() const { return m_frameResources[m_frameImageIndex].renderFinishedSemaphore; }
 
+  struct InitInfo
+  {
+    VkPhysicalDevice physicalDevice{};
+    VkDevice         device{};
+    QueueInfo        queue{};
+    VkSurfaceKHR     surface{};
+    VkCommandPool    cmdPool{};
+    VkPresentModeKHR preferredVsyncOffMode = VK_PRESENT_MODE_MAX_ENUM_KHR;  // Using this mode when != VK_PRESENT_MODE_MAX_ENUM_KHR
+  };
+
   // Initialize the swapchain with the provided context and surface, then we can create and re-create it
-  VkResult init(VkPhysicalDevice physicalDevice, VkDevice device, const QueueInfo& queue, VkSurfaceKHR surface, VkCommandPool cmdPool);
+  VkResult init(const InitInfo& info);
 
   // Destroy internal resources and reset its initial state
   void deinit();
@@ -95,6 +105,7 @@ public:
   -*/
   void presentFrame(VkQueue queue);
 
+
 private:
   // Represents an image within the swapchain that can be rendered to.
   struct Image
@@ -118,8 +129,10 @@ private:
   /*--
    * The present mode is chosen based on the vSync option
    * The FIFO mode is the most common, and is used when vSync is enabled.
-   * The MAILBOX mode is used when vSync is disabled, and is the best mode for triple buffering.
+   * The `preferredVsyncOffMode` is used when vSync is disabled and the mode is supported.
+   * Otherwise:
    * The IMMEDIATE mode is used when vSync is disabled, and is the best mode for low latency.
+   * The MAILBOX mode is used when vSync is disabled, and is the best mode for triple buffering.
   -*/
   VkPresentModeKHR selectSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes, bool vSync = true);
 
@@ -140,6 +153,8 @@ private:
   uint32_t                    m_frameResourceIndex = 0;  // Current frame index, cycles through frame resources
   uint32_t                    m_frameImageIndex    = 0;  // Index of the swapchain image we're currently rendering to
   bool                        m_needRebuild        = false;  // Flag indicating if the swapchain needs to be rebuilt
+
+  VkPresentModeKHR m_preferredVsyncOffMode = VK_PRESENT_MODE_MAX_ENUM_KHR;  // used if available
 
   uint32_t m_maxFramesInFlight = 3;  // Best for pretty much all cases
 };

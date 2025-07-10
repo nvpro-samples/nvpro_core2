@@ -22,6 +22,7 @@
 #include "nvutils/logger.hpp"
 
 #include <cassert>
+#include <cstdlib>
 #include <vulkan/vk_enum_string_helper.h>  // For string_VkResult
 
 namespace nvvk {
@@ -37,6 +38,7 @@ void CheckError::check(VkResult result, const char* expression, const char* file
       m_callback(result);
     }
     assert((result >= 0) && errMsg);
+    exit(EXIT_FAILURE);
   }
 }
 

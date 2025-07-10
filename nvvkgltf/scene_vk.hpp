@@ -56,13 +56,14 @@ public:
   };
 
   SceneVk() = default;
-  virtual ~SceneVk() { assert(m_vertexBuffers.empty()); }  // Missing deinit call
+  virtual ~SceneVk() { assert(!m_alloc); }  // Missing deinit call
 
   void init(nvvk::ResourceAllocator* alloc);
   void deinit()
   {
     destroy();
     m_samplerPool.deinit();
+    m_alloc = nullptr;
   }
 
   virtual void create(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn, bool generateMipmaps = true);
@@ -114,7 +115,7 @@ protected:
   VkDevice         m_device{VK_NULL_HANDLE};
   VkPhysicalDevice m_physicalDevice{VK_NULL_HANDLE};
 
-  nvvk::ResourceAllocator* m_alloc;
+  nvvk::ResourceAllocator* m_alloc       = nullptr;
   nvvk::SamplerPool        m_samplerPool = {};
 
   nvvk::Buffer               m_bMaterial;

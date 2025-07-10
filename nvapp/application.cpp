@@ -107,7 +107,16 @@ void nvapp::Application::init(ApplicationCreateInfo& info)
   // Create the swapchain
   if(!m_headless)
   {
-    NVVK_CHECK(m_swapchain.init(m_physicalDevice, m_device, m_queues[0], m_surface, m_transientCmdPool));
+    nvvk::Swapchain::InitInfo swapChainInit{
+        .physicalDevice        = m_physicalDevice,
+        .device                = m_device,
+        .queue                 = m_queues[0],
+        .surface               = m_surface,
+        .cmdPool               = m_transientCmdPool,
+        .preferredVsyncOffMode = info.preferredVsyncOffMode,
+    };
+
+    NVVK_CHECK(m_swapchain.init(swapChainInit));
     NVVK_CHECK(m_swapchain.initResources(m_windowSize, m_vsyncWanted));  // Update the window size to the actual size of the surface
 
     // Create what is needed to submit the scene for each frame in-flight
