@@ -28,7 +28,7 @@
 function(compile_slang SHADER_FILES OUTPUT_DIR SHADER_HEADERS_VAR)
   # Optional arguments for flexibility
   set(options )
-  set(oneValueArgs TARGET_ENV)
+  set(oneValueArgs TARGET_ENV DEBUG_LEVEL OPTIMIZATION_LEVEL)
   set(multiValueArgs EXTRA_FLAGS)
   cmake_parse_arguments(COMPILE_SHADER "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
   cmake_parse_arguments(COMPILE_SHADER "${options}" "${oneValueArgs}" "" ${ARGN})
@@ -40,6 +40,15 @@ function(compile_slang SHADER_FILES OUTPUT_DIR SHADER_HEADERS_VAR)
   endif()
   set(EXTRA_FLAGS ${COMPILE_SHADER_EXTRA_FLAGS})
 
+  set(DEBUG_LEVEL ${COMPILE_SHADER_DEBUG_LEVEL})
+  if(NOT COMPILE_SHADER_OPTIMIZATION_LEVEL)
+    set(DEBUG_LEVEL 1)
+  endif()
+
+  set(OPTIMIZATION_LEVEL ${COMPILE_SHADER_OPTIMIZATION_LEVEL})
+  if(NOT COMPILE_SHADER_OPTIMIZATION_LEVEL)
+    set(OPTIMIZATION_LEVEL 0)
+  endif()
   
   # Ensure the output directory exists
   file(MAKE_DIRECTORY ${OUTPUT_DIR})
@@ -56,8 +65,8 @@ function(compile_slang SHADER_FILES OUTPUT_DIR SHADER_HEADERS_VAR)
         -emit-spirv-directly      # Emit SPIR-V directly without intermediate files
         -force-glsl-scalar-layout # Force scalar layout for Vulkan shaders
         -fvk-use-entrypoint-name  # Use the entrypoint name as the shader name
-        -g1                       # Enable debug info
-        -O0                       # Disable optimization
+        -g${DEBUG_LEVEL}          # Enable debug info
+        -O${OPTIMIZATION_LEVEL}   # Optimization level
         -lang slang               # Force all files to use slang language
         -matrix-layout-row-major  # Explicitly set row-major layout (Slang default is row-major)
         # -allow-glsl
