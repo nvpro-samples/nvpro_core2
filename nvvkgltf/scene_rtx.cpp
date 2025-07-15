@@ -33,6 +33,8 @@
 // Initialize the scene for ray tracing
 void nvvkgltf::SceneRtx::init(nvvk::ResourceAllocator* alloc)
 {
+  assert(!m_alloc);
+
   m_device         = alloc->getDevice();
   m_physicalDevice = alloc->getPhysicalDevice();
   m_alloc          = alloc;
@@ -42,9 +44,18 @@ void nvvkgltf::SceneRtx::init(nvvk::ResourceAllocator* alloc)
   m_rtProperties.pNext = &m_rtASProperties;
   prop2.pNext          = &m_rtProperties;
   vkGetPhysicalDeviceProperties2(m_physicalDevice, &prop2);
+}
 
-  m_blasBuilder = std::make_unique<nvvk::AccelerationStructureBuilder>();
-  m_blasBuilder->init(alloc);
+void nvvkgltf::SceneRtx::deinit()
+{
+  if(!m_alloc)
+  {
+    return;
+  }
+
+  destroy();
+
+  m_alloc = nullptr;
 }
 
 // Create the acceleration structure

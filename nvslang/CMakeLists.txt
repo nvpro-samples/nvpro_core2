@@ -22,8 +22,6 @@ target_link_libraries(
   ${LIB_NAME}
   PUBLIC nvutils
          Slang
-         SlangGlslang
-         SlangGlslModule
 )
 
 target_precompile_headers(${LIB_NAME} PRIVATE

@@ -59,12 +59,7 @@ public:
   virtual ~SceneVk() { assert(!m_alloc); }  // Missing deinit call
 
   void init(nvvk::ResourceAllocator* alloc);
-  void deinit()
-  {
-    destroy();
-    m_samplerPool.deinit();
-    m_alloc = nullptr;
-  }
+  void deinit();
 
   virtual void create(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn, bool generateMipmaps = true);
 

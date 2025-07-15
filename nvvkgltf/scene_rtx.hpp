@@ -40,7 +40,7 @@ public:
   ~SceneRtx() { assert(m_blasAccel.empty()); }  // Missing deinit call
 
   void init(nvvk::ResourceAllocator* alloc);
-  void deinit() { destroy(); }
+  void deinit();
 
 
   // Create both bottom and top level acceleration structures (cannot compact)

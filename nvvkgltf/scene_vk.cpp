@@ -67,10 +67,27 @@ static auto s_bufferUsageFlag =
 
 void nvvkgltf::SceneVk::init(nvvk::ResourceAllocator* alloc)
 {
+  assert(!m_alloc);
+
   m_device         = alloc->getDevice();
   m_physicalDevice = alloc->getPhysicalDevice();
   m_alloc          = alloc;
   m_samplerPool.init(m_device);
+}
+
+void nvvkgltf::SceneVk::deinit()
+{
+  if(!m_alloc)
+  {
+    return;
+  }
+
+  destroy();
+  m_samplerPool.deinit();
+
+  m_alloc          = nullptr;
+  m_physicalDevice = VK_NULL_HANDLE;
+  m_device         = VK_NULL_HANDLE;
 }
 
 //--------------------------------------------------------------------------------------------------

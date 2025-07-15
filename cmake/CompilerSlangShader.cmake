@@ -88,6 +88,7 @@ function(compile_slang SHADER_FILES OUTPUT_DIR SHADER_HEADERS_VAR)
         ${_SLANG_FLAGS} ${EXTRA_FLAGS}
         -source-embed-name ${VN_SHADER_NAME}
         -source-embed-style text
+        -depfile "${OUTPUT_FILE}.dep"
         -o "${OUTPUT_FILE}.h" ${SHADER}
       )
       set(_COMMAND_S ${_SLANGC}
@@ -101,6 +102,8 @@ function(compile_slang SHADER_FILES OUTPUT_DIR SHADER_HEADERS_VAR)
         COMMAND ${_COMMAND_H}
         COMMAND ${_COMMAND_S}
         MAIN_DEPENDENCY ${SHADER}
+        DEPFILE "${OUTPUT_FILE}.dep"
+        COMMENT "Compiling Slang shader ${SHADER_NAME}"
       )
       list(APPEND SHADER_HEADERS "${OUTPUT_FILE}.h")
   endforeach()

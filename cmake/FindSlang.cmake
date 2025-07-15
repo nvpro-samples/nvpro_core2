@@ -153,7 +153,10 @@ mark_as_advanced(Slang_GLSL_MODULE)
 
 if(NOT TARGET SlangGlslModule)
   add_library(SlangGlslModule SHARED IMPORTED)
-  set_property(TARGET SlangGlslModule PROPERTY IMPORTED_LOCATION ${Slang_GLSL_MODULE})
+  set_target_properties(SlangGlslModule PROPERTIES
+    IMPORTED_NO_SONAME ON # See https://github.com/shader-slang/slang/issues/7722
+    IMPORTED_LOCATION ${Slang_GLSL_MODULE}
+  )
   if(WIN32)
     set_property(TARGET SlangGlslModule PROPERTY IMPORTED_IMPLIB ${Slang_LIBRARY})
   endif()
@@ -172,7 +175,10 @@ mark_as_advanced(Slang_GLSLANG)
 
 if(NOT TARGET SlangGlslang)
   add_library(SlangGlslang SHARED IMPORTED)
-  set_property(TARGET SlangGlslang PROPERTY IMPORTED_LOCATION ${Slang_GLSLANG})
+  set_target_properties(SlangGlslang PROPERTIES
+    IMPORTED_NO_SONAME ON # See https://github.com/shader-slang/slang/issues/7722
+    IMPORTED_LOCATION ${Slang_GLSLANG}
+  )
   if(WIN32)
     set_property(TARGET SlangGlslang PROPERTY IMPORTED_IMPLIB ${Slang_LIBRARY})
   endif()

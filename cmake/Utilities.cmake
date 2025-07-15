@@ -57,6 +57,10 @@ function(copy_to_runtime_and_install TARGET_NAME)
     set(multiValueArgs DIRECTORIES FILES LOCAL_DIRS NVSHADERS_FILES)
     cmake_parse_arguments(COPY "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
+    if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.31")
+        cmake_policy(SET CMP0177 NEW) # Normalize DESTINATION paths
+    endif()
+
     # Make sure the install directory isn't set to the target name; this will
     # cause conflicts on Linux.
     if(COPY_INSTALL_DIR STREQUAL "${TARGET_NAME}")
