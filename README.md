@@ -99,11 +99,11 @@ manual but more customizable way.
 
     2. Add the following code to your `CMakeLists.txt`. This will automatically download `nvpro_core2` if not found, add its targets, and set appropriate defaults for most samples:
 
-      ```cmake
-      # Add the cmake folder to the module path
-      list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-      find_package(NvproCore2 REQUIRED)
-      ```
+        ```cmake
+        # Add the cmake folder to the module path
+        list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+        find_package(NvproCore2 REQUIRED)
+        ```
 
 * Manual Way:
 
@@ -111,19 +111,19 @@ manual but more customizable way.
 
     2. Manually find and include its `Setup.cmake` file:
 
-      ```cmake
-      find_path(NVPRO_CORE2_DIR
-        NAMES cmake/Setup.cmake
-        PATHS ${CMAKE_CURRENT_LIST_DIR}/nvpro_core2
-              ${CMAKE_CURRENT_LIST_DIR}/../nvpro_core2
-              ${CMAKE_CURRENT_LIST_DIR}/../../nvpro_core2
-        REQUIRED
-        DOC "Path to nvpro_core2"
-      )
-      include(${NVPRO_CORE2_DIR}/cmake/Setup.cmake)
-      ```
-      
-      If you find the defaults in Setup.cmake cause issues, you can instead call `add_subdirectory(${NVPRO_CORE2_DIR})` to only add `nvpro_core2`'s targets.
+        ```cmake
+        find_path(NVPRO_CORE2_DIR
+          NAMES cmake/Setup.cmake
+          PATHS ${CMAKE_CURRENT_LIST_DIR}/nvpro_core2
+                ${CMAKE_CURRENT_LIST_DIR}/../nvpro_core2
+                ${CMAKE_CURRENT_LIST_DIR}/../../nvpro_core2
+          REQUIRED
+          DOC "Path to nvpro_core2"
+        )
+        include(${NVPRO_CORE2_DIR}/cmake/Setup.cmake)
+        ```
+
+        If you find the defaults in Setup.cmake cause issues, you can instead call `add_subdirectory(${NVPRO_CORE2_DIR})` to only add `nvpro_core2`'s targets.
 
 Whichever option you choose, you'll then need to link against the libraries you
 use:
