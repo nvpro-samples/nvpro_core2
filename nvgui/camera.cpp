@@ -313,9 +313,9 @@ static void CurrentCameraTab(std::shared_ptr<nvutils::CameraManipulator> cameraM
     if(PE::treeNode("Clip planes"))
     {
       glm::vec2 clip = cameraM->getClipPlanes();
-      PE::InputFloat("Near", &clip.x);
+      PE::InputFloat("Near", &clip.x, 0, 0, "%.6f");
       changed |= ImGui::IsItemDeactivatedAfterEdit();
-      PE::InputFloat("Far", &clip.y);
+      PE::InputFloat("Far", &clip.y, 0, 0, "%.6f");
       changed |= ImGui::IsItemDeactivatedAfterEdit();
       PE::treePop();
       cameraM->setClipPlanes(clip);
@@ -461,7 +461,7 @@ static void CameraExtraTab(std::shared_ptr<nvutils::CameraManipulator> cameraM, 
         },
         "Camera Navigation Mode");
 
-    changed |= PE::SliderFloat("Speed", &speed, 0.01F, 10.0F, "%.3f", 0, "Changing the default speed movement");
+    changed |= PE::InputFloat("Speed", &speed, 0, 0, "%.5f", 0, "Changing the default speed movement");
     changed |= PE::SliderFloat("Transition", &duration, 0.0F, 2.0F, "%.3f", 0, "Nb seconds to move to new position");
 
     cameraM->setSpeed(speed);
