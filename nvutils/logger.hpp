@@ -128,6 +128,10 @@ public:
   // Enable or disable file output
   void enableFileOutput(bool enable) noexcept;
 
+  // Set whether to flush all prints to the log file. This can be useful for
+  // debugging on OSes that buffer writes such as Linux.
+  void setFileFlush(bool enable) noexcept;
+
   // Set a custom log callback
   void setLogCallback(LogCallback&& callback) noexcept;
 
@@ -154,6 +158,7 @@ private:
 #endif
   std::ofstream        m_logFile;                    // Output file stream
   bool                 m_logToFile = true;           // Enable file output
+  bool                 m_fileFlush = false;          // Whether to flush all prints to the log file
   std::recursive_mutex m_logMutex;                   // Mutex to protect member variables
   LogCallback          m_logCallback  = nullptr;     // Custom log callback
   ShowFlags            m_show         = eSHOW_NONE;  // Default shows no extra information

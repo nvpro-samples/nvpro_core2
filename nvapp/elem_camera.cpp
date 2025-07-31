@@ -32,9 +32,6 @@ void nvapp::ElementCamera::updateCamera(std::shared_ptr<nvutils::CameraManipulat
   if(!nvgui::isWindowHovered(viewportWindow))
     return;
 
-  // measure one frame at a time
-  float keyFactor = ImGui::GetIO().DeltaTime * 50.0F;
-
   inputs.lmb      = ImGui::IsMouseDown(ImGuiMouseButton_Left);
   inputs.rmb      = ImGui::IsMouseDown(ImGuiMouseButton_Right);
   inputs.mmb      = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
@@ -43,59 +40,73 @@ void nvapp::ElementCamera::updateCamera(std::shared_ptr<nvutils::CameraManipulat
   inputs.alt      = ImGui::IsKeyDown(ImGuiKey_LeftAlt) || ImGui::IsKeyDown(ImGuiKey_RightAlt);
   ImVec2 mousePos = ImGui::GetMousePos();
 
-  // For all pressed keys - apply the action
-  m_cameraManip->keyMotion(0, 0, nvutils::CameraManipulator::NoAction);
-
   // None of the modifiers should be pressed for the single key: WASD and arrows
-  if(!(inputs.ctrl || inputs.alt || inputs.shift))
+  if(!inputs.alt)
   {
+    // Speed of the camera movement when using WASD and arrows
+    float keyMotionFactor = ImGui::GetIO().DeltaTime;
+    if(inputs.shift)
+    {
+      keyMotionFactor *= 5.0F;  // Speed up the camera movement
+    }
+    if(inputs.ctrl)
+    {
+      keyMotionFactor *= 0.1F;  // Slow down the camera movement
+    }
+
     if(ImGui::IsKeyDown(ImGuiKey_W))
     {
-      m_cameraManip->keyMotion(keyFactor, 0, nvutils::CameraManipulator::Dolly);
+      m_cameraManip->keyMotion({keyMotionFactor, 0}, nvutils::CameraManipulator::Dolly);
+      inputs.shift = inputs.ctrl = false;
     }
 
     if(ImGui::IsKeyDown(ImGuiKey_S))
     {
-      m_cameraManip->keyMotion(-keyFactor, 0, nvutils::CameraManipulator::Dolly);
+      m_cameraManip->keyMotion({-keyMotionFactor, 0}, nvutils::CameraManipulator::Dolly);
+      inputs.shift = inputs.ctrl = false;
     }
 
     if(ImGui::IsKeyDown(ImGuiKey_D) || ImGui::IsKeyDown(ImGuiKey_RightArrow))
     {
-      m_cameraManip->keyMotion(keyFactor, 0, nvutils::CameraManipulator::Pan);
+      m_cameraManip->keyMotion({keyMotionFactor, 0}, nvutils::CameraManipulator::Pan);
+      inputs.shift = inputs.ctrl = false;
     }
 
     if(ImGui::IsKeyDown(ImGuiKey_A) || ImGui::IsKeyDown(ImGuiKey_LeftArrow))
     {
-      m_cameraManip->keyMotion(-keyFactor, 0, nvutils::CameraManipulator::Pan);
+      m_cameraManip->keyMotion({-keyMotionFactor, 0}, nvutils::CameraManipulator::Pan);
+      inputs.shift = inputs.ctrl = false;
     }
 
     if(ImGui::IsKeyDown(ImGuiKey_UpArrow))
     {
-      m_cameraManip->keyMotion(0, keyFactor, nvutils::CameraManipulator::Pan);
+      m_cameraManip->keyMotion({0, keyMotionFactor}, nvutils::CameraManipulator::Pan);
+      inputs.shift = inputs.ctrl = false;
     }
 
     if(ImGui::IsKeyDown(ImGuiKey_DownArrow))
     {
-      m_cameraManip->keyMotion(0, -keyFactor, nvutils::CameraManipulator::Pan);
+      m_cameraManip->keyMotion({0, -keyMotionFactor}, nvutils::CameraManipulator::Pan);
+      inputs.shift = inputs.ctrl = false;
     }
   }
 
   if(ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Middle)
      || ImGui::IsMouseClicked(ImGuiMouseButton_Right))
   {
-    m_cameraManip->setMousePosition(static_cast<int>(mousePos.x), static_cast<int>(mousePos.y));
+    m_cameraManip->setMousePosition({mousePos.x, mousePos.y});
   }
 
   if(ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0F) || ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 1.0F)
      || ImGui::IsMouseDragging(ImGuiMouseButton_Right, 1.0F))
   {
-    m_cameraManip->mouseMove(static_cast<int>(mousePos.x), static_cast<int>(mousePos.y), inputs);
+    m_cameraManip->mouseMove({mousePos.x, mousePos.y}, inputs);
   }
 
   // Mouse Wheel
   if(ImGui::GetIO().MouseWheel != 0.0F)
   {
-    m_cameraManip->wheel(static_cast<int>(ImGui::GetIO().MouseWheel * 3), inputs);
+    m_cameraManip->wheel(ImGui::GetIO().MouseWheel * -3.f, inputs);
   }
 }
 

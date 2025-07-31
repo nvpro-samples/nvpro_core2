@@ -21,7 +21,7 @@
 //--------------------------------------------------------------------------------------------------
 // The following is to enable the use of the Vulkan validation layers
 // Usage:
-//  utils::ValidationSettings vvlInfo{};  // Set defaults
+//  nvvk::ValidationSettings vvlInfo{};   // Set defaults
 //  vvlInfo.fine_grained_locking = false; // Change the value
 //  vkSetup.instanceCreateInfoExt = vvlInfo.buildPNextChain();  // Adding the validation layer settings
 // https://vulkan.lunarg.com/doc/sdk/1.3.296.0/windows/khronos_validation_layer.html

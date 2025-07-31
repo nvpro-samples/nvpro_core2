@@ -146,10 +146,16 @@ VkResult nvvk::Context::createInstance()
       .ppEnabledExtensionNames = contextInfo.instanceExtensions.data(),
   };
 
+
   VkResult result = vkCreateInstance(&createInfo, contextInfo.alloc, &m_instance);
   if(result != VK_SUCCESS)
   {
-    LOGE("vkCreateInstance failed with error %s!", string_VkResult(result));
+    // Since the debug utils aren't available yet and this is usually the first
+    // place an app can fail, we should print some additional help here.
+    LOGE(
+        "vkCreateInstance failed with error %s!\n"
+        "You may need to install a newer Vulkan SDK, or check that it is properly installed.\n",
+        string_VkResult(result));
     return result;
   }
   // Loading Vulkan functions

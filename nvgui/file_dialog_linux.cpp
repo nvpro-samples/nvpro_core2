@@ -130,4 +130,15 @@ std::filesystem::path nvgui::windowSaveFileDialog(struct GLFWwindow* glfwin, con
   return save_file(title, ".", filterArgs).result();
 }
 
+std::filesystem::path nvgui::windowOpenFolderDialog(struct GLFWwindow* glfwin, const char* title)
+{
+  // Not sure yet how to use this; maybe make as a child window somehow?
+  [[maybe_unused]] Window hwnd = glfwGetX11Window(glfwin);
+
+  std::vector<std::string> resultVector = open_file(title, ".", {}, opt::force_path).result();
+  assert(resultVector.size() <= 1);
+  return resultVector.empty() ? "" : std::move(resultVector[0]);
+}
+
+
 #endif

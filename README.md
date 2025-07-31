@@ -51,7 +51,7 @@ Key improvements in `nvpro_core2` compared to previous [nvpro_core](https://gith
 - On Linux, you'll also need a few system libraries and headers. The following line installs the required libraries on distros that use `apt` as their package manager; on other distros, similar commands should work:
 
 ```
-sudo apt install libx11-dev libxcb1-dev libxcb-keysyms1-dev libxcursor-dev libxi-dev libxinerama-dev libxrandr-dev libxxf86vm-dev libtbb-dev
+sudo apt install libx11-dev libxcb1-dev libxcb-keysyms1-dev libxcursor-dev libxi-dev libxinerama-dev libxrandr-dev libxxf86vm-dev libtbb-dev libgl-dev
 ```
 
 ## Building a Sample

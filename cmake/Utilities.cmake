@@ -46,6 +46,7 @@ endmacro()
 #     Convention when installing to a subfolder is to use `${PROJECT_NAME}_files`.
 # * DIRECTORIES: List of directories to copy. Tree structure will be preserved.
 # * FILES: List of files to copy to the root of the install directory.
+# * PROGRAMS: Same as FILES except it uses install(PROGRAMS), which sets a+x on Linux.
 # * NVSHADERS_FILES: List of files to copy to a subfolder named after the target / nvshaders.
 # * LOCAL_DIRS: List of directories to copy to a subfolder named after the target.
 # * AUTO: Copies all DLLs CMake knows the target links with, using
@@ -54,7 +55,7 @@ function(copy_to_runtime_and_install TARGET_NAME)
     # Parse the arguments
     set(options AUTO)
     set(oneValueArgs INSTALL_DIR)
-    set(multiValueArgs DIRECTORIES FILES LOCAL_DIRS NVSHADERS_FILES)
+    set(multiValueArgs DIRECTORIES FILES PROGRAMS LOCAL_DIRS NVSHADERS_FILES)
     cmake_parse_arguments(COPY "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
     if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.31")
@@ -87,28 +88,31 @@ function(copy_to_runtime_and_install TARGET_NAME)
         install(
             DIRECTORY ${DIR}
             DESTINATION ${COPY_INSTALL_DIR}
+            USE_SOURCE_PERMISSIONS
         )
     endforeach()
 
     # Handle individual files
-    foreach(_FILE ${COPY_FILES})
-        # Ensure file exists
-        if(NOT EXISTS "${_FILE}")
-            message(WARNING "File does not exist: ${_FILE}")
-            continue()
-        endif()
+    foreach(_FILETYPE "FILES" "PROGRAMS")
+        foreach(_FILE ${COPY_${_FILETYPE}})
+            # Ensure file exists
+            if(NOT EXISTS "${_FILE}")
+                message(WARNING "File does not exist: ${_FILE}")
+                continue()
+            endif()
 
-        # Copy for runtime (post-build)
-        add_custom_command(
-            TARGET ${TARGET_NAME} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_FILE} "$<TARGET_FILE_DIR:${TARGET_NAME}>" VERBATIM
-        )
+            # Copy for runtime (post-build)
+            add_custom_command(
+                TARGET ${TARGET_NAME} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_FILE} "$<TARGET_FILE_DIR:${TARGET_NAME}>" VERBATIM
+            )
 
-        # Copy for installation
-        install(
-            FILES ${_FILE}
-            DESTINATION ${COPY_INSTALL_DIR}
-        )
+            # Copy for installation
+            install(
+                ${_FILETYPE} ${_FILE}
+                DESTINATION ${COPY_INSTALL_DIR}
+            )
+        endforeach()
     endforeach()
     
     # Handle nvshaders files
@@ -127,6 +131,7 @@ function(copy_to_runtime_and_install TARGET_NAME)
             install(
                 DIRECTORY ${LOCAL}
                 DESTINATION "${COPY_INSTALL_DIR}/${TARGET_NAME}"
+                USE_SOURCE_PERMISSIONS
             )
         else()
         # Linux, install to the root of the install directory 
@@ -134,6 +139,7 @@ function(copy_to_runtime_and_install TARGET_NAME)
             install(
                     DIRECTORY ${LOCAL}
                     DESTINATION "${COPY_INSTALL_DIR}"
+                    USE_SOURCE_PERMISSIONS
                 )
         endif()
     endforeach()

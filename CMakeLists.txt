@@ -72,6 +72,10 @@ project(
 
 # For this and subdirectories, make find_package find scripts in the `cmake/` directory:
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
+
+# Test if the local nvpro_core2 is up to date with the remote.
+include(CheckLatest)
+
 # And enable C++20:
 set(CMAKE_CXX_STANDARD 20)
 

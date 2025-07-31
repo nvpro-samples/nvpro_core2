@@ -112,6 +112,13 @@ void nvutils::Logger::enableFileOutput(bool enable) noexcept
 }
 
 
+void nvutils::Logger::setFileFlush(bool enable) noexcept
+{
+  std::lock_guard<std::recursive_mutex> lock(m_logMutex);
+  m_fileFlush = enable;
+}
+
+
 void nvutils::Logger::setLogCallback(LogCallback&& callback) noexcept
 {
   std::lock_guard<std::recursive_mutex> lock(m_logMutex);
@@ -362,6 +369,10 @@ void nvutils::Logger::outputToFile(const std::string& message) noexcept
   if(m_logToFile && m_logFile.is_open())
   {
     m_logFile << message;
+    if(m_fileFlush)
+    {
+      m_logFile.flush();
+    }
   }
 }
 

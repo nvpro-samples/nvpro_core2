@@ -107,7 +107,7 @@ public:
   // On application mouse move, call this function with the current mouse position, mouse
   // button presses and keyboard modifier. The camera matrix will be updated and
   // can be retrieved calling getMatrix
-  Actions mouseMove(int x, int y, const Inputs& inputs);
+  Actions mouseMove(glm::vec2 screenDisplacement, const Inputs& inputs);
 
   // Set the camera to look at the interest point
   // instantSet = true will not interpolate to the new position
@@ -117,10 +117,8 @@ public:
   void updateAnim();
 
   // To call when the size of the window change.  This allows to do nicer movement according to the window size.
-  void setWindowSize(glm::uvec2 winSize);
+  void setWindowSize(glm::uvec2 winSize) { m_windowSize = winSize; }
 
-  // Setting the current mouse position, to call on mouse button down. Allow to compute properly the deltas
-  void setMousePosition(int x, int y);
 
   Camera getCamera() const { return m_current; }
   void   setCamera(Camera camera, bool instantSet = true);
@@ -158,28 +156,26 @@ public:
   // Retrieving the current speed
   float getSpeed() const { return m_speed; }
 
-  float getSceneSize() const { return m_sceneSize; }
-  void  setSceneSize(float sceneSize) { m_sceneSize = sceneSize; }
-
-  // Retrieving the last mouse position
-  void getMousePosition(int& x, int& y);
+  // Mouse position
+  void      setMousePosition(const glm::vec2& pos) { m_mouse = pos; }
+  glm::vec2 getMousePosition() const { return m_mouse; }
 
   // Main function which is called to apply a camera motion.
   // It is preferable to
-  void motion(int x, int y, int action = 0);
+  void motion(const glm::vec2& screenDisplacement, Actions action = NoAction);
 
   // This is called when moving with keys (ex. WASD)
-  void keyMotion(float dx, float dy, int action);
+  void keyMotion(glm::vec2 delta, Actions action);
 
   // To call when the mouse wheel change
-  void wheel(int value, const Inputs& inputs);
+  void wheel(float value, const Inputs& inputs);
 
   // Retrieve the screen dimension
   glm::uvec2 getWindowSize() const { return m_windowSize; }
   float      getAspectRatio() const { return static_cast<float>(m_windowSize.x) / static_cast<float>(m_windowSize.y); }
 
   // Field of view in degrees
-  void  setFov(float _fov);
+  void  setFov(float fovDegree);
   float getFov() const { return m_current.fov; }
   float getRadFov() const { return glm::radians(m_current.fov); }
 
@@ -190,7 +186,7 @@ public:
   // Animation duration
   double getAnimationDuration() const { return m_duration; }
   void   setAnimationDuration(double val) { m_duration = val; }
-  bool   isAnimated() const { return m_anim_done == false; }
+  bool   isAnimated() const { return m_animDone == false; }
 
   // Returning a default help string
   const std::string& getHelp();
@@ -200,14 +196,14 @@ public:
 
 private:
   // Update the internal matrix.
-  void update() { m_matrix = glm::lookAt(m_current.eye, m_current.ctr, m_current.up); }
+  void updateLookatMatrix() { m_matrix = glm::lookAt(m_current.eye, m_current.ctr, m_current.up); }
 
   // Do panning: movement parallels to the screen
-  void pan(float dx, float dy);
+  void pan(glm::vec2 displacement);
   // Do orbiting: rotation around the center of interest. If invert, the interest orbit around the camera position
-  void orbit(float dx, float dy, bool invert = false);
+  void orbit(glm::vec2 displacement, bool invert = false);
   // Do dolly: movement toward the interest.
-  void dolly(float dx, float dy);
+  void dolly(glm::vec2 displacement, bool keepCenterFixed = false);
 
 
   double getSystemTime();
@@ -223,11 +219,10 @@ protected:
   Camera m_snapshot;  // Current camera the moment a set look-at is done
 
   // Animation
-  std::array<glm::vec3, 3> m_bezier     = {};
-  double                   m_start_time = 0;
-  double                   m_duration   = 0.5;
-  bool                     m_anim_done  = true;
-  glm::vec3                m_key_vec    = {0, 0, 0};
+  std::array<glm::vec3, 3> m_bezier    = {};
+  double                   m_startTime = 0;
+  double                   m_duration  = 0.5;
+  bool                     m_animDone  = true;
 
   // Window size
   glm::uvec2 m_windowSize = glm::uvec2(1, 1);
@@ -236,11 +231,7 @@ protected:
   float     m_speed      = 3.f;
   glm::vec2 m_mouse      = glm::vec2(0.f, 0.f);
   glm::vec2 m_clipPlanes = glm::vec2(0.001f, 100000000.f);
-  float     m_sceneSize  = 1.0f;  // Global speed multiplier for KEY navigation
 
-  bool  m_button = false;  // Button pressed
-  bool  m_moving = false;  // Mouse is moving
-  float m_tbsize = 0.8f;   // Trackball size;
 
   Modes m_mode = Examine;
 };
