@@ -65,14 +65,14 @@ static auto s_bufferUsageFlag =
 //
 //
 
-void nvvkgltf::SceneVk::init(nvvk::ResourceAllocator* alloc)
+void nvvkgltf::SceneVk::init(nvvk::ResourceAllocator* alloc, nvvk::SamplerPool* samplerPool)
 {
   assert(!m_alloc);
 
   m_device         = alloc->getDevice();
   m_physicalDevice = alloc->getPhysicalDevice();
   m_alloc          = alloc;
-  m_samplerPool.init(m_device);
+  m_samplerPool    = samplerPool;
 }
 
 void nvvkgltf::SceneVk::deinit()
@@ -83,9 +83,9 @@ void nvvkgltf::SceneVk::deinit()
   }
 
   destroy();
-  m_samplerPool.deinit();
 
   m_alloc          = nullptr;
+  m_samplerPool    = nullptr;
   m_physicalDevice = VK_NULL_HANDLE;
   m_device         = VK_NULL_HANDLE;
 }
@@ -784,7 +784,7 @@ void nvvkgltf::SceneVk::createTextureImages(VkCommandBuffer              cmd,
   auto addDefaultTexture = [&]() {
     assert(!m_images.empty());
     nvvk::Image tex = m_images[0].imageTexture;
-    NVVK_CHECK(m_samplerPool.acquireSampler(tex.descriptor.sampler));
+    NVVK_CHECK(m_samplerPool->acquireSampler(tex.descriptor.sampler));
     NVVK_DBG_NAME(tex.descriptor.sampler);
     m_textures.push_back(tex);
   };
@@ -848,7 +848,7 @@ void nvvkgltf::SceneVk::createTextureImages(VkCommandBuffer              cmd,
     SceneImage& sceneImage = m_images[source_image];
 
     nvvk::Image tex = sceneImage.imageTexture;
-    NVVK_CHECK(m_samplerPool.acquireSampler(tex.descriptor.sampler, sampler));
+    NVVK_CHECK(m_samplerPool->acquireSampler(tex.descriptor.sampler, sampler));
     NVVK_DBG_NAME(tex.descriptor.sampler);
     m_textures.push_back(tex);
   }
@@ -1221,20 +1221,20 @@ std::vector<shaderio::GltfLight> getShaderLights(const std::vector<nvvkgltf::Ren
 
 void nvvkgltf::SceneVk::destroy()
 {
-  for(auto& vb : m_vertexBuffers)
+  for(auto& vertexBuffer : m_vertexBuffers)
   {
-    m_alloc->destroyBuffer(vb.position);
-    m_alloc->destroyBuffer(vb.normal);
-    m_alloc->destroyBuffer(vb.tangent);
-    m_alloc->destroyBuffer(vb.texCoord0);
-    m_alloc->destroyBuffer(vb.texCoord1);
-    m_alloc->destroyBuffer(vb.color);
+    m_alloc->destroyBuffer(vertexBuffer.position);
+    m_alloc->destroyBuffer(vertexBuffer.normal);
+    m_alloc->destroyBuffer(vertexBuffer.tangent);
+    m_alloc->destroyBuffer(vertexBuffer.texCoord0);
+    m_alloc->destroyBuffer(vertexBuffer.texCoord1);
+    m_alloc->destroyBuffer(vertexBuffer.color);
   }
   m_vertexBuffers.clear();
 
-  for(auto& i : m_bIndices)
+  for(auto& indicesBuffer : m_bIndices)
   {
-    m_alloc->destroyBuffer(i);
+    m_alloc->destroyBuffer(indicesBuffer);
   }
   m_bIndices.clear();
 
@@ -1245,9 +1245,13 @@ void nvvkgltf::SceneVk::destroy()
   m_alloc->destroyBuffer(m_bRenderNode);
   m_alloc->destroyBuffer(m_bSceneDesc);
 
-  for(auto& i : m_images)
+  for(auto& texture : m_textures)
   {
-    m_alloc->destroyImage(i.imageTexture);
+    m_samplerPool->releaseSampler(texture.descriptor.sampler);
+  }
+  for(auto& image : m_images)
+  {
+    m_alloc->destroyImage(image.imageTexture);
   }
   m_images.clear();
   m_textures.clear();

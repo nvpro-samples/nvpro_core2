@@ -58,7 +58,7 @@ public:
   SceneVk() = default;
   virtual ~SceneVk() { assert(!m_alloc); }  // Missing deinit call
 
-  void init(nvvk::ResourceAllocator* alloc);
+  void init(nvvk::ResourceAllocator* alloc, nvvk::SamplerPool* samplerPool);
   void deinit();
 
   virtual void create(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn, bool generateMipmaps = true);
@@ -111,7 +111,7 @@ protected:
   VkPhysicalDevice m_physicalDevice{VK_NULL_HANDLE};
 
   nvvk::ResourceAllocator* m_alloc       = nullptr;
-  nvvk::SamplerPool        m_samplerPool = {};
+  nvvk::SamplerPool*       m_samplerPool = nullptr;
 
   nvvk::Buffer               m_bMaterial;
   nvvk::Buffer               m_bTextureInfos;
