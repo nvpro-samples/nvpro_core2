@@ -20,6 +20,7 @@
 #pragma once
 #include <cstring>
 #include <unordered_map>
+#include <mutex>
 
 #include <vulkan/vulkan_core.h>
 
@@ -108,8 +109,20 @@ private:
     }
   };
 
-  // Stores unique samplers with their corresponding VkSamplerCreateInfo
-  std::unordered_map<SamplerState, VkSampler, SamplerStateHashFn> m_samplerMap{};
+  struct SamplerEntry
+  {
+    VkSampler sampler;
+    uint32_t  refCount;
+  };
+
+  // Stores unique samplers with their corresponding VkSamplerCreateInfo and reference counts
+  std::unordered_map<SamplerState, SamplerEntry, SamplerStateHashFn> m_samplerMap{};
+
+  // Reverse lookup map for O(1) sampler release - must stay in sync with m_samplerMap
+  std::unordered_map<VkSampler, SamplerState> m_samplerToState{};
+
+  // Mutex for thread-safe access to both maps
+  mutable std::mutex m_mutex;
 };
 
 

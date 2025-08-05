@@ -23,10 +23,12 @@
 #include "check_error.hpp"
 
 #include <cassert>
+#include <mutex>
 
 nvvk::SamplerPool::SamplerPool(SamplerPool&& other) noexcept
     : m_device(other.m_device)
     , m_samplerMap(std::move(other.m_samplerMap))
+    , m_samplerToState(std::move(other.m_samplerToState))
 {
   // Reset the moved-from object to a valid state
   other.m_device = VK_NULL_HANDLE;
@@ -36,8 +38,9 @@ nvvk::SamplerPool& nvvk::SamplerPool::operator=(SamplerPool&& other) noexcept
 {
   if(this != &other)
   {
-    m_device     = std::move(other.m_device);
-    m_samplerMap = std::move(other.m_samplerMap);
+    m_device         = std::move(other.m_device);
+    m_samplerMap     = std::move(other.m_samplerMap);
+    m_samplerToState = std::move(other.m_samplerToState);
   }
   return *this;
 }
@@ -54,12 +57,14 @@ void nvvk::SamplerPool::init(VkDevice device)
 
 void nvvk::SamplerPool::deinit()
 {
+  std::lock_guard<std::mutex> lock(m_mutex);
   for(const auto& entry : m_samplerMap)
   {
-    vkDestroySampler(m_device, entry.second, nullptr);
+    vkDestroySampler(m_device, entry.second.sampler, nullptr);
   }
   m_samplerMap.clear();
-  *this = {};
+  m_samplerToState.clear();
+  m_device = VK_NULL_HANDLE;
 }
 
 VkResult nvvk::SamplerPool::acquireSampler(VkSampler& sampler, const VkSamplerCreateInfo& createInfo)
@@ -89,34 +94,47 @@ VkResult nvvk::SamplerPool::acquireSampler(VkSampler& sampler, const VkSamplerCr
   samplerState.reduction.pNext  = nullptr;
   samplerState.ycbr.pNext       = nullptr;
 
-
   assert(m_device && "Initialization was missing");
+
+  std::lock_guard<std::mutex> lock(m_mutex);
   if(auto it = m_samplerMap.find(samplerState); it != m_samplerMap.end())
   {
-    // If found, return existing sampler
-    sampler = it->second;
+    // If found, increment reference count and return existing sampler
+    it->second.refCount++;
+    sampler = it->second.sampler;
     return VK_SUCCESS;
   }
 
   // Otherwise, create a new sampler
   NVVK_FAIL_RETURN(vkCreateSampler(m_device, &createInfo, nullptr, &sampler));
-  m_samplerMap[samplerState] = sampler;
+  m_samplerMap[samplerState] = {sampler, 1};
+  m_samplerToState[sampler]  = samplerState;
   return VK_SUCCESS;
 }
 
 void nvvk::SamplerPool::releaseSampler(VkSampler sampler)
 {
-  for(auto it = m_samplerMap.begin(); it != m_samplerMap.end();)
+  std::lock_guard<std::mutex> lock(m_mutex);
+  if(sampler == VK_NULL_HANDLE)
+    return;
+
+  auto stateIt = m_samplerToState.find(sampler);
+  if(stateIt == m_samplerToState.end())
   {
-    if(it->second == sampler)
-    {
-      vkDestroySampler(m_device, it->second, nullptr);
-      it = m_samplerMap.erase(it);
-    }
-    else
-    {
-      ++it;
-    }
+    // Sampler not found - this shouldn't happen in correct usage
+    assert(false && "Attempting to release unknown sampler");
+    return;
+  }
+
+  auto samplerIt = m_samplerMap.find(stateIt->second);
+  assert(samplerIt != m_samplerMap.end() && "Inconsistent sampler pool state");
+
+  samplerIt->second.refCount--;
+  if(samplerIt->second.refCount == 0)
+  {
+    vkDestroySampler(m_device, sampler, nullptr);
+    m_samplerMap.erase(samplerIt);
+    m_samplerToState.erase(stateIt);
   }
 }
 

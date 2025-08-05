@@ -183,9 +183,9 @@ inline float2 squareToDisk(float inX, float inY)
 inline float3 reflectionDirDiffuseX(float3 inNormal, float2 inSample)
 {
   float2 rPhi = squareToDisk(inSample.x, inSample.y);   // Map the 2D sample point to a disk
-  float x    = rPhi.x * cos(rPhi.y);                   // Calculate the x component of the reflection direction
-  float y    = rPhi.x * sin(rPhi.y);                   // Calculate the y component of the reflection direction
-  float z    = sqrt(max(0.0f, 1.0f - x * x - y * y));  // Calculate the z component, ensuring it is non-negative
+  float  x    = rPhi.x * cos(rPhi.y);                   // Calculate the x component of the reflection direction
+  float  y    = rPhi.x * sin(rPhi.y);                   // Calculate the y component of the reflection direction
+  float  z    = sqrt(max(0.0f, 1.0f - x * x - y * y));  // Calculate the z component, ensuring it is non-negative
   return localCoordsToDir(inNormal, x, y, z);  // Convert the local direction to the world space direction using the normal
 }
 
@@ -235,15 +235,23 @@ inline float3 skyColorXyz(float3 inDir, float3 inSunPos, float inTurbidity, floa
   xyz.y         = inLuminance;
   // TODO: Preetham/Utah
 
+  // Precompute common terms
+  float invCosTheta = 1.0f / max(cosTheta, 0.001f);  // Avoid division by zero
+
   // use flags (see above)
-  A = -0.019257f * inTurbidity - (0.29f - pow(cosThetaSun, 0.5f) * 0.09f);
+  A = -0.019257f * inTurbidity - (0.29f - sqrt(cosThetaSun) * 0.09f);
   B = -0.066513f * inTurbidity + 0.000818f;
   C = -0.000417f * inTurbidity + 0.212479f;
   D = -0.064097f * inTurbidity - 0.898875f;
   E = -0.003251f * inTurbidity + 0.045178f;
 
-  float x = (((1.f + A * exp(B / cosTheta)) * (1.f + C * exp(D * gamma) + E * cosGamma * cosGamma))
-             / ((1 + A * exp(B / 1.0f)) * (1 + C * exp(D * thetaSun) + E * cosThetaSun * cosThetaSun)));
+  float expBInvCosTheta = exp(B * invCosTheta);
+  float expB            = exp(B);
+  float expDGamma       = exp(D * gamma);
+  float expDThetaSun    = exp(D * thetaSun);
+
+  float x = (((1.f + A * expBInvCosTheta) * (1.f + C * expDGamma + E * cosGamma * cosGamma))
+             / ((1 + A * expB) * (1 + C * expDThetaSun + E * cosThetaSun * cosThetaSun)));
 
   A = -0.016698f * inTurbidity - 0.260787f;
   B = -0.094958f * inTurbidity + 0.009213f;
@@ -251,8 +259,14 @@ inline float3 skyColorXyz(float3 inDir, float3 inSunPos, float inTurbidity, floa
   D = -0.044050f * inTurbidity - 1.653694f;
   E = -0.010922f * inTurbidity + 0.052919f;
 
-  float y = (((1 + A * exp(B / cosTheta)) * (1 + C * exp(D * gamma) + E * cosGamma * cosGamma))
-             / ((1 + A * exp(B / 1.0f)) * (1 + C * exp(D * thetaSun) + E * cosThetaSun * cosThetaSun)));
+  // Recompute for y calculation
+  expBInvCosTheta = exp(B * invCosTheta);
+  expB            = exp(B);
+  expDGamma       = exp(D * gamma);
+  expDThetaSun    = exp(D * thetaSun);
+
+  float y = (((1 + A * expBInvCosTheta) * (1 + C * expDGamma + E * cosGamma * cosGamma))
+             / ((1 + A * expB) * (1 + C * expDThetaSun + E * cosThetaSun * cosThetaSun)));
 
   float localSaturation = 1.0f;
 
@@ -279,10 +293,16 @@ inline float skyLuminance(float3 inDir, float3 inSunPos, float inTurbidity)
   float D = 0.120647f * inTurbidity - 2.577052f;
   float E = -0.066967f * inTurbidity + 0.370275f;
 
-  return (((1 + A * exp(B / cosTheta)) * (1 + C * exp(D * gamma) + E * cosGamma * cosGamma))
-          / ((1 + A * exp(B / 1.0f)) * (1 + C * exp(D * thetaSun) + E * cosThetaSun * cosThetaSun)));
-}
+  // Precompute exp terms to reduce function calls
+  float invCosTheta     = 1.0f / max(cosTheta, 0.001f);
+  float expBInvCosTheta = exp(B * invCosTheta);
+  float expB            = exp(B);
+  float expDGamma       = exp(D * gamma);
+  float expDThetaSun    = exp(D * thetaSun);
 
+  return (((1 + A * expBInvCosTheta) * (1 + C * expDGamma + E * cosGamma * cosGamma))
+          / ((1 + A * expB) * (1 + C * expDThetaSun + E * cosThetaSun * cosThetaSun)));
+}
 
 inline float3 calcSkyColor(float3 inSunDir, float3 inDir, float inTurbidity)
 {
@@ -302,15 +322,15 @@ inline float3 calcSkyIrradiance(float3 inDataSunDir, float inDataSunDirHaze)
   float3 colSum        = float3(0.0f);
   float3 nuStateNormal = float3(0.0f, 0.0f, 1.0f);
 
-  for(float u = 0.1f; u < 1.0f; u += 0.2f)
+  for(float u = 0.125f; u < 1.0f; u += 0.25f)
   {
-    for(float v = 0.1f; v < 1.0f; v += 0.2f)
+    for(float v = 0.125f; v < 1.0f; v += 0.25f)
     {
       float3 diff = reflectionDirDiffuseX(nuStateNormal, float2(u, v));
       colSum += calcSkyColor(inDataSunDir, diff, inDataSunDirHaze);
     }
   }
-  return colSum / 25.0f;
+  return colSum / 16.0f;
 }
 
 inline float tweakSaturation(float inSaturation, float inHaze)
@@ -340,7 +360,6 @@ inline float3 tweakVector(float3 dir, int yIsUp, float horizHeight)
   return outDir;
 }
 
-
 inline float3 tweakColor(float3 tint, float saturation, float redness)
 {
   float  intensity = rgbLuminance(tint);
@@ -349,17 +368,19 @@ inline float3 tweakColor(float3 tint, float saturation, float redness)
   return max(outTint, float3(0.0f));
 }
 
-
 inline float2 calcPhysicalScale(float sunDiskScale, float sunGlowIntensity, float sunDiskIntensity)
 {
   float sunAngularRadius = 0.00465f;
   float sunDiskRadius    = sunAngularRadius * sunDiskScale;
   float sunGlowRadius    = sunDiskRadius * 10.0f;
 
+  // Precompute constants to reduce redundant calculations
+  float sunGlowRadiusSq    = sunGlowRadius * sunGlowRadius;
+  float sunGlowRadiusCubed = sunGlowRadiusSq * sunGlowRadius;
+
   /* We calculate the integral of the glow intensity function */
-  float glowFuncIntegral = sunGlowIntensity
-                           * ((4.0f * M_PI) - (24.0f * M_PI) / (sunGlowRadius * sunGlowRadius)
-                              + (24.0f * M_PI) * sin(sunGlowRadius) / (sunGlowRadius * sunGlowRadius * sunGlowRadius));
+  float glowFuncIntegral =
+      sunGlowIntensity * ((4.0f * M_PI) - (24.0f * M_PI) / sunGlowRadiusSq + (24.0f * M_PI) * sin(sunGlowRadius) / sunGlowRadiusCubed);
 
 
   /* Calculate the target sun disk intensity integral (the value towards which
@@ -380,7 +401,8 @@ inline float2 calcPhysicalScale(float sunDiskScale, float sunGlowIntensity, floa
     targetSundiskIntegral -= glowFuncIntegral;
   }
 
-  float sundiskArea            = 2 * M_PI * (1 - cos(sunDiskRadius));
+  float cosSunDiskRadius       = cos(sunDiskRadius);
+  float sundiskArea            = 2 * M_PI * (1 - cosSunDiskRadius);
   float targetSundiskIntensity = targetSundiskIntegral / sundiskArea;
 
   /* Calculate the actual sun disk intensity, before scaling is applied */
@@ -390,7 +412,6 @@ inline float2 calcPhysicalScale(float sunDiskScale, float sunGlowIntensity, floa
   /* Apply the proper scaling to get to the target value */
   return float2((targetSundiskIntensity == 0.0f) ? 0.0f : targetSundiskIntensity / actualSundiskIntensity, skySunglowScale);
 }
-
 
 inline float nightBrightnessAdjustment(float3 sunDir)
 {
@@ -457,8 +478,10 @@ inline float3 evalPhysicalSky(SkyPhysicalParameters ss, float3 inDirection)
       float2 scales = calcPhysicalScale(ss.sunDiskScale, ss.sunGlowIntensity, ss.sunDiskIntensity);
       // A value of 0 is at the edge of the glow disk; a value of 1 is in the
       // center of the sun.
-      float centerProximity = (1.0f - sunAngle / glowRadius);
-      float glowFactor      = pow(centerProximity, 3.0f) * 2.0f * ss.sunGlowIntensity * scales.y;
+      float centerProximity      = (1.0f - sunAngle / glowRadius);
+      float centerProximitySq    = centerProximity * centerProximity;
+      float centerProximityCubed = centerProximitySq * centerProximity;
+      float glowFactor           = centerProximityCubed * 2.0f * ss.sunGlowIntensity * scales.y;
       float diskFactor =
           smoothstep(0.85f, 0.95f + (localHaze / 500.0f), centerProximity) * 100.0f * ss.sunDiskIntensity * scales.x;
       tint += dataSunColor * (glowFactor + diskFactor);
@@ -535,12 +558,14 @@ inline float samplePhysicalSkyPDF(SkyPhysicalParameters ss, float3 inDirection)
   const float skyPdf = 1.0f / (2.0f * M_PI);
   // This factor of 1.5f is because of the lower bound on the sun's
   // smoothstep when computing `diskFactor` in `evalPhysicalSky`.
-  const float sunSampleAngularRadius = 1.5f * sunAngularRadius;
+  const float sunSampleAngularRadius    = 1.5f * sunAngularRadius;
+  const float cosSunSampleAngularRadius = cos(sunSampleAngularRadius);
+
   // Use first-degree Taylor series expansion around 0 for better precision
   const float sunSampleSolidAngle = (sunSampleAngularRadius < 0.001f) ? M_PI * sunSampleAngularRadius * sunSampleAngularRadius :
-                                                                        2.0f * M_PI * (1.0f - cos(sunSampleAngularRadius));
+                                                                        2.0f * M_PI * (1.0f - cosSunSampleAngularRadius);
   // If we choose the sun, this is the probability of choosing a given direction:
-  const float sunPdf = (dot(inDirection, ss.sunDirection) >= cos(sunSampleAngularRadius)) ? 1.0f / sunSampleSolidAngle : 0.0f;
+  const float sunPdf = (dot(inDirection, ss.sunDirection) >= cosSunSampleAngularRadius) ? 1.0f / sunSampleSolidAngle : 0.0f;
   return lerp(skyPdf, sunPdf, physicalSkySunProbability(ss));
 }
 

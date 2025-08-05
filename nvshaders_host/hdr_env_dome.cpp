@@ -201,6 +201,9 @@ void HdrEnvDome::draw(const VkCommandBuffer& cmd,
 //
 void HdrEnvDome::destroy()
 {
+  m_samplerPool->releaseSampler(m_textures.diffuse.descriptor.sampler);
+  m_samplerPool->releaseSampler(m_textures.lutBrdf.descriptor.sampler);
+  m_samplerPool->releaseSampler(m_textures.glossy.descriptor.sampler);
   m_alloc->destroyImage(m_textures.diffuse);
   m_alloc->destroyImage(m_textures.lutBrdf);
   m_alloc->destroyImage(m_textures.glossy);

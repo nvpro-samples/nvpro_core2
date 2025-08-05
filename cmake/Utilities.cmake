@@ -3,21 +3,21 @@
 # or packages (those go in Find scripts).
 
 #-------------------------------------------------------------------------------
-# Sets up the standard PROJECT_NAME and PROJECT_EXE_TO_SOURCE_DIRECTORY C++ macros for
+# Sets up the standard TARGET_NAME and TARGET_EXE_TO_SOURCE_DIRECTORY C++ macros for
 # a target.
-# * PROJECT_NAME is the name of the target
-# * PROJECT_EXE_TO_SOURCE_DIRECTORY is the relative path from the project output directory to CMAKE_CURRENT_SOURCE_DIR.
+# * TARGET_NAME is the name of the target
+# * TARGET_EXE_TO_SOURCE_DIRECTORY is the relative path from the project output directory to CMAKE_CURRENT_SOURCE_DIR.
 # * NVSHADERS_DIR is the absolute path to nvshaders/
 macro(add_project_definitions TARGET_NAME)
   file(RELATIVE_PATH TO_CURRENT_SOURCE_DIR "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${CMAKE_CFG_INTDIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
   file(RELATIVE_PATH TO_DOWNLOAD_SOURCE_DIR "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${CMAKE_CFG_INTDIR}" "${NVPRO_CORE2_DOWNLOAD_DIR}")
   file(RELATIVE_PATH TO_ROOT_DIR "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${CMAKE_CFG_INTDIR}" "${CMAKE_SOURCE_DIR}")
 
-  target_compile_definitions(${PROJECT_NAME} PRIVATE
-    PROJECT_NAME="${TARGET_NAME}"
-    PROJECT_EXE_TO_SOURCE_DIRECTORY="${TO_CURRENT_SOURCE_DIR}"
-    PROJECT_EXE_TO_DOWNLOAD_DIRECTORY="${TO_DOWNLOAD_SOURCE_DIR}"
-    PROJECT_EXE_TO_ROOT_DIRECTORY="${TO_ROOT_DIR}"
+  target_compile_definitions(${TARGET_NAME} PRIVATE
+    TARGET_NAME="${TARGET_NAME}"
+    TARGET_EXE_TO_SOURCE_DIRECTORY="${TO_CURRENT_SOURCE_DIR}"
+    TARGET_EXE_TO_DOWNLOAD_DIRECTORY="${TO_DOWNLOAD_SOURCE_DIR}"
+    TARGET_EXE_TO_ROOT_DIRECTORY="${TO_ROOT_DIR}"
   )
 
   # This should always be set when the nvshaders_host target is defined -- but
@@ -26,9 +26,9 @@ macro(add_project_definitions TARGET_NAME)
   # this.
   if(NVSHADERS_DIR)
     file(RELATIVE_PATH TO_NVSHADERS_SOURCE_DIR "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${CMAKE_CFG_INTDIR}" "${NVSHADERS_DIR}")
-    target_compile_definitions(${PROJECT_NAME} PRIVATE
+    target_compile_definitions(${TARGET_NAME} PRIVATE
       NVSHADERS_DIR="${NVSHADERS_DIR}"
-      PROJECT_EXE_TO_NVSHADERS_DIRECTORY="${TO_NVSHADERS_SOURCE_DIR}"
+      TARGET_EXE_TO_NVSHADERS_DIRECTORY="${TO_NVSHADERS_SOURCE_DIR}"
     )
   endif()
 endmacro()
@@ -39,18 +39,29 @@ endmacro()
 # when building a sample or building INSTALL.
 #
 # Required argument:
-# * TARGET_NAME: Name of a CMake target to install().
+# * TARGET_NAME: Name of a CMake target to install() to the root of the install directory.
 # Optional arguments:
 # * INSTALL_DIR: The DESTINATION directory used for install().
 #     Defaults to an empty string.
-#     Convention when installing to a subfolder is to use `${PROJECT_NAME}_files`.
-# * DIRECTORIES: List of directories to copy. Tree structure will be preserved.
-# * FILES: List of files to copy to the root of the install directory.
+# * DIRECTORIES: List of directories to copy to INSTALL_DIR. Tree structure will be preserved.
+# * LOCAL_DIRS: List of directories to copy to INSTALL_DIR/TARGET_NAME_files. Tree structure will be preserved.
+# * FILES: List of files to copy to the build directory and INSTALL_DIR.
 # * PROGRAMS: Same as FILES except it uses install(PROGRAMS), which sets a+x on Linux.
-# * NVSHADERS_FILES: List of files to copy to a subfolder named after the target / nvshaders.
-# * LOCAL_DIRS: List of directories to copy to a subfolder named after the target.
-# * AUTO: Copies all DLLs CMake knows the target links with, using
-#     $<TARGET_RUNTIME_DLLS>.
+# * NVSHADERS_FILES: List of files to copy to INSTALL_DIR/nvshaders.
+# * AUTO: Copies all shared libraries CMake knows the target links with to the build directory and INSTALL_DIR.
+#
+# Example:
+# copy_to_runtime_and_install(
+#   example
+#   DIRECTORIES "${NVSHADERS_DIR}/nvshaders"
+#   LOCAL_DIRS models
+#   FILES spruit_sunrise.hdr
+#   AUTO
+# )
+# - installs nvpro_core2/nvshaders to _install/nvshaders
+# - installs models to _install/example_files/models
+# - copies spruit_sunrise.hdr to _bin/spruit_sunrise.hdr and installs to _install/spruit_sunrise.hdr
+# - copies shared libraries `example` depends on to _bin and installs them to _install
 function(copy_to_runtime_and_install TARGET_NAME)
     # Parse the arguments
     set(options AUTO)
@@ -83,7 +94,6 @@ function(copy_to_runtime_and_install TARGET_NAME)
             continue()
         endif()
 
-
         # Copy for installation
         install(
             DIRECTORY ${DIR}
@@ -91,6 +101,22 @@ function(copy_to_runtime_and_install TARGET_NAME)
             USE_SOURCE_PERMISSIONS
         )
     endforeach()
+
+
+    # Handle local directories
+    foreach(LOCAL_DIR ${COPY_LOCAL_DIRS})
+        # Ensure directory exists
+        if(NOT EXISTS "${LOCAL_DIR}")
+            message(WARNING "Directory does not exist: ${LOCAL_DIR}")
+            continue()
+        endif()
+
+        install(
+            DIRECTORY ${LOCAL_DIR}
+            DESTINATION "${COPY_INSTALL_DIR}/${TARGET_NAME}_files"
+        )
+    endforeach()
+
 
     # Handle individual files
     foreach(_FILETYPE "FILES" "PROGRAMS")
@@ -114,7 +140,7 @@ function(copy_to_runtime_and_install TARGET_NAME)
             )
         endforeach()
     endforeach()
-    
+
     # Handle nvshaders files
     if(COPY_NVSHADERS_FILES)
         install(
@@ -122,38 +148,19 @@ function(copy_to_runtime_and_install TARGET_NAME)
             DESTINATION "${COPY_INSTALL_DIR}/nvshaders"
         )
     endif()
-    
-    # Handle local directories
-    foreach(LOCAL ${COPY_LOCAL_DIRS})              
-        
-        # Windows, install to a subfolder named after the target
-        if(MSVC)
-            install(
-                DIRECTORY ${LOCAL}
-                DESTINATION "${COPY_INSTALL_DIR}/${TARGET_NAME}"
-                USE_SOURCE_PERMISSIONS
-            )
-        else()
-        # Linux, install to the root of the install directory 
-        # This is because there is an issue with the install command on Linux
-            install(
-                    DIRECTORY ${LOCAL}
-                    DESTINATION "${COPY_INSTALL_DIR}"
-                    USE_SOURCE_PERMISSIONS
-                )
-        endif()
-    endforeach()
 
 
     if(COPY_AUTO)
         # On Windows, we want to copy the DLLs when building.
         # This isn't necessary on Linux, so long as the RPATH isn't changed.
         # That's good, since TARGET_RUNTIME_DLLS isn't available on Linux.
-        if(MSVC)
-            # We use copy -t here so that this works if TARGET_RUNTIME_DLLS is empty.
+        if(WIN32)
+            # Avoid emitting a command if we have no DLLs to copy.
+            set(_HAVE_RUNTIME_DLLS $<BOOL:$<TARGET_RUNTIME_DLLS:${TARGET_NAME}>>)
+            set(_COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_RUNTIME_DLLS:${TARGET_NAME}>" "$<TARGET_FILE_DIR:${TARGET_NAME}>")
             add_custom_command(
                 TARGET ${TARGET_NAME} POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy -t $<TARGET_FILE_DIR:${TARGET_NAME}> $<TARGET_RUNTIME_DLLS:${TARGET_NAME}>
+                COMMAND "$<${_HAVE_RUNTIME_DLLS}:${_COMMAND}>"
                 COMMAND_EXPAND_LISTS
             )
           
@@ -167,6 +174,7 @@ function(copy_to_runtime_and_install TARGET_NAME)
             # Although TARGET_RUNTIME_DLLS isn't available, we can do this:
             install(TARGETS ${TARGET_NAME}
                     RUNTIME_DEPENDENCIES
+                        POST_EXCLUDE_REGEXES "^/lib" "^/usr/lib"
                     DESTINATION ${COPY_INSTALL_DIR})
         endif()
     endif()
