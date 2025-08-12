@@ -27,10 +27,7 @@
 #include <nvvk/resource_allocator.hpp>
 #include <vulkan/vulkan_core.h>
 
-namespace shaderio {
-using namespace glm;
 #include <nvshaders/sky_io.h.slang>
-}  // namespace shaderio
 
 
 namespace nvshaders {

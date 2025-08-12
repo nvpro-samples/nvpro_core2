@@ -23,6 +23,8 @@
 #include "slang_types.h"
 #include "constants.h.slang"
 
+NAMESPACE_SHADERIO_BEGIN()
+
 #ifdef __cplusplus
 #ifndef OUT_TYPE
 #define OUT_TYPE(T) T&
@@ -189,4 +191,7 @@ inline float powerHeuristic(float a, float b)
 
 
 #undef OUT_TYPE
+
+NAMESPACE_SHADERIO_END()
+
 #endif  // NVVKHL_FUNC_H

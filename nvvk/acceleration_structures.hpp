@@ -69,7 +69,8 @@ This function converts a `glm::mat4` matrix to the matrix format required by acc
 inline void accelerationStructureBarrier(VkCommandBuffer cmd, VkAccessFlags src, VkAccessFlags dst)
 {
   assert(src == VK_ACCESS_TRANSFER_WRITE_BIT || src == VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
-  assert(dst == VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR || dst == VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
+  assert(dst == VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR || dst == VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR
+         || dst == (VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT));
 
   VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
   barrier.srcAccessMask = src;
@@ -295,6 +296,7 @@ public:
   std::vector<nvvk::AccelerationStructureBuildData> blasBuildData;
   std::vector<nvvk::AccelerationStructure>          blasSet{};  // Bottom-level AS set
   AccelerationStructureBuilder::Stats               blasBuildStatistics;
+  nvvk::Buffer                                      blasScratchBuffer{};
 
   // Builds a set of Bottom Level Acceleration Structures(BLAS) from a
   // Vector of geometry descriptors used for each BLAS

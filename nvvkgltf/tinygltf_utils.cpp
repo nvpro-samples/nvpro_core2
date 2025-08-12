@@ -24,10 +24,7 @@
 #include "nvutils/logger.hpp"
 #include "nvutils/parallel_work.hpp"
 
-namespace shaderio {
-using namespace glm;
 #include "nvshaders/functions.h.slang"
-}  // namespace shaderio
 
 
 KHR_materials_displacement tinygltf::utils::getDisplacement(const tinygltf::Material& tmat)

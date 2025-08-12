@@ -71,7 +71,7 @@ VkResult nvvk::Context::init(const ContextInitInfo& contextInitInfo)
   {
     nvutils::ScopedTimer st("Creating Vulkan Context");
 
-    NVVK_FAIL_RETURN((createInstance()))
+    NVVK_FAIL_RETURN(createInstance())
     NVVK_FAIL_RETURN(selectPhysicalDevice())
     NVVK_FAIL_RETURN(createDevice())
 
@@ -210,6 +210,13 @@ VkResult nvvk::Context::selectPhysicalDevice()
     m_physicalDevice = gpus[0];
     for(VkPhysicalDevice& device : gpus)
     {
+      if(contextInfo.preSelectPhysicalDeviceCallback)
+      {
+        if(!(*contextInfo.preSelectPhysicalDeviceCallback)(m_instance, device))
+        {
+          continue;
+        }
+      }
       VkPhysicalDeviceProperties properties;
       vkGetPhysicalDeviceProperties(device, &properties);
       if(properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
@@ -256,17 +263,7 @@ VkResult nvvk::Context::selectPhysicalDevice()
     return VK_ERROR_INITIALIZATION_FAILED;
   }
 
-  // Filter the available extensions otherwise the device creation will fail
-  std::vector<ExtensionInfo>         filteredExtensions;
-  std::vector<VkExtensionProperties> extensionProperties;
-  NVVK_FAIL_RETURN(getDeviceExtensions(m_physicalDevice, extensionProperties));
-  bool allFound = filterAvailableExtensions(extensionProperties, contextInfo.deviceExtensions, filteredExtensions);
-  if(!allFound)
-  {
-    m_physicalDevice = {};
-    return VK_ERROR_INITIALIZATION_FAILED;
-  }
-  contextInfo.deviceExtensions = std::move(filteredExtensions);
+
   return VK_SUCCESS;
 }
 
@@ -287,6 +284,28 @@ VkResult nvvk::Context::createDevice()
     return VK_ERROR_INITIALIZATION_FAILED;
   }
 
+  // Physical device has been chosen. Last chance to make changes to the contextInfo, like adding more extensions
+  // (which might be dependent on the selected physical device)
+  if(contextInfo.postSelectPhysicalDeviceCallback)
+  {
+    if(!(*contextInfo.postSelectPhysicalDeviceCallback)(m_instance, m_physicalDevice, contextInfo))
+    {
+      return VK_ERROR_INITIALIZATION_FAILED;
+    }
+  }
+
+  // Filter the available extensions otherwise the device creation will fail
+  std::vector<ExtensionInfo>         filteredExtensions;
+  std::vector<VkExtensionProperties> extensionProperties;
+  NVVK_FAIL_RETURN(getDeviceExtensions(m_physicalDevice, extensionProperties));
+  bool allFound = filterAvailableExtensions(extensionProperties, contextInfo.deviceExtensions, filteredExtensions);
+  if(!allFound)
+  {
+    m_physicalDevice = {};
+    return VK_ERROR_INITIALIZATION_FAILED;
+  }
+
+  contextInfo.deviceExtensions = std::move(filteredExtensions);
   // nvutils::ScopedTimer st(__FUNCTION__);
   // Chain all custom features to the pNext chain of m_deviceFeatures
   for(const auto& extension : contextInfo.deviceExtensions)
@@ -485,26 +504,6 @@ bool nvvk::Context::hasExtensionEnabled(const char* name) const
   return false;
 }
 
-//--------------------------------------------------------------------------------------------------
-// Usage example
-//--------------------------------------------------------------------------------------------------
-static void usage_Context()
-{
-  VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
-
-  nvvk::ContextInitInfo vkSetup{
-      .instanceExtensions = {{VK_EXT_DEBUG_UTILS_EXTENSION_NAME}},
-      .deviceExtensions = {{VK_KHR_SWAPCHAIN_EXTENSION_NAME}, {VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, &accelFeature}},
-  };
-  nvvk::addSurfaceExtensions(vkSetup.instanceExtensions);
-
-  nvvk::Context vkContext;
-  if(vkContext.init(vkSetup) != VK_SUCCESS)
-  {
-    LOGE("Error in Vulkan context creation\n");
-    return;
-  }
-}
 
 //--------------------------------------------------------------------------------------------------
 // Static functions to print Vulkan information
@@ -708,4 +707,53 @@ void nvvk::addSurfaceExtensions(std::vector<const char*>& instanceExtensions)
 #if defined(VK_USE_PLATFORM_MACOS_MVK)
   instanceExtensions.emplace_back(VK_MVK_MACOS_SURFACE_EXTENSION_NAME);
 #endif
+}
+
+//--------------------------------------------------------------------------------------------------
+// Usage example
+//--------------------------------------------------------------------------------------------------
+static void usage_Context()
+{
+  // Enable required features for ray tracing
+  VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
+  VkPhysicalDeviceRayTracingPipelineFeaturesKHR rtPipelineFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR};
+
+  // Configure Vulkan context initialization
+  nvvk::ContextInitInfo vkSetup{.instanceExtensions = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME},
+                                .deviceExtensions   = {
+                                    {VK_KHR_SWAPCHAIN_EXTENSION_NAME},
+                                    {VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, &accelFeature},
+                                    {VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, &rtPipelineFeature},
+                                    {VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME},
+                                }};
+  nvvk::addSurfaceExtensions(vkSetup.instanceExtensions);
+
+  // Example preSelectPhysicalDeviceCallback, we look for a device with large enough texture dimensions.
+  // Providing this callback is optional and can be left out.
+  vkSetup.preSelectPhysicalDeviceCallback = [](VkInstance instance, VkPhysicalDevice physicalDevice) {
+    VkPhysicalDeviceProperties properties;
+    vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+    return properties.limits.maxImageDimension2D >= 16384;
+  };
+
+  // Example for the postSelectPhysicalDeviceCallback
+  // Providing this callback is optional and can be left out.
+  vkSetup.postSelectPhysicalDeviceCallback = [](VkInstance instance, VkPhysicalDevice physicalDevice, nvvk::ContextInitInfo& info) {
+    VkPhysicalDeviceProperties properties;
+    vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+    if(properties.vendorID == 0x10DE)
+    {
+      // Require an additional extension, but only on NVIDIA devices
+      info.deviceExtensions.push_back({.extensionName = VK_NV_EXTENDED_SPARSE_ADDRESS_SPACE_EXTENSION_NAME});
+    }
+    return true;
+  };
+
+  // Create and initialize Vulkan context
+  nvvk::Context vkContext;
+  if(vkContext.init(vkSetup) != VK_SUCCESS)
+  {
+    LOGE("Error in Vulkan context creation\n");
+    return;
+  }
 }

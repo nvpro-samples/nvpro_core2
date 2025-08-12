@@ -21,6 +21,10 @@
 #ifndef TONEMAMP_SHADERIO_H
 #define TONEMAMP_SHADERIO_H 1
 
+#include "slang_types.h"
+
+NAMESPACE_SHADERIO_BEGIN()
+
 enum ToneMapMethod
 {
   eFilmic = 0,
@@ -56,5 +60,6 @@ struct TonemapperData
   float vignette   = 0.0f;
 };
 
+NAMESPACE_SHADERIO_END()
 
 #endif  // TONEMAMP_SHADERIO_H

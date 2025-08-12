@@ -22,10 +22,7 @@
 
 #include <glm/glm.hpp>
 
-namespace shaderio {
-using namespace glm;
 #include <nvshaders/tonemap_io.h.slang>
-}  // namespace shaderio
 
 #include <nvgui/property_editor.hpp>
 

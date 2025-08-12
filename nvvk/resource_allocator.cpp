@@ -393,7 +393,7 @@ VkResult nvvk::ResourceAllocator::createImage(nvvk::Image& image, const VkImageC
   if(result != VK_SUCCESS)
   {
     // Handle allocation failure
-    LOGW("Failed to create image");
+    LOGW("Failed to create image\n");
   }
 
   image.extent                 = imageInfo.extent;
@@ -689,7 +689,7 @@ VkResult nvvk::ResourceAllocatorExport::createBufferExport(Buffer&              
   // Getting the allocation create info with the export flag capability
   VmaAllocationCreateInfo allocCreateInfo = {};
 
-  NVVK_CHECK(getAllocInfo(allocCreateInfo, flags, memoryUsage, bufferInfo));
+  NVVK_FAIL_RETURN(getAllocInfo(allocCreateInfo, flags, memoryUsage, bufferInfo));
 
   return createBuffer(buffer, bufferInfo, allocCreateInfo, minAlignment);
 }

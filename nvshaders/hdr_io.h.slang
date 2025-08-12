@@ -20,6 +20,10 @@
 #ifndef DH_HDR_H
 #define DH_HDR_H 1
 
+#include "slang_types.h"
+
+NAMESPACE_SHADERIO_BEGIN()
+
 #define HDR_WORKGROUP_SIZE 32
 
 
@@ -67,5 +71,6 @@ enum EnvDomeDraw
   eHdrImage = 0
 };
 
+NAMESPACE_SHADERIO_END()
 
 #endif  // DH_HDR_H

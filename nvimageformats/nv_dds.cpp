@@ -909,7 +909,7 @@ ResourceDimension Image::inferResourceDimension() const
     return resourceDimension;  // We know what it is!
   }
   // Otherwise, try to guess it from the dimensions of the base mip:
-  if(!m_data.empty())
+  if(m_data.empty())
   {
     return ResourceDimension::eUnknown;  // We don't know the dimensions.
   }
@@ -1844,7 +1844,7 @@ ErrorWithText Image::writeToStream(std::ostream& output, const WriteSettings& wr
   // can tell that they're reading files written with the newest version of
   // NVDDS.
   header.dwReserved1[9]  = FOURCC_LIBRARY_NVPS;
-  header.dwReserved1[10] = (2 << 16) | (1 << 8) | 1;
+  header.dwReserved1[10] = (2 << 16) | (1 << 8) | 2;
 
   //---------------------------------------------------------------------------
   // DDS Pixel Format

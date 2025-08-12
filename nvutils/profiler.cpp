@@ -612,6 +612,7 @@ bool ProfilerTimeline::getFrameTimerInfo(const std::string& name, TimerInfo& inf
     {
       apiName = m_frameSnapshot.timerApiNames[i];
       info    = m_frameSnapshot.timerInfos[i];
+      return true;
     }
   }
 

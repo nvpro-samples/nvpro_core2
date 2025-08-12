@@ -18,6 +18,8 @@
  */
 #pragma once
 
+#include <functional>
+#include <optional>
 #include <vector>
 
 #include <vulkan/vulkan.h>
@@ -78,6 +80,13 @@ struct ContextInitInfo
   bool enableValidationLayers = true;  // Enable validation layers
   bool verbose                = true;
 #endif
+  // [optional] Callback called during physical device selection process.
+  // Return true to allow this physical device to be selected, false to reject it.
+  std::optional<std::function<bool(VkInstance, VkPhysicalDevice)>> preSelectPhysicalDeviceCallback;
+  // [optional] Callback called after device selection but before device creation.
+  // Can modify ContextInitInfo to add/remove extensions, change queue config, etc.
+  // Return true to proceed with device creation, false to abort.
+  std::optional<std::function<bool(VkInstance, VkPhysicalDevice, ContextInitInfo&)>> postSelectPhysicalDeviceCallback;
 };
 
 

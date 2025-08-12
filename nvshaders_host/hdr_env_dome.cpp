@@ -26,12 +26,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
-
-namespace shaderio {
-using namespace glm;
 #include "nvshaders/slang_types.h"
 #include "nvshaders/hdr_io.h.slang"
-}  // namespace shaderio
 
 
 #include "hdr_env_dome.hpp"

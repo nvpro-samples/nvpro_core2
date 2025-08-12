@@ -19,7 +19,7 @@
 
 /*-----------------------------------------------------------------------------
 
-nv_dds 2.1.1
+nv_dds 2.1.2
      
 A small yet complete library for reading and writing DDS files.
 

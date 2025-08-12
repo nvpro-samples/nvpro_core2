@@ -113,7 +113,7 @@ public:
 
   VkResult     init(const InitInfo& createInfo);
   void         deinit();
-  VkDeviceSize getMaxAllocationSize() const { return m_maxAllocationSize; }
+  VkDeviceSize getMaxAllocationSize() const { return m_state.maxAllocationSize; }
 
   struct Report
   {
@@ -163,26 +163,33 @@ protected:
     uint32_t prevActiveIndex = INVALID_BLOCK_INDEX;
   };
 
-  InitInfo     m_info;
-  VkDeviceSize m_maxAllocationSize{};
+  struct State
+  {
+    // adjusted size based on config
+    VkDeviceSize maxAllocationSize{};
+    // adjusted size as the offset allocator operates in units of m_info.minAlignment
+    uint32_t internalBlockUnits{};
+    // adjusted max blocks based on m_info.totalSize
+    uint32_t maxBlocks{};
 
-  // adjusted size as the offset allocator operates in units of m_info.minAlignment
-  uint32_t m_internalBlockUnits{};
-  // adjusted max blocks based on m_info.totalSize
-  uint32_t           m_maxBlocks{};
-  VkDeviceSize       m_allocatedSize{};
+    // statistics
+    VkDeviceSize allocatedSize{};
+
+    // single linked list of blocks that were deallocated completely
+    // list head
+    uint32_t freeBlockIndex = INVALID_BLOCK_INDEX;
+
+    // active blocks are blocks that have OffsetAllocators (i.e. not dedicated to a single allocation)
+    uint32_t activeBlockCount = 0;
+
+    // double linked list of blocks that are active
+    // list head
+    uint32_t activeBlockIndex = INVALID_BLOCK_INDEX;
+  };
+
+  InitInfo           m_info;
+  State              m_state;
   std::vector<Block> m_blocks;
-
-  // single linked list of blocks that were deallocated completely
-  // list head
-  uint32_t m_freeBlockIndex = INVALID_BLOCK_INDEX;
-
-  // active blocks are blocks that have OffsetAllocators (i.e. not dedicated to a single allocation)
-  uint32_t m_activeBlockCount = 0;
-
-  // double linked list of blocks that are active
-  // list head
-  uint32_t m_activeBlockIndex = INVALID_BLOCK_INDEX;
 };
 
 }  // namespace nvvk

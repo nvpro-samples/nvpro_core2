@@ -22,6 +22,7 @@
 
 #include "slang_types.h"
 
+NAMESPACE_SHADERIO_BEGIN()
 /*-------------------------------------------------------------------------------------------------
 Common structures used to store glTF scenes in GPU buffers.
 -------------------------------------------------------------------------------------------------*/
@@ -278,5 +279,6 @@ inline GltfLight defaultLight()
 }
 #endif  //__cplusplus
 
+NAMESPACE_SHADERIO_END()
 
 #endif

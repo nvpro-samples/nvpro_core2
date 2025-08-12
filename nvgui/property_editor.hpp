@@ -52,6 +52,7 @@ bool Button(const char* label, const ImVec2& size = ImVec2(0, 0), const std::str
 bool SmallButton(const char* label, const std::string& tooltip = {});
 bool Checkbox(const char* label, bool* v, const std::string& tooltip = {});
 bool RadioButton(const char* label, bool active, const std::string& tooltip = {});
+bool RadioButton(const char* label, int* v, int v_button, const std::string& tooltip = {});
 bool Combo(const char* label, int* current_item, const char* const items[], int items_count, int popup_max_height_in_items = -1, const std::string& tooltip = {});
 bool Combo(const char* label, int* current_item, const char* items_separated_by_zeros, int popup_max_height_in_items = -1, const std::string& tooltip = {});
 bool Combo(const char* label, int* current_item, const char* (*getter)(void* user_data, int idx), void* user_data, int items_count, int popup_max_height_in_items = -1, const std::string& tooltip = {});

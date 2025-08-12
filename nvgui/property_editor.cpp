@@ -106,6 +106,10 @@ bool RadioButton(const char* label, bool active, const std::string& tooltip)
 {
   return entry(label, [&] { return ImGui::RadioButton("##hidden", active); }, tooltip);
 }
+bool RadioButton(const char* label, int* v, int v_button, const std::string& tooltip)
+{
+  return entry(label, [&] { return ImGui::RadioButton("##hidden", v, v_button); }, tooltip);
+}
 bool Combo(const char* label, int* current_item, const char* const items[], int items_count, int popup_max_height_in_items, const std::string& tooltip)
 {
   return entry(label,

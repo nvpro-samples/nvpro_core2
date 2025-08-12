@@ -18,8 +18,12 @@
  */
 
 
-#ifndef CONSTANTS_GLSL
-#define CONSTANTS_GLSL
+#ifndef CONSTANTS_SLANG
+#define CONSTANTS_SLANG
+
+#include "slang_types.h"
+
+NAMESPACE_SHADERIO_BEGIN()
 
 #ifndef M_PI
 static const float M_PI = 3.1415926535897F;  // PI
@@ -57,5 +61,7 @@ static const float INFINITE = 1e32F;
 #ifndef DIRAC
 static const float DIRAC = -1.0F;
 #endif
+
+NAMESPACE_SHADERIO_END()
 
 #endif  // CONSTANTS_GLSL

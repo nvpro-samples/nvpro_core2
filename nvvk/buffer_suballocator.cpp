@@ -32,11 +32,11 @@ BufferSubAllocator::~BufferSubAllocator()
 
 BufferSubAllocator::BufferSubAllocator(BufferSubAllocator&& other) noexcept
 {
-  std::swap(m_allocatedSize, other.m_allocatedSize);
+  std::swap(m_state.allocatedSize, other.m_state.allocatedSize);
   std::swap(m_blocks, other.m_blocks);
   std::swap(m_info, other.m_info);
-  std::swap(m_internalBlockUnits, other.m_internalBlockUnits);
-  std::swap(m_maxBlocks, other.m_maxBlocks);
+  std::swap(m_state.internalBlockUnits, other.m_state.internalBlockUnits);
+  std::swap(m_state.maxBlocks, other.m_state.maxBlocks);
 }
 
 BufferSubAllocator& BufferSubAllocator::operator=(BufferSubAllocator&& other) noexcept
@@ -45,11 +45,11 @@ BufferSubAllocator& BufferSubAllocator::operator=(BufferSubAllocator&& other) no
   {
     assert(m_info.resourceAllocator == nullptr && "Missing deinit()");
 
-    std::swap(m_allocatedSize, other.m_allocatedSize);
+    std::swap(m_state.allocatedSize, other.m_state.allocatedSize);
     std::swap(m_blocks, other.m_blocks);
     std::swap(m_info, other.m_info);
-    std::swap(m_internalBlockUnits, other.m_internalBlockUnits);
-    std::swap(m_maxBlocks, other.m_maxBlocks);
+    std::swap(m_state.internalBlockUnits, other.m_state.internalBlockUnits);
+    std::swap(m_state.maxBlocks, other.m_state.maxBlocks);
   }
 
   return *this;
@@ -63,10 +63,10 @@ VkResult BufferSubAllocator::init(const InitInfo& info)
   assert(info.minAlignment <= MAX_ALIGNMENT);
   assert(info.minAlignment >= MIN_ALIGNMENT);
 
-  m_maxAllocationSize = std::min((VkDeviceSize(1) << (sizeof(BufferSubAllocation::size)) * 8) - 1,
-                                 info.resourceAllocator->getMaxMemoryAllocationSize());
+  m_state.maxAllocationSize = std::min((VkDeviceSize(1) << (sizeof(BufferSubAllocation::size)) * 8) - 1,
+                                       info.resourceAllocator->getMaxMemoryAllocationSize());
 
-  assert(info.blockSize <= m_maxAllocationSize);
+  assert(info.blockSize <= m_state.maxAllocationSize);
 
   m_info = info;
   if(!m_info.maxAllocatedSize)
@@ -77,20 +77,20 @@ VkResult BufferSubAllocator::init(const InitInfo& info)
   size_t maxBlocks = (m_info.maxAllocatedSize + m_info.blockSize - 1) / m_info.blockSize;
   assert(maxBlocks <= MAX_TOTAL_BLOCKS);
 
-
-  m_maxBlocks          = static_cast<uint32_t>(maxBlocks);
-  m_internalBlockUnits = static_cast<uint32_t>((m_info.blockSize + m_info.minAlignment - 1) / m_info.minAlignment);
+  m_state.maxBlocks = static_cast<uint32_t>(maxBlocks);
+  m_state.internalBlockUnits = static_cast<uint32_t>((m_info.blockSize + m_info.minAlignment - 1) / m_info.minAlignment);
 
   if(m_info.keepLastBlock)
   {
     Block block;
-    block.offsetAllocator = std::make_unique<OffsetAllocator::Allocator>(m_internalBlockUnits, m_info.perBlockAllocations);
-    NVVK_FAIL_RETURN(createNewBuffer(block.buffer, VkDeviceSize(m_internalBlockUnits) * m_info.minAlignment, m_info.minAlignment, 0));
+    block.offsetAllocator = std::make_unique<OffsetAllocator::Allocator>(m_state.internalBlockUnits, m_info.perBlockAllocations);
+    NVVK_FAIL_RETURN(createNewBuffer(block.buffer, VkDeviceSize(m_state.internalBlockUnits) * m_info.minAlignment,
+                                     m_info.minAlignment, 0));
 
     m_blocks.push_back(std::move(block));
 
-    m_activeBlockCount = 1;
-    m_activeBlockIndex = 0;
+    m_state.activeBlockCount = 1;
+    m_state.activeBlockIndex = 0;
   }
 
   return VK_SUCCESS;
@@ -106,8 +106,10 @@ void BufferSubAllocator::deinit()
     m_info.resourceAllocator->destroyBuffer(it.buffer);
   }
 
-  m_info = {};
+  m_info  = {};
+  m_state = {};
   m_blocks.clear();
+  m_blocks.shrink_to_fit();
 }
 
 BufferSubAllocator::Report BufferSubAllocator::getReport() const
@@ -123,7 +125,7 @@ BufferSubAllocator::Report BufferSubAllocator::getReport() const
     if(offsetAllocator)
     {
       OffsetAllocator::StorageReport storageReport = offsetAllocator->storageReport();
-      report.reservedSize += VkDeviceSize(m_internalBlockUnits - storageReport.totalFreeSpace) * m_info.minAlignment;
+      report.reservedSize += VkDeviceSize(m_state.internalBlockUnits - storageReport.totalFreeSpace) * m_info.minAlignment;
       report.freeSize = VkDeviceSize(storageReport.totalFreeSpace) * m_info.minAlignment;
     }
     else
@@ -133,17 +135,17 @@ BufferSubAllocator::Report BufferSubAllocator::getReport() const
     }
   }
 
-  report.requestedSize = m_allocatedSize;
+  report.requestedSize = m_state.allocatedSize;
 
   return report;
 }
 
 uint32_t BufferSubAllocator::acquireBlockIndex()
 {
-  uint32_t freeBlockIndex = m_freeBlockIndex;
+  uint32_t freeBlockIndex = m_state.freeBlockIndex;
   if(freeBlockIndex != INVALID_BLOCK_INDEX)
   {
-    m_freeBlockIndex = m_blocks[m_freeBlockIndex].nextFreeIndex;
+    m_state.freeBlockIndex = m_blocks[m_state.freeBlockIndex].nextFreeIndex;
   }
   else
   {
@@ -160,21 +162,21 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
 
   assert(alignment % MIN_ALIGNMENT == 0);
   assert(alignment >= MIN_ALIGNMENT && alignment <= MAX_ALIGNMENT);
-  assert(size <= m_maxAllocationSize);
+  assert(size <= m_state.maxAllocationSize);
 
   bool alignmentIsPowerOfTwo = (alignment & (alignment - 1)) == 0;
 
-  if(size + m_allocatedSize > m_info.maxAllocatedSize)
+  if(size + m_state.allocatedSize > m_info.maxAllocatedSize)
   {
     return VK_ERROR_OUT_OF_DEVICE_MEMORY;
   }
 
-  m_allocatedSize += size;
+  m_state.allocatedSize += size;
 
   // if large use a dedicated block
   if(size >= m_info.blockSize)
   {
-    if(m_freeBlockIndex == INVALID_BLOCK_INDEX && m_blocks.size() == size_t(m_maxBlocks))
+    if(m_state.freeBlockIndex == INVALID_BLOCK_INDEX && m_blocks.size() == size_t(m_state.maxBlocks))
     {
       return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     }
@@ -239,7 +241,7 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
 
   // iterate over active blocks to find allocation
 
-  uint32_t activeBlockIndex = m_activeBlockIndex;
+  uint32_t activeBlockIndex = m_state.activeBlockIndex;
 
   while(activeBlockIndex != INVALID_BLOCK_INDEX)
   {
@@ -268,7 +270,7 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
   // could not find anything
 
   // if we reached the limit for blocks, bail out
-  if(m_freeBlockIndex == INVALID_BLOCK_INDEX && m_blocks.size() == size_t(m_maxBlocks))
+  if(m_state.freeBlockIndex == INVALID_BLOCK_INDEX && m_blocks.size() == size_t(m_state.maxBlocks))
   {
     return VK_ERROR_OUT_OF_DEVICE_MEMORY;
   }
@@ -279,21 +281,21 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
     uint32_t freeBlockIndex = acquireBlockIndex();
 
     Block& block = m_blocks[freeBlockIndex];
-    block.offsetAllocator = std::make_unique<OffsetAllocator::Allocator>(m_internalBlockUnits, m_info.perBlockAllocations);
-    NVVK_FAIL_RETURN(createNewBuffer(block.buffer, VkDeviceSize(m_internalBlockUnits) * m_info.minAlignment,
+    block.offsetAllocator = std::make_unique<OffsetAllocator::Allocator>(m_state.internalBlockUnits, m_info.perBlockAllocations);
+    NVVK_FAIL_RETURN(createNewBuffer(block.buffer, VkDeviceSize(m_state.internalBlockUnits) * m_info.minAlignment,
                                      m_info.minAlignment, freeBlockIndex));
 
     // insert block into active block list
-    if(m_activeBlockIndex != INVALID_BLOCK_INDEX)
+    if(m_state.activeBlockIndex != INVALID_BLOCK_INDEX)
     {
-      m_blocks[m_activeBlockIndex].prevActiveIndex = freeBlockIndex;
+      m_blocks[m_state.activeBlockIndex].prevActiveIndex = freeBlockIndex;
     }
 
-    block.nextActiveIndex = m_activeBlockIndex;
+    block.nextActiveIndex = m_state.activeBlockIndex;
 
     // make it new list head
-    m_activeBlockIndex = freeBlockIndex;
-    m_activeBlockCount++;
+    m_state.activeBlockIndex = freeBlockIndex;
+    m_state.activeBlockCount++;
 
 
     // sub allocate from new block
@@ -339,21 +341,21 @@ void BufferSubAllocator::subFree(BufferSubAllocation& subAllocation)
     offsetAllocator->free(subAllocation.allocation);
   }
 
-  m_allocatedSize -= subAllocation.size;
+  m_state.allocatedSize -= subAllocation.size;
 
   // check if dedicated block or empty
-  if(!offsetAllocator || offsetAllocator->storageReport().totalFreeSpace == m_internalBlockUnits)
+  if(!offsetAllocator || offsetAllocator->storageReport().totalFreeSpace == m_state.internalBlockUnits)
   {
     // always free if dedicated
     // and maybe depending if we are the last one
-    if(!offsetAllocator || (m_activeBlockCount > 1 || !m_info.keepLastBlock))
+    if(!offsetAllocator || (m_state.activeBlockCount > 1 || !m_info.keepLastBlock))
     {
       m_info.resourceAllocator->destroyBuffer(m_blocks[subAllocation.block].buffer);
 
       // blocks with OffsetAllocators are counted to active blocks
       if(offsetAllocator)
       {
-        m_activeBlockCount--;
+        m_state.activeBlockCount--;
 
         // need to remove from linked list of active blocks
 
@@ -370,9 +372,9 @@ void BufferSubAllocator::subFree(BufferSubAllocation& subAllocation)
           // set next's previous to self previous
           m_blocks[nextActiveIndex].prevActiveIndex = prevActiveIndex;
         }
-        if(m_activeBlockIndex == selfActiveIndex)
+        if(m_state.activeBlockIndex == selfActiveIndex)
         {
-          m_activeBlockIndex = nextActiveIndex;
+          m_state.activeBlockIndex = nextActiveIndex;
         }
       }
 
@@ -380,8 +382,8 @@ void BufferSubAllocator::subFree(BufferSubAllocation& subAllocation)
       m_blocks[subAllocation.block] = {};
 
       // chain into linked list of empty blocks
-      m_blocks[subAllocation.block].nextFreeIndex = m_freeBlockIndex;
-      m_freeBlockIndex                            = subAllocation.block;
+      m_blocks[subAllocation.block].nextFreeIndex = m_state.freeBlockIndex;
+      m_state.freeBlockIndex                      = subAllocation.block;
     }
   }
 

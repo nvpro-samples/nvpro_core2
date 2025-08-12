@@ -21,11 +21,7 @@
 
 #include <glm/glm.hpp>
 
-
-namespace shaderio {
-using namespace glm;
 #include "nvshaders/sky_io.h.slang"
-}  // namespace shaderio
 
 #include "nvgui/property_editor.hpp"
 #include "azimuth_sliders.hpp"

@@ -576,6 +576,9 @@ void AccelerationStructureHelper::deinitAccelerationStructures(void)
   blasSet.clear();
   blasBuildData.clear();
   blasBuildStatistics = {};
+  if(blasScratchBuffer.buffer)
+    m_alloc->destroyBuffer(blasScratchBuffer);
+  blasScratchBuffer = {};
 
   // TLAS related5
   if(tlas.accel)
@@ -624,8 +627,7 @@ void AccelerationStructureHelper::blasSubmitBuildAndWait(const std::vector<Accel
   VkDeviceSize scratchSize       = blasBuilder.getScratchSize(hintScratchBudget, blasBuildData);
 
   const VkDeviceSize alignment = m_accelStructProps.minAccelerationStructureScratchOffsetAlignment;
-  Buffer             scratchBuffer;
-  NVVK_CHECK(m_alloc->createBuffer(scratchBuffer, scratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+  NVVK_CHECK(m_alloc->createBuffer(blasScratchBuffer, scratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                                    VMA_MEMORY_USAGE_AUTO_PREFER_HOST, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT, alignment));
 
   // Start the build and compaction of the BLAS
@@ -640,8 +642,8 @@ void AccelerationStructureHelper::blasSubmitBuildAndWait(const std::vector<Accel
     {
       VkCommandBuffer cmd = createSingleTimeCommands(device, m_transientPool);
 
-      VkResult result = blasBuilder.cmdCreateBlas(cmd, buildDataSpan, blasSpan, scratchBuffer.address,
-                                                  scratchBuffer.bufferSize, hintBuildBudget);
+      VkResult result = blasBuilder.cmdCreateBlas(cmd, buildDataSpan, blasSpan, blasScratchBuffer.address,
+                                                  blasScratchBuffer.bufferSize, hintBuildBudget);
       if(result == VK_SUCCESS)
       {
         finished = true;
@@ -673,7 +675,6 @@ void AccelerationStructureHelper::blasSubmitBuildAndWait(const std::vector<Accel
   }
 
   // Cleanup
-  m_alloc->destroyBuffer(scratchBuffer);
   blasBuilder.deinit();
 }
 
@@ -691,11 +692,16 @@ void AccelerationStructureHelper::tlasSubmitBuildAndWait(const std::vector<VkAcc
   // Create the instances buffer, add a barrier to ensure the data is copied before the TLAS build
   NVVK_CHECK(m_alloc->createBuffer(
       tlasInstancesBuffer, std::span<VkAccelerationStructureInstanceKHR const>(tlasInstances).size_bytes(),
-      VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT));
+      VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
   NVVK_CHECK(m_uploader->appendBuffer(tlasInstancesBuffer, 0, std::span<VkAccelerationStructureInstanceKHR const>(tlasInstances)));
   NVVK_DBG_NAME(tlasInstancesBuffer.buffer);
   m_uploader->cmdUploadAppended(cmd);
-  accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
+  // Barrier to ensure transfer write completes before acceleration structure build.
+  // VK_ACCESS_2_SHADER_READ_BIT is required because the acceleration structure build
+  // operation reads the instance data from the buffer (not just writes to the AS).
+  // Without this flag, validation layers report READ_AFTER_WRITE hazards.
+  accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT,
+                               VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT);
 
 
   tlasBuildData = {VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR};
@@ -738,7 +744,8 @@ void AccelerationStructureHelper::tlasSubmitUpdateAndWait(const std::vector<VkAc
   m_uploader->cmdUploadAppended(cmd);
 
   // Make sure the copy of the instance buffer are copied before triggering the acceleration structure build
-  accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
+  accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT,
+                               VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT);
 
   if(tlasScratchBuffer.buffer == VK_NULL_HANDLE)
   {

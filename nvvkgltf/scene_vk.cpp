@@ -26,10 +26,7 @@
 
 #include <glm/glm.hpp>
 
-namespace shaderio {
-using namespace glm;
 #include "nvshaders/gltf_scene_io.h.slang"  // Shared between host and device
-}  // namespace shaderio
 
 #include "stb_image.h"
 #include "nvimageformats/nv_dds.h"

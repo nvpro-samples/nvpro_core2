@@ -25,8 +25,10 @@
 #include "nvvk/debug_util.hpp"
 
 
-void nvshaders::Tonemapper::init(nvvk::ResourceAllocator* alloc, std::span<const uint32_t> spirv)
+VkResult nvshaders::Tonemapper::init(nvvk::ResourceAllocator* alloc, std::span<const uint32_t> spirv)
 {
+  assert(!m_device);
+
   m_device = alloc->getDevice();
 
   // Binding layout
@@ -52,7 +54,7 @@ void nvshaders::Tonemapper::init(nvvk::ResourceAllocator* alloc, std::span<const
       .bindingCount = uint32_t(layoutBindings.size()),
       .pBindings    = layoutBindings.data(),
   };
-  NVVK_CHECK(vkCreateDescriptorSetLayout(m_device, &descriptorSetLayoutInfo, nullptr, &m_descriptorSetLayout));
+  NVVK_FAIL_RETURN(vkCreateDescriptorSetLayout(m_device, &descriptorSetLayoutInfo, nullptr, &m_descriptorSetLayout));
   NVVK_DBG_NAME(m_descriptorSetLayout);
 
   // Push constant
@@ -70,34 +72,39 @@ void nvshaders::Tonemapper::init(nvvk::ResourceAllocator* alloc, std::span<const
       .pushConstantRangeCount = 1,
       .pPushConstantRanges    = &pushConstantRange,
   };
-  NVVK_CHECK(vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_pipelineLayout));
+  NVVK_FAIL_RETURN(vkCreatePipelineLayout(m_device, &pipelineLayoutInfo, nullptr, &m_pipelineLayout));
   NVVK_DBG_NAME(m_pipelineLayout);
 
-  // Shader
-  VkShaderCreateInfoEXT shaderInfo{
-      .sType                  = VK_STRUCTURE_TYPE_SHADER_CREATE_INFO_EXT,
-      .stage                  = VK_SHADER_STAGE_COMPUTE_BIT,
-      .codeType               = VK_SHADER_CODE_TYPE_SPIRV_EXT,
-      .codeSize               = spirv.size_bytes(),
-      .pCode                  = spirv.data(),
-      .pName                  = "main",
-      .setLayoutCount         = 1,
-      .pSetLayouts            = &m_descriptorSetLayout,
-      .pushConstantRangeCount = 1,
-      .pPushConstantRanges    = &pushConstantRange,
-  };
-  vkCreateShadersEXT(m_device, 1U, &shaderInfo, nullptr, &m_shader);
-  NVVK_DBG_NAME(m_shader);
+  // Compute Pipeline
+  VkComputePipelineCreateInfo compInfo   = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+  VkShaderModuleCreateInfo    shaderInfo = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+  compInfo.stage                         = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+  compInfo.stage.stage                   = VK_SHADER_STAGE_COMPUTE_BIT;
+  compInfo.stage.pName                   = "main";
+  compInfo.stage.pNext                   = &shaderInfo;
+  compInfo.layout                        = m_pipelineLayout;
+
+  shaderInfo.codeSize = uint32_t(spirv.size_bytes());
+  shaderInfo.pCode    = spirv.data();
+
+  NVVK_FAIL_RETURN(vkCreateComputePipelines(m_device, nullptr, 1, &compInfo, nullptr, &m_pipeline));
+  NVVK_DBG_NAME(m_pipeline);
+
+  return VK_SUCCESS;
 }
 
 void nvshaders::Tonemapper::deinit()
 {
-  vkDestroyShaderEXT(m_device, m_shader, nullptr);
+  if(!m_device)
+    return;
+
+  vkDestroyPipeline(m_device, m_pipeline, nullptr);
   vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
   vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
   m_pipelineLayout      = VK_NULL_HANDLE;
-  m_shader              = VK_NULL_HANDLE;
+  m_pipeline            = VK_NULL_HANDLE;
   m_descriptorSetLayout = VK_NULL_HANDLE;
+  m_device              = VK_NULL_HANDLE;
 }
 
 void nvshaders::Tonemapper::runCompute(VkCommandBuffer                 cmd,
@@ -108,9 +115,8 @@ void nvshaders::Tonemapper::runCompute(VkCommandBuffer                 cmd,
 {
   NVVK_DBG_SCOPE(cmd);  // <-- Helps to debug in NSight
 
-  // Bind shader
-  const VkShaderStageFlagBits stages[1] = {VK_SHADER_STAGE_COMPUTE_BIT};
-  vkCmdBindShadersEXT(cmd, 1, stages, &m_shader);
+  // Bind pipeline
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline);
 
   // Push constant
   vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(shaderio::TonemapperData), &tonemapper);

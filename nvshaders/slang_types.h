@@ -24,6 +24,17 @@
 // It enables seamless data sharing between shader code and host code while maintaining type safety.
 
 #ifdef __cplusplus
+#include <glm/glm.hpp>
+
+// In C++, we put all of the shared types and functions into the 'shaderio' namespace.
+// We provide the below macros to deal with the fact that not all languages #include'ing this header actually support namespaces.
+#define NAMESPACE_SHADERIO_BEGIN() namespace shaderio {
+#define NAMESPACE_SHADERIO_END() }  // namespace shaderio
+
+NAMESPACE_SHADERIO_BEGIN()
+
+using namespace glm;  // import all of glm into the shaderio namespace
+
 // Type aliases to match Slang shader types with C++ GLM types
 using float4x4 = glm::mat4;
 using float4x3 = glm::mat4x3;
@@ -41,6 +52,7 @@ using int2 = glm::ivec2;
 using int3 = glm::ivec3;
 using int4 = glm::ivec4;
 
+using uint  = unsigned int;
 using uint2 = glm::uvec2;
 using uint3 = glm::uvec3;
 using uint4 = glm::uvec4;
@@ -72,10 +84,15 @@ glm::vec<N, ScalarType, Precision> mul(glm::mat<N, N, ScalarType, Precision> M, 
   return v * M;
 }
 
-
 #define SLANG_DEFAULT(x) = (x)
 
+NAMESPACE_SHADERIO_END()
+
 #elif defined(GL_core_profile)  // GLSL
+
+#define NAMESPACE_SHADERIO_BEGIN()
+#define NAMESPACE_SHADERIO_END()
+
 // GLSL type definitions
 #define float4x4 mat4
 #define float4x3 mat4x3
@@ -119,6 +136,9 @@ vec3 mul(vec3 a, mat3 b)
 }
 
 #elif __SLANG__
+
+#define NAMESPACE_SHADERIO_BEGIN()
+#define NAMESPACE_SHADERIO_END()
 
 #define SLANG_DEFAULT(x) = (x)
 __intrinsic_op(cmpGT) public vector<bool, N> greaterThan<T, let N : int>(vector<T, N> x, vector<T, N> y);

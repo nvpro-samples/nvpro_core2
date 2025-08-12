@@ -318,7 +318,8 @@ void nvvkgltf::SceneRtx::cmdCreateBuildTopLevelAccelerationStructure(VkCommandBu
   staging.cmdUploadAppended(cmd);
 
   // Make sure the copy of the instance buffer are copied before triggering the acceleration structure build
-  nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
+  nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT,
+                                     VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT);
 
   // Calculate the amount of scratch memory needed to build the TLAS
   VkAccelerationStructureBuildSizesInfoKHR sizeInfo = m_tlasBuildData.finalizeGeometry(m_device, buildFlags);
@@ -368,7 +369,8 @@ void nvvkgltf::SceneRtx::updateTopLevelAS(VkCommandBuffer cmd, nvvk::StagingUplo
   staging.cmdUploadAppended(cmd);
 
   // Make sure the copy of the instance buffer are copied before triggering the acceleration structure build
-  nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
+  nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_TRANSFER_WRITE_BIT,
+                                     VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_2_SHADER_READ_BIT);
 
   if(m_tlasScratchBuffer.buffer == VK_NULL_HANDLE)
   {

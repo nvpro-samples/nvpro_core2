@@ -30,11 +30,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 
-namespace shaderio {
-using namespace glm;
 #include "nvshaders/slang_types.h"
 #include "nvshaders/hdr_io.h.slang"
-}  // namespace shaderio
 
 #include <nvutils/file_operations.hpp>
 #include <nvutils/logger.hpp>
@@ -195,7 +192,7 @@ void HdrIbl::loadEnvironment(VkCommandBuffer cmd, nvvk::StagingUploader& staging
       .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
       .maxLod       = VK_LOD_CLAMP_NONE,
   };
-  m_samplerPool->acquireSampler(m_texHdr.descriptor.sampler, samplerInfo);
+  NVVK_CHECK(m_samplerPool->acquireSampler(m_texHdr.descriptor.sampler, samplerInfo));
 
   // Create the descriptor set layout
   createDescriptorSetLayout();
@@ -208,6 +205,7 @@ void HdrIbl::destroyEnvironment()
 
   if(m_alloc != nullptr)
   {
+    m_samplerPool->releaseSampler(m_texHdr.descriptor.sampler);
     m_alloc->destroyImage(m_texHdr);
     m_alloc->destroyBuffer(m_accelImpSmpl);
   }

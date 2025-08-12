@@ -24,6 +24,7 @@
 #include "slang_types.h"
 #include "tonemap_io.h.slang"
 
+NAMESPACE_SHADERIO_BEGIN()
 
 /*-------------------------------------------------------------------------------------------------
 # Function `toSrgb`
@@ -237,5 +238,7 @@ inline float3 applyTonemap(TonemapperData tm, float3 color, float2 uv)
 
   return c;
 }
+
+NAMESPACE_SHADERIO_END()
 
 #endif  // TONEMAMP_FUNCTIONS_H

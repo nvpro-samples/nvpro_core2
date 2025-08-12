@@ -23,10 +23,7 @@
 #include "vulkan/vulkan_core.h"
 #include "nvvk/resource_allocator.hpp"
 
-namespace shaderio {
-using namespace glm;
 #include <nvshaders/tonemap_io.h.slang>
-}  // namespace shaderio
 
 
 namespace nvshaders {
@@ -35,10 +32,10 @@ class Tonemapper
 {
 public:
   Tonemapper() {};
-  ~Tonemapper() { assert(m_shader == VK_NULL_HANDLE); }  //  "Missing to call deinit"
+  ~Tonemapper() { assert(m_device == VK_NULL_HANDLE); }  //  "Missing to call deinit"
 
-  void init(nvvk::ResourceAllocator* alloc, std::span<const uint32_t> spirv);
-  void deinit();
+  VkResult init(nvvk::ResourceAllocator* alloc, std::span<const uint32_t> spirv);
+  void     deinit();
 
   void runCompute(VkCommandBuffer                 cmd,
                   const VkExtent2D&               size,
@@ -49,9 +46,9 @@ public:
 
 private:
   VkDevice              m_device{};
-  VkDescriptorSetLayout m_descriptorSetLayout{};  //
-  VkPipelineLayout      m_pipelineLayout{};       //
-  VkShaderEXT           m_shader{};
+  VkDescriptorSetLayout m_descriptorSetLayout{};
+  VkPipelineLayout      m_pipelineLayout{};
+  VkPipeline            m_pipeline{};
 };
 
 

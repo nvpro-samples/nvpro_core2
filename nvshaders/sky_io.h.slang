@@ -22,6 +22,8 @@
 
 #include "slang_types.h"
 
+NAMESPACE_SHADERIO_BEGIN()
+
 /*-------------------------------------------------------------------------------------------------
 > Contains structures and functions for procedural sky models.
 
@@ -112,5 +114,7 @@ struct SkyPhysicalParameters
   float sunGlowIntensity SLANG_DEFAULT(1.0f);
   int yIsUp              SLANG_DEFAULT(1);
 };
+
+NAMESPACE_SHADERIO_END()
 
 #endif  // SKY_SHADERIO_H
