@@ -277,3 +277,15 @@ if (NOT TARGET cgltf AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/cgltf)
   target_include_directories(cgltf INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/cgltf")
   set_property(TARGET cgltf PROPERTY FOLDER "ThirdParty")
 endif()
+
+# NVTX
+if (NOT TARGET nvtx3-cpp AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/NVTX/c/CMakeLists.txt)
+  add_subdirectory(NVTX/c)
+  # Set folder property for NVTX targets if they exist
+  if(TARGET nvtx3-cpp)
+    set_property(TARGET nvtx3-cpp PROPERTY FOLDER "ThirdParty")
+  endif()
+  if(TARGET nvtx3-c)
+    set_property(TARGET nvtx3-c PROPERTY FOLDER "ThirdParty")
+  endif()
+endif()

@@ -112,13 +112,28 @@ static void fixSingleFilter(std::string* pFilter)
 
 std::filesystem::path nvgui::windowOpenFileDialog(struct GLFWwindow* glfwin, const char* title, const char* exts)
 {
+  std::filesystem::path initialDir;
+  return windowOpenFileDialog(glfwin, title, exts, initialDir);
+}
+
+std::filesystem::path nvgui::windowOpenFileDialog(struct GLFWwindow* glfwin, const char* title, const char* exts, std::filesystem::path& initialDir)
+{
   // Not sure yet how to use this; maybe make as a child window somehow?
   [[maybe_unused]] Window hwnd = glfwGetX11Window(glfwin);
 
   std::vector<std::string> filterArgs   = toFilterArgs(exts);
-  std::vector<std::string> resultVector = open_file(title, ".", filterArgs).result();
+  std::string              initialPath  = initialDir.empty() ? "." : initialDir.string();
+  std::vector<std::string> resultVector = open_file(title, initialPath, filterArgs).result();
   assert(resultVector.size() <= 1);
-  return resultVector.empty() ? "" : std::move(resultVector[0]);
+  std::filesystem::path result = resultVector.empty() ? "" : std::move(resultVector[0]);
+
+  // Update the initial directory to the directory of the selected file
+  if(!result.empty())
+  {
+    initialDir = result.parent_path();
+  }
+
+  return result;
 }
 
 std::filesystem::path nvgui::windowSaveFileDialog(struct GLFWwindow* glfwin, const char* title, const char* exts)

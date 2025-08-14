@@ -26,6 +26,7 @@ Generic:
 - [**nvimageformats**](nvimageformats): DDS and KTX2 image libraries
 - [**nvaftermath**](nvaftermath): NVIDIA Aftermath integration for crash analysis (library has additional features if NVIDIA Aftermath SDK is found, otherwise basic functionality)
 - [**nvgpu_monitor**](nvgpu_monitor): GPU performance monitoring using NVML (requires the component from CUDA Toolkit)
+- [**nvnsight**](nvnsight): NVIDIA Nsight Graphics integration with NVTX profiling support (conditional, can be disabled)
 
 `nvpro_core2`'s code is designed so you can extract and use functions from it in your own projects without too much modification.
 

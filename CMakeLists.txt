@@ -106,7 +106,7 @@ endif()
 
 # Then set up targets for all nvpro_core libraries.
 # These are in a specific order because of interdependencies.
-foreach(_LIBRARY IN ITEMS nvimageformats nvutils nvapp nvgui nvgpu_monitor nvvk nvgl nvshaders_host nvaftermath nvslang nvvkglsl nvvkgltf)
+foreach(_LIBRARY IN ITEMS nvimageformats nvutils nvapp nvgui nvgpu_monitor nvvk nvgl nvshaders_host nvaftermath nvslang nvvkglsl nvvkgltf nvnsight)
   option(NVPRO2_ENABLE_${_LIBRARY} "Enable ${_LIBRARY}" ON)
   
   if(NVPRO2_ENABLE_${_LIBRARY})
