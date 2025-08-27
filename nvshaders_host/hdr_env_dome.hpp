@@ -74,8 +74,8 @@ public:
             float                  blur     = 0.F);
   void destroy();
 
-  inline VkDescriptorSetLayout getDescLayout() const { return m_hdrPack.layout; }
-  inline VkDescriptorSet       getDescSet() const { return m_hdrPack.sets[0]; }
+  inline VkDescriptorSetLayout getDescLayout() const { return m_hdrPack.getLayout(); }
+  inline VkDescriptorSet       getDescSet() const { return m_hdrPack.getSet(0); }
 
   const std::vector<nvvk::Image> getTextures() const
   {

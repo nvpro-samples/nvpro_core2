@@ -401,11 +401,17 @@ void nvvkgltf::SceneRtx::updateBottomLevelAS(VkCommandBuffer cmd, const nvvkgltf
   for(auto& primID : scene.getMorphPrimitives())
   {
     m_blasBuildData[primID].cmdUpdateAccelerationStructure(cmd, m_blasAccel[primID].accel, m_blasScratchBuffer.address);
+    // Add synchronization between consecutive acceleration structure updates that use the same scratch buffer
+    nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
+                                       VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
   }
   for(auto& skinNode : scene.getSkinNodes())  // Update the BLAS
   {
     int primID = scene.getRenderNodes()[skinNode].renderPrimID;
     m_blasBuildData[primID].cmdUpdateAccelerationStructure(cmd, m_blasAccel[primID].accel, m_blasScratchBuffer.address);
+    // Add synchronization between consecutive acceleration structure updates that use the same scratch buffer
+    nvvk::accelerationStructureBarrier(cmd, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
+                                       VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
   }
 }
 

@@ -17,15 +17,17 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <stdint.h>
+#include <cstdint>
 #include <string>
 
 #include <imgui/imgui.h>
 #include <open_iconic/open_iconic.h>
 #include <roboto/roboto_mono.h>
 #include <roboto/roboto_regular.h>
+#include <material_symbols/material_symbols_rounded_filled_regular.h>
 
 #include "fonts.hpp"
+
 
 namespace nvgui {
 ImFont* g_defaultFont   = nullptr;
@@ -41,13 +43,44 @@ static ImFontConfig getDefaultConfig()
   return config;
 }
 
-void nvgui::addDefaultFont(float fontSize)
+// Helper function to append a font with embedded Material Symbols icons
+// Icon fonts: https://fonts.google.com/icons?icon.set=Material+Symbols
+static ImFont* appendFontWithMaterialSymbols(const void* fontData, int fontDataSize, float fontSize)
+{
+  // Configure Material Symbols icon font for merging
+  ImFontConfig iconConfig = getDefaultConfig();
+  iconConfig.MergeMode    = true;
+  iconConfig.PixelSnapH   = true;
+
+  // Material Symbols specific configuration
+  float iconFontSize       = 1.28571429f * fontSize;  // Material Symbols work best at ~1.29x the base font size
+  iconConfig.GlyphOffset.x = iconFontSize * 0.01f;
+  iconConfig.GlyphOffset.y = iconFontSize * 0.2f;
+
+  // Define the Material Symbols character range
+  static const ImWchar materialSymbolsRange[] = {ICON_MIN_MS, ICON_MAX_MS, 0};
+
+  // Load embedded Material Symbols
+  ImFont* font = ImGui::GetIO().Fonts->AddFontFromMemoryCompressedTTF(fontData, fontDataSize, iconFontSize, &iconConfig);
+
+  return font;
+}
+
+
+// Add default Roboto fonts with the option to merge Material Symbols (icons)
+void nvgui::addDefaultFont(float fontSize, bool appendIcons)
 {
   if(g_defaultFont == nullptr)
   {
     ImFontConfig fontConfig = getDefaultConfig();
     g_defaultFont           = ImGui::GetIO().Fonts->AddFontFromMemoryCompressedTTF(g_roboto_regular_compressed_data,
                                                                                    g_roboto_regular_compressed_size, fontSize, &fontConfig);
+
+    if(appendIcons)  // If appendIcons is true, merge Material Symbols into the default font
+    {
+      g_defaultFont = appendFontWithMaterialSymbols(g_materialSymbolsRounded_filled_compressed_data,
+                                                    g_materialSymbolsRounded_filled_compressed_size, fontSize);
+    }
   }
 }
 

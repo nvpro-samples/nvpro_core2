@@ -24,6 +24,8 @@
 #include "nvvk/resource_allocator.hpp"
 
 #include <nvshaders/tonemap_io.h.slang>
+#include <nvutils/timers.hpp>
+#include <nvvk/descriptors.hpp>
 
 
 namespace nvshaders {
@@ -43,12 +45,26 @@ public:
                   const VkDescriptorImageInfo&    inImage,
                   const VkDescriptorImageInfo&    outImage);
 
-
 private:
-  VkDevice              m_device{};
-  VkDescriptorSetLayout m_descriptorSetLayout{};
-  VkPipelineLayout      m_pipelineLayout{};
-  VkPipeline            m_pipeline{};
+  // Add new methods for histogram-based auto-exposure
+  void runAutoExposureHistogram(VkCommandBuffer cmd, const VkExtent2D& size, const VkDescriptorImageInfo& inImage);
+  void runAutoExposure(VkCommandBuffer cmd);
+  void clearHistogram(VkCommandBuffer cmd);
+
+  nvvk::ResourceAllocator* m_alloc{};
+
+  VkDevice             m_device{};
+  nvvk::DescriptorPack m_descriptorPack;
+  VkPipelineLayout     m_pipelineLayout{};
+  VkPipeline           m_tonemapPipeline{};
+  VkPipeline           m_histogramPipeline{};
+  VkPipeline           m_exposurePipeline{};
+
+  nvutils::PerformanceTimer m_timer;  // Timer for performance measurement
+
+  // Auto-Exposure
+  nvvk::Buffer m_exposureBuffer;
+  nvvk::Buffer m_histogramBuffer;
 };
 
 

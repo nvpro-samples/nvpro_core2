@@ -21,54 +21,47 @@
 #include <array>
 
 #include "tonemapper.hpp"
-#include "nvvk/check_error.hpp"
-#include "nvvk/debug_util.hpp"
-
+#include <nvvk/barriers.hpp>
+#include <nvvk/check_error.hpp>
+#include <nvvk/commands.hpp>
+#include <nvvk/compute_pipeline.hpp>
+#include <nvvk/debug_util.hpp>
+#include <nvvk/default_structs.hpp>
 
 VkResult nvshaders::Tonemapper::init(nvvk::ResourceAllocator* alloc, std::span<const uint32_t> spirv)
 {
   assert(!m_device);
-
+  m_alloc  = alloc;
   m_device = alloc->getDevice();
 
-  // Binding layout
-  const auto layoutBindings = std::to_array<VkDescriptorSetLayoutBinding>({
-      {
-          .binding         = shaderio::TonemapBinding::eInput,
-          .descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-          .descriptorCount = 1,
-          .stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT,
-      },
-      {
-          .binding         = shaderio::TonemapBinding::eOutput,
-          .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-          .descriptorCount = 1,
-          .stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT,
-      },
-  });
+  // Create buffers
+  alloc->createBuffer(m_exposureBuffer, sizeof(float),
+                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                      VMA_MEMORY_USAGE_AUTO);
+  NVVK_DBG_NAME(m_exposureBuffer.buffer);
+  alloc->createBuffer(m_histogramBuffer, sizeof(uint32_t) * EXPOSURE_HISTOGRAM_SIZE,
+                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                      VMA_MEMORY_USAGE_AUTO);
 
-  // Descriptor set layout
-  const VkDescriptorSetLayoutCreateInfo descriptorSetLayoutInfo{
-      .sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-      .flags        = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT,
-      .bindingCount = uint32_t(layoutBindings.size()),
-      .pBindings    = layoutBindings.data(),
-  };
-  NVVK_FAIL_RETURN(vkCreateDescriptorSetLayout(m_device, &descriptorSetLayoutInfo, nullptr, &m_descriptorSetLayout));
-  NVVK_DBG_NAME(m_descriptorSetLayout);
+
+  // Shader descriptor set layout
+  nvvk::DescriptorBindings bindings;
+  bindings.addBinding(shaderio::TonemapBinding::eImageInput, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT);
+  bindings.addBinding(shaderio::TonemapBinding::eImageOutput, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT);
+  bindings.addBinding(shaderio::TonemapBinding::eHistogramInputOutput, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT);
+  bindings.addBinding(shaderio::TonemapBinding::eLuminanceInputOutput, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT);
+
+  NVVK_CHECK(m_descriptorPack.init(bindings, m_device, 0, VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR));
+  NVVK_DBG_NAME(m_descriptorPack.getLayout());
 
   // Push constant
-  const VkPushConstantRange pushConstantRange{
-      .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
-      .offset     = 0,
-      .size       = sizeof(shaderio::TonemapperData),
-  };
+  VkPushConstantRange pushConstantRange{.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT, .size = sizeof(shaderio::TonemapperData)};
 
   // Pipeline layout
   const VkPipelineLayoutCreateInfo pipelineLayoutInfo{
       .sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
       .setLayoutCount         = 1,
-      .pSetLayouts            = &m_descriptorSetLayout,
+      .pSetLayouts            = m_descriptorPack.getLayoutPtr(),
       .pushConstantRangeCount = 1,
       .pPushConstantRanges    = &pushConstantRange,
   };
@@ -80,15 +73,25 @@ VkResult nvshaders::Tonemapper::init(nvvk::ResourceAllocator* alloc, std::span<c
   VkShaderModuleCreateInfo    shaderInfo = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
   compInfo.stage                         = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
   compInfo.stage.stage                   = VK_SHADER_STAGE_COMPUTE_BIT;
-  compInfo.stage.pName                   = "main";
   compInfo.stage.pNext                   = &shaderInfo;
   compInfo.layout                        = m_pipelineLayout;
 
-  shaderInfo.codeSize = uint32_t(spirv.size_bytes());
+  shaderInfo.codeSize = uint32_t(spirv.size_bytes());  // All shaders are in the same spirv
   shaderInfo.pCode    = spirv.data();
 
-  NVVK_FAIL_RETURN(vkCreateComputePipelines(m_device, nullptr, 1, &compInfo, nullptr, &m_pipeline));
-  NVVK_DBG_NAME(m_pipeline);
+  // Tonemap Pipelines
+  compInfo.stage.pName = "Tonemap";
+  NVVK_FAIL_RETURN(vkCreateComputePipelines(m_device, nullptr, 1, &compInfo, nullptr, &m_tonemapPipeline));
+  NVVK_DBG_NAME(m_tonemapPipeline);
+
+  // Auto-Exposure Pipelines
+  compInfo.stage.pName = "Histogram";
+  NVVK_FAIL_RETURN(vkCreateComputePipelines(m_device, nullptr, 1, &compInfo, nullptr, &m_histogramPipeline));
+  NVVK_DBG_NAME(m_histogramPipeline);
+
+  compInfo.stage.pName = "AutoExposure";
+  NVVK_FAIL_RETURN(vkCreateComputePipelines(m_device, nullptr, 1, &compInfo, nullptr, &m_exposurePipeline));
+  NVVK_DBG_NAME(m_exposurePipeline);
 
   return VK_SUCCESS;
 }
@@ -98,15 +101,24 @@ void nvshaders::Tonemapper::deinit()
   if(!m_device)
     return;
 
-  vkDestroyPipeline(m_device, m_pipeline, nullptr);
-  vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
+  m_alloc->destroyBuffer(m_exposureBuffer);
+  m_alloc->destroyBuffer(m_histogramBuffer);
+
+  vkDestroyPipeline(m_device, m_tonemapPipeline, nullptr);
+  vkDestroyPipeline(m_device, m_histogramPipeline, nullptr);
+  vkDestroyPipeline(m_device, m_exposurePipeline, nullptr);
   vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-  m_pipelineLayout      = VK_NULL_HANDLE;
-  m_pipeline            = VK_NULL_HANDLE;
-  m_descriptorSetLayout = VK_NULL_HANDLE;
-  m_device              = VK_NULL_HANDLE;
+  m_descriptorPack.deinit();
+
+  m_pipelineLayout  = VK_NULL_HANDLE;
+  m_tonemapPipeline = VK_NULL_HANDLE;
+  m_device          = VK_NULL_HANDLE;
 }
 
+
+//----------------------------------
+// Run the tonemapper compute shader
+//
 void nvshaders::Tonemapper::runCompute(VkCommandBuffer                 cmd,
                                        const VkExtent2D&               size,
                                        const shaderio::TonemapperData& tonemapper,
@@ -115,33 +127,76 @@ void nvshaders::Tonemapper::runCompute(VkCommandBuffer                 cmd,
 {
   NVVK_DBG_SCOPE(cmd);  // <-- Helps to debug in NSight
 
-  // Bind pipeline
-  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipeline);
-
   // Push constant
-  vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(shaderio::TonemapperData), &tonemapper);
+  shaderio::TonemapperData tonemapperEx = tonemapper;
+  tonemapperEx.autoExposureSpeed *= float(m_timer.getSeconds());
+  vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(shaderio::TonemapperData), &tonemapperEx);
+  m_timer.reset();
 
-  // Update descriptor sets
-  VkWriteDescriptorSet writeDescriptorSet[2]{
-      {
-          .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-          .dstSet          = 0,
-          .dstBinding      = shaderio::TonemapBinding::eInput,
-          .descriptorCount = 1,
-          .descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-          .pImageInfo      = &inImage,
-      },
-      {
-          .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-          .dstSet          = 0,
-          .dstBinding      = shaderio::TonemapBinding::eOutput,
-          .descriptorCount = 1,
-          .descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-          .pImageInfo      = &outImage,
-      },
-  };
-  vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, 2, writeDescriptorSet);
+  // Push information to the descriptor set
+  nvvk::WriteSetContainer writeSetContainer;
+  writeSetContainer.append(m_descriptorPack.makeWrite(shaderio::TonemapBinding::eImageInput), inImage);
+  writeSetContainer.append(m_descriptorPack.makeWrite(shaderio::TonemapBinding::eImageOutput), outImage);
+  writeSetContainer.append(m_descriptorPack.makeWrite(shaderio::TonemapBinding::eHistogramInputOutput), m_histogramBuffer);
+  writeSetContainer.append(m_descriptorPack.makeWrite(shaderio::TonemapBinding::eLuminanceInputOutput), m_exposureBuffer);
+  vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_pipelineLayout, 0, writeSetContainer.size(),
+                            writeSetContainer.data());
 
-  // Dispatching the compute job
-  vkCmdDispatch(cmd, (size.width + 15) / 16, (size.height + 15) / 16, 1);
+  // Run auto-exposure histogram/exposure if enabled
+  if(tonemapper.isActive && tonemapper.autoExposure)
+  {
+    static bool firstRun = true;
+    if(firstRun)
+    {
+      clearHistogram(cmd);
+      firstRun = false;
+    }
+
+    runAutoExposureHistogram(cmd, size, inImage);
+    runAutoExposure(cmd);
+  }
+
+  // Run tonemapper compute shader
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_tonemapPipeline);
+  VkExtent2D groupSize = nvvk::getGroupCounts(size, VkExtent2D{TONEMAP_WORKGROUP_SIZE, TONEMAP_WORKGROUP_SIZE});
+  vkCmdDispatch(cmd, groupSize.width, groupSize.height, 1);
+}
+
+void nvshaders::Tonemapper::runAutoExposureHistogram(VkCommandBuffer cmd, const VkExtent2D& size, const VkDescriptorImageInfo& inImage)
+{
+  NVVK_DBG_SCOPE(cmd);  // <-- Helps to debug in NSight
+
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_histogramPipeline);
+  VkExtent2D groupSize = nvvk::getGroupCounts(size, TONEMAP_WORKGROUP_SIZE);
+  vkCmdDispatch(cmd, groupSize.width, groupSize.height, 1);
+  nvvk::cmdBufferMemoryBarrier(cmd, {.buffer        = m_histogramBuffer.buffer,
+                                     .srcStageMask  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                     .dstStageMask  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                     .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                                     .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT});
+}
+
+void nvshaders::Tonemapper::runAutoExposure(VkCommandBuffer cmd)
+{
+  NVVK_DBG_SCOPE(cmd);  // <-- Helps to debug in NSight
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_exposurePipeline);
+  vkCmdDispatch(cmd, 1, 1, 1);
+  nvvk::cmdBufferMemoryBarrier(cmd, {.buffer        = m_exposureBuffer.buffer,
+                                     .srcStageMask  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                     .dstStageMask  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                     .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                                     .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT});
+}
+
+void nvshaders::Tonemapper::clearHistogram(VkCommandBuffer cmd)
+{
+  std::array<uint32_t, EXPOSURE_HISTOGRAM_SIZE> histogramData{0};
+  vkCmdUpdateBuffer(cmd, m_histogramBuffer.buffer, 0, sizeof(uint32_t) * EXPOSURE_HISTOGRAM_SIZE, histogramData.data());
+
+  // Add barrier to ensure update buffer completes before compute shader writes to the buffer
+  nvvk::cmdBufferMemoryBarrier(cmd, {.buffer        = m_histogramBuffer.buffer,
+                                     .srcStageMask  = VK_PIPELINE_STAGE_2_CLEAR_BIT,
+                                     .dstStageMask  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                     .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                     .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT});
 }

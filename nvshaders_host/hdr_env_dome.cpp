@@ -19,8 +19,9 @@
 
 
 #define _USE_MATH_DEFINES
-#include <iostream>
+#include <array>
 #include <cmath>
+#include <iostream>
 #include <numeric>
 
 #include <glm/glm.hpp>
@@ -108,7 +109,7 @@ void HdrEnvDome::create(VkDescriptorSet                  dstSet,
 void HdrEnvDome::setOutImage(const VkDescriptorImageInfo& outimage)
 {
   VkWriteDescriptorSet wds{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-  wds.dstSet          = m_domePack.sets[0];
+  wds.dstSet          = m_domePack.getSet(0);
   wds.dstBinding      = shaderio::EnvDomeDraw::eHdrImage;
   wds.descriptorCount = 1;
   wds.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -122,17 +123,18 @@ void HdrEnvDome::setOutImage(const VkDescriptorImageInfo& outimage)
 //
 void HdrEnvDome::createDrawPipeline(const std::span<const uint32_t>& spirvDrawDome)
 {
+  nvvk::DescriptorBindings bindings;
   // Descriptor: the output image
-  m_domePack.bindings.addBinding(shaderio::EnvDomeDraw::eHdrImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT);
-  NVVK_CHECK(m_domePack.initFromBindings(m_device, 1));
-  NVVK_DBG_NAME(m_domePack.layout);
-  NVVK_DBG_NAME(m_domePack.pool);
-  NVVK_DBG_NAME(m_domePack.sets[0]);
+  bindings.addBinding(shaderio::EnvDomeDraw::eHdrImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT);
+  NVVK_CHECK(m_domePack.init(bindings, m_device, 1));
+  NVVK_DBG_NAME(m_domePack.getLayout());
+  NVVK_DBG_NAME(m_domePack.getPool());
+  NVVK_DBG_NAME(m_domePack.getSet(0));
 
   // Creating the pipeline layout
   const VkPushConstantRange pushConstantRange{
       .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT, .offset = 0, .size = sizeof(shaderio::HdrDomePushConstant)};
-  NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_domePipelineLayout, {m_domePack.layout, m_hdrEnvLayout}, {pushConstantRange}));
+  NVVK_CHECK(nvvk::createPipelineLayout(m_device, &m_domePipelineLayout, {m_domePack.getLayout(), m_hdrEnvLayout}, {pushConstantRange}));
   NVVK_DBG_NAME(m_domePipelineLayout);
 
   VkShaderModuleCreateInfo moduleInfo = {
@@ -182,7 +184,7 @@ void HdrEnvDome::draw(const VkCommandBuffer& cmd,
   pushConst.blur      = blur;
 
   // Execution
-  std::vector<VkDescriptorSet> dst_sets{m_domePack.sets[0], m_hdrEnvSet};
+  std::vector<VkDescriptorSet> dst_sets{m_domePack.getSet(0), m_hdrEnvSet};
   vkCmdPushConstants(cmd, m_domePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(shaderio::HdrDomePushConstant), &pushConst);
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_domePipelineLayout, 0,
                           static_cast<uint32_t>(dst_sets.size()), dst_sets.data(), 0, nullptr);
@@ -216,20 +218,20 @@ void HdrEnvDome::destroy()
 //
 void HdrEnvDome::createDescriptorSetLayout()
 {
-  nvvk::DescriptorBindings& bindings = m_hdrPack.bindings;
+  nvvk::DescriptorBindings bindings;
   bindings.addBinding(shaderio::EnvDomeBindings::eHdrBrdf, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL);  // HDR image
   bindings.addBinding(shaderio::EnvDomeBindings::eHdrDiffuse, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL);  // HDR image
   bindings.addBinding(shaderio::EnvDomeBindings::eHdrSpecular, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL);  // HDR image
 
-  NVVK_CHECK(m_hdrPack.initFromBindings(m_device, 1));
-  NVVK_DBG_NAME(m_hdrPack.layout);
-  NVVK_DBG_NAME(m_hdrPack.pool);
-  NVVK_DBG_NAME(m_hdrPack.sets[0]);
+  NVVK_CHECK(m_hdrPack.init(bindings, m_device, 1));
+  NVVK_DBG_NAME(m_hdrPack.getLayout());
+  NVVK_DBG_NAME(m_hdrPack.getPool());
+  NVVK_DBG_NAME(m_hdrPack.getSet(0));
 
   nvvk::WriteSetContainer writeContainer;
-  writeContainer.append(bindings.getWriteSet(shaderio::EnvDomeBindings::eHdrBrdf, m_hdrPack.sets[0]), m_textures.lutBrdf);
-  writeContainer.append(bindings.getWriteSet(shaderio::EnvDomeBindings::eHdrDiffuse, m_hdrPack.sets[0]), m_textures.diffuse);
-  writeContainer.append(bindings.getWriteSet(shaderio::EnvDomeBindings::eHdrSpecular, m_hdrPack.sets[0]), m_textures.glossy);
+  writeContainer.append(m_hdrPack.makeWrite(shaderio::EnvDomeBindings::eHdrBrdf), m_textures.lutBrdf);
+  writeContainer.append(m_hdrPack.makeWrite(shaderio::EnvDomeBindings::eHdrDiffuse), m_textures.diffuse);
+  writeContainer.append(m_hdrPack.makeWrite(shaderio::EnvDomeBindings::eHdrSpecular), m_textures.glossy);
   vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
 }
 
@@ -269,19 +271,20 @@ void HdrEnvDome::integrateBrdf(uint32_t dimension, nvvk::Image& target, const st
     nvvk::cmdImageMemoryBarrier(cmd, {target.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL});
 
     // The output image is the one we have just created
-    descPack.bindings.addBinding(shaderio::EnvDomeDraw::eHdrImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT);
-    NVVK_CHECK(descPack.initFromBindings(m_device, 1));
-    NVVK_DBG_NAME(descPack.layout);
-    NVVK_DBG_NAME(descPack.pool);
-    NVVK_DBG_NAME(descPack.sets[0]);
+    nvvk::DescriptorBindings bindings;
+    bindings.addBinding(shaderio::EnvDomeDraw::eHdrImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT);
+    NVVK_CHECK(descPack.init(bindings, m_device, 1));
+    NVVK_DBG_NAME(descPack.getLayout());
+    NVVK_DBG_NAME(descPack.getPool());
+    NVVK_DBG_NAME(descPack.getSet(0));
 
     // Writing the output image
     nvvk::WriteSetContainer writeContainer;
-    writeContainer.append(descPack.bindings.getWriteSet(shaderio::EnvDomeDraw::eHdrImage, descPack.sets[0]), target);
+    writeContainer.append(descPack.makeWrite(shaderio::EnvDomeDraw::eHdrImage), target);
     vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
 
     // Creating the pipeline
-    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &pipelineLayout, {descPack.layout}));
+    NVVK_CHECK(nvvk::createPipelineLayout(m_device, &pipelineLayout, {descPack.getLayout()}));
     NVVK_DBG_NAME(pipelineLayout);
 
     VkShaderModuleCreateInfo moduleInfo = {
@@ -302,7 +305,7 @@ void HdrEnvDome::integrateBrdf(uint32_t dimension, nvvk::Image& target, const st
     vkCreateComputePipelines(m_device, {}, 1, &comp_info, nullptr, &pipeline);
 
     // Run shader
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descPack.sets[0], 0, nullptr);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, descPack.getSetPtr(), 0, nullptr);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
 
     VkExtent2D group_counts = nvvk::getGroupCounts({dimension, dimension}, HDR_WORKGROUP_SIZE);
@@ -374,20 +377,21 @@ void HdrEnvDome::prefilterHdr(uint32_t dim, nvvk::Image& target, const std::span
   VkPipelineLayout pipelineLayout{VK_NULL_HANDLE};
 
   // Descriptors
-  nvvk::DescriptorPack descPack;
-  descPack.bindings.addBinding(shaderio::EnvDomeDraw::eHdrImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT);
-  NVVK_CHECK(descPack.initFromBindings(m_device, 1));
-  NVVK_DBG_NAME(descPack.layout);
-  NVVK_DBG_NAME(descPack.pool);
-  NVVK_DBG_NAME(descPack.sets[0]);
+  nvvk::DescriptorPack     descPack;
+  nvvk::DescriptorBindings bindings;
+  bindings.addBinding(shaderio::EnvDomeDraw::eHdrImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT);
+  NVVK_CHECK(descPack.init(bindings, m_device, 1));
+  NVVK_DBG_NAME(descPack.getLayout());
+  NVVK_DBG_NAME(descPack.getPool());
+  NVVK_DBG_NAME(descPack.getSet(0));
 
   nvvk::WriteSetContainer writeContainer;
-  writeContainer.append(descPack.bindings.getWriteSet(shaderio::EnvDomeDraw::eHdrImage, descPack.sets[0]), scratchTexture);
+  writeContainer.append(descPack.makeWrite(shaderio::EnvDomeDraw::eHdrImage), scratchTexture);
   vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
 
   // Creating the pipeline
   const VkPushConstantRange pushConstantRange{.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT, .offset = 0, .size = sizeof(shaderio::HdrPushBlock)};
-  NVVK_CHECK(nvvk::createPipelineLayout(m_device, &pipelineLayout, {descPack.layout, m_hdrEnvLayout}, {pushConstantRange}));
+  NVVK_CHECK(nvvk::createPipelineLayout(m_device, &pipelineLayout, {descPack.getLayout(), m_hdrEnvLayout}, {pushConstantRange}));
 
   VkShaderModuleCreateInfo moduleInfo = {
       .sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
@@ -416,7 +420,7 @@ void HdrEnvDome::prefilterHdr(uint32_t dim, nvvk::Image& target, const std::span
     VkImageSubresourceRange subresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, numMipmaps, 0, 6};
     nvvk::cmdImageMemoryBarrier(cmd, {target.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, subresourceRange});
 
-    std::vector<VkDescriptorSet> dstSets{descPack.sets[0], m_hdrEnvSet};
+    std::array<VkDescriptorSet, 2> dstSets{descPack.getSet(0), m_hdrEnvSet};
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0,
                             static_cast<uint32_t>(dstSets.size()), dstSets.data(), 0, nullptr);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);

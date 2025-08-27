@@ -38,13 +38,14 @@
 
 
 // Convert a tiled image to RGBA8 linear
-VkResult nvvk::imageToRgba8Linear(VkCommandBuffer  cmd,
-                                  VkDevice         device,
-                                  VkPhysicalDevice physicalDevice,
-                                  VkImage          srcImage,
-                                  VkExtent2D       size,
-                                  VkImage&         dstImage,
-                                  VkDeviceMemory&  dstImageMemory)
+VkResult nvvk::imageToLinear(VkCommandBuffer  cmd,
+                             VkDevice         device,
+                             VkPhysicalDevice physicalDevice,
+                             VkImage          srcImage,
+                             VkExtent2D       size,
+                             VkImage&         dstImage,
+                             VkDeviceMemory&  dstImageMemory,
+                             VkFormat         format)
 {
   // Find the memory type index for the memory
   auto getMemoryType = [&](uint32_t typeBits, const VkMemoryPropertyFlags& properties) {
@@ -62,7 +63,7 @@ VkResult nvvk::imageToRgba8Linear(VkCommandBuffer  cmd,
   // Create the linear tiled destination image to copy to and to read the memory from
   VkImageCreateInfo imageCreateCI = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
   imageCreateCI.imageType         = VK_IMAGE_TYPE_2D;
-  imageCreateCI.format            = VK_FORMAT_R8G8B8A8_UNORM;
+  imageCreateCI.format            = format;
   imageCreateCI.extent.width      = size.width;
   imageCreateCI.extent.height     = size.height;
   imageCreateCI.extent.depth      = 1;
@@ -125,28 +126,41 @@ void nvvk::saveImageToFile(VkDevice                     device,
   vkMapMemory(device, dstImageMemory, 0, VK_WHOLE_SIZE, 0, (void**)&data);
   data += subResourceLayout.offset;
 
-  // Copy the data and adjust for the row pitch
-  std::vector<uint8_t> pixels(size.width * size.height * 4);
-  for(uint32_t y = 0; y < size.height; y++)
-  {
-    memcpy(pixels.data() + y * size.width * 4, data, static_cast<size_t>(size.width) * 4);
-    data += subResourceLayout.rowPitch;
-  }
-
   std::string filenameUtf8 = nvutils::utf8FromPath(filename);
+
+  // Lambda to copy image data with proper type handling
+  auto copyImageData = [&](auto& pixels, size_t bytesPerPixel) {
+    for(uint32_t y = 0; y < size.height; y++)
+    {
+      memcpy(pixels.data() + y * size.width * 4, data, static_cast<size_t>(size.width) * bytesPerPixel);
+      data += subResourceLayout.rowPitch;
+    }
+  };
 
   // Check the extension and perform actions accordingly
   if(nvutils::extensionMatches(filename, ".png"))
   {
-    stbi_write_png(filenameUtf8.c_str(), size.width, size.height, 4, pixels.data(), size.width * 4);
+    std::vector<uint8_t> pixels8(size.width * size.height * 4);
+    copyImageData(pixels8, 4 * sizeof(uint8_t));
+    stbi_write_png(filenameUtf8.c_str(), size.width, size.height, 4, pixels8.data(), size.width * 4);
   }
   else if(nvutils::extensionMatches(filename, ".jpg") || nvutils::extensionMatches(filename, ".jpeg"))
   {
-    stbi_write_jpg(filenameUtf8.c_str(), size.width, size.height, 4, pixels.data(), quality);
+    std::vector<uint8_t> pixels8(size.width * size.height * 4);
+    copyImageData(pixels8, 4 * sizeof(uint8_t));
+    stbi_write_jpg(filenameUtf8.c_str(), size.width, size.height, 4, pixels8.data(), quality);
   }
   else if(nvutils::extensionMatches(filename, ".bmp"))
   {
-    stbi_write_bmp(filenameUtf8.c_str(), size.width, size.height, 4, pixels.data());
+    std::vector<uint8_t> pixels8(size.width * size.height * 4);
+    copyImageData(pixels8, 4 * sizeof(uint8_t));
+    stbi_write_bmp(filenameUtf8.c_str(), size.width, size.height, 4, pixels8.data());
+  }
+  else if(nvutils::extensionMatches(filename, ".hdr"))
+  {
+    std::vector<float> pixels(size.width * size.height * 4);
+    copyImageData(pixels, 4 * sizeof(float));
+    stbi_write_hdr(filenameUtf8.c_str(), size.width, size.height, 4, pixels.data());
   }
   else
   {
@@ -154,7 +168,9 @@ void nvvk::saveImageToFile(VkDevice                     device,
     std::filesystem::path path = filename;
     path.replace_extension(".png");
     filenameUtf8 = nvutils::utf8FromPath(path);
-    stbi_write_png(filenameUtf8.c_str(), size.width, size.height, 4, pixels.data(), size.width * 4);
+    std::vector<uint8_t> pixels8(size.width * size.height * 4);
+    copyImageData(pixels8, 4 * sizeof(uint8_t));
+    stbi_write_png(filenameUtf8.c_str(), size.width, size.height, 4, pixels8.data(), size.width * 4);
   }
 
   LOGI("Image saved to %s\n", filenameUtf8.c_str());

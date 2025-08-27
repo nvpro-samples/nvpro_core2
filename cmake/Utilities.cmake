@@ -121,8 +121,8 @@ function(copy_to_runtime_and_install TARGET_NAME)
     # Handle individual files
     foreach(_FILETYPE "FILES" "PROGRAMS")
         foreach(_FILE ${COPY_${_FILETYPE}})
-            # Ensure file exists
-            if(NOT EXISTS "${_FILE}")
+            # If it's not a generator expression, make sure it exists
+            if((NOT (_FILE MATCHES "^\\$")) AND (NOT EXISTS "${_FILE}"))
                 message(WARNING "File does not exist: ${_FILE}")
                 continue()
             endif()

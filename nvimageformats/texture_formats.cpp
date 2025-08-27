@@ -19,7 +19,9 @@
 
 #include "texture_formats.h"
 
+#ifndef NV_IMAGE_FORMATS_NO_DXGI
 #include <directx/dxgiformat.h>  // Included in nvpro_core's dxh subproject
+#endif
 
 #include <bitset>  // For std::hash
 #include <cstddef>
@@ -404,6 +406,7 @@ namespace texture_formats {
 // Private functions for building tables.
 namespace {
 
+#ifndef NV_IMAGE_FORMATS_NO_DXGI
 std::unordered_map<OpenGLFormat, uint32_t> s_tableOpenGLToDXGI;
 void addGLToDXGICombination(uint32_t dxgiFormat, uint32_t glInternalFormat, uint32_t glFormat, uint32_t glType)
 {
@@ -418,7 +421,9 @@ void addGLToDXGICombination(uint32_t dxgiFormat, uint32_t glInternalFormat, uint
     s_tableOpenGLToDXGI[glStruct] = dxgiFormat;
   }
 }
+#endif  // #ifndef NV_IMAGE_FORMATS_NO_DXGI
 
+#ifndef NV_IMAGE_FORMATS_NO_VULKAN
 std::unordered_map<OpenGLFormat, VkFormat> s_tableOpenGLToVulkan;
 void addGLToVulkanCombination(VkFormat vkFormat, uint32_t glInternalFormat, uint32_t glFormat, uint32_t glType)
 {
@@ -433,6 +438,7 @@ void addGLToVulkanCombination(VkFormat vkFormat, uint32_t glInternalFormat, uint
     s_tableOpenGLToVulkan[glStruct] = vkFormat;
   }
 }
+#endif  // #ifndef NV_IMAGE_FORMATS_NO_VULKAN
 
 // Only build the tables once, even if these functions are called from multiple
 // threads.
@@ -440,17 +446,22 @@ std::once_flag s_tablesBuilt;
 
 void buildTables()
 {
+#ifndef NV_IMAGE_FORMATS_NO_DXGI
 #define ADD_COMBINATION(dxgi, vk, ...) addGLToDXGICombination(dxgi, __VA_ARGS__);
   FOR_EACH_FORMAT(ADD_COMBINATION, ADD_COMBINATION, ADD_COMBINATION);
 #undef ADD_COMBINATION
+#endif  // #ifndef NV_IMAGE_FORMATS_NO_DXGI
 
+#ifndef NV_IMAGE_FORMATS_NO_VULKAN
 #define ADD_COMBINATION(dxgi, vk, ...) addGLToVulkanCombination(vk, __VA_ARGS__);
   FOR_EACH_FORMAT(ADD_COMBINATION, ADD_COMBINATION, ADD_COMBINATION);
 #undef ADD_COMBINATION
+#endif  // #ifndef NV_IMAGE_FORMATS_NO_VULKAN
 }
 
 }  // namespace
 
+#if !defined(NV_IMAGE_FORMATS_NO_DXGI)
 OpenGLFormat dxgiToOpenGL(uint32_t dxgiFormat)
 {
   switch(dxgiFormat)
@@ -476,7 +487,9 @@ uint32_t openGLToDXGI(const OpenGLFormat& glFormat)
   }
   return findResult->second;
 }
+#endif  // #if !defined(NV_IMAGE_FORMATS_NO_DXGI)
 
+#if !defined(NV_IMAGE_FORMATS_NO_VULKAN) && !defined(NV_IMAGE_FORMATS_NO_DXGI)
 VkFormat dxgiToVulkan(uint32_t dxgiFormat)
 {
   switch(dxgiFormat)
@@ -490,17 +503,6 @@ VkFormat dxgiToVulkan(uint32_t dxgiFormat)
     default:
       return VK_FORMAT_UNDEFINED;
   }
-}
-
-VkFormat openGLToVulkan(const OpenGLFormat& glFormat)
-{
-  std::call_once(s_tablesBuilt, buildTables);
-  const auto& findResult = s_tableOpenGLToVulkan.find(glFormat);
-  if(findResult == s_tableOpenGLToVulkan.end())
-  {
-    return {};
-  }
-  return findResult->second;
 }
 
 uint32_t vulkanToDXGI(VkFormat vkFormat)
@@ -517,6 +519,19 @@ uint32_t vulkanToDXGI(VkFormat vkFormat)
       return {};
   }
 }
+#endif  // #if !defined(NV_IMAGE_FORMATS_NO_VULKAN) && !defined(NV_IMAGE_FORMATS_NO_DXGI)
+
+#if !defined(NV_IMAGE_FORMATS_NO_VULKAN)
+VkFormat openGLToVulkan(const OpenGLFormat& glFormat)
+{
+  std::call_once(s_tablesBuilt, buildTables);
+  const auto& findResult = s_tableOpenGLToVulkan.find(glFormat);
+  if(findResult == s_tableOpenGLToVulkan.end())
+  {
+    return {};
+  }
+  return findResult->second;
+}
 
 OpenGLFormat vulkanToOpenGL(VkFormat vkFormat)
 {
@@ -532,7 +547,9 @@ OpenGLFormat vulkanToOpenGL(VkFormat vkFormat)
       return {};
   }
 }
+#endif  // #if !defined(NV_IMAGE_FORMATS_NO_VULKAN)
 
+#ifndef NV_IMAGE_FORMATS_NO_DXGI
 const char* getDXGIFormatName(uint32_t dxgiFormat)
 {
   switch(dxgiFormat)
@@ -543,21 +560,6 @@ const char* getDXGIFormatName(uint32_t dxgiFormat)
 
     FOR_EACH_FORMAT(RETURN_DXGI_FORMAT_NAME, RETURN_DXGI_FORMAT_NAME, DO_NOTHING_ON_REPEAT)
 #undef RETURN_DXGI_FORMAT_NAME
-    default:
-      return nullptr;
-  }
-}
-
-const char* getVkFormatName(VkFormat vkFormat)
-{
-  switch(vkFormat)
-  {
-#define RETURN_VK_FORMAT_NAME(dxgi, vk, glInternalFormat, glFormat, glType)                                            \
-  case vk:                                                                                                             \
-    return #vk;
-
-    FOR_EACH_FORMAT(RETURN_VK_FORMAT_NAME, DO_NOTHING_ON_REPEAT, DO_NOTHING_ON_REPEAT)
-#undef RETURN_VK_FORMAT_JNAME
     default:
       return nullptr;
   }
@@ -631,6 +633,23 @@ uint32_t tryForceDXGIFormatTransferFunction(uint32_t dxgiFormat, bool srgb)
       default:
         return dxgiFormat;
     }
+  }
+}
+#endif  // #ifndef NV_IMAGE_FORMATS_NO_DXGI
+
+#ifndef NV_IMAGE_FORMATS_NO_VULKAN
+const char* getVkFormatName(VkFormat vkFormat)
+{
+  switch(vkFormat)
+  {
+#define RETURN_VK_FORMAT_NAME(dxgi, vk, glInternalFormat, glFormat, glType)                                            \
+  case vk:                                                                                                             \
+    return #vk;
+
+    FOR_EACH_FORMAT(RETURN_VK_FORMAT_NAME, DO_NOTHING_ON_REPEAT, DO_NOTHING_ON_REPEAT)
+#undef RETURN_VK_FORMAT_JNAME
+    default:
+      return nullptr;
   }
 }
 
@@ -715,5 +734,6 @@ VkFormat tryForceVkFormatTransferFunction(VkFormat vkFormat, bool srgb)
     }
   }
 }
+#endif  // #ifndef NV_IMAGE_FORMATS_NO_VULKAN
 
 }  // namespace texture_formats

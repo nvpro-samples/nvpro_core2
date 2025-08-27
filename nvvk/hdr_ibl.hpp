@@ -65,8 +65,8 @@ public:
   const nvvk::Buffer getEnvAccel() const { return m_accelImpSmpl; }
 
   // HDR + importance sampling
-  inline VkDescriptorSetLayout getDescriptorSetLayout() const { return m_descPack.layout; }
-  inline VkDescriptorSet       getDescriptorSet() const { return m_descPack.sets[0]; }
+  inline VkDescriptorSetLayout getDescriptorSetLayout() const { return m_descPack.getLayout(); }
+  inline VkDescriptorSet       getDescriptorSet() const { return m_descPack.getSet(0); }
   const nvvk::Image&           getHdrImage() { return m_texHdr; }  // The loaded HDR texture
   VkExtent2D                   getHdrImageSize() const { return m_hdrImageSize; }
 

@@ -1084,14 +1084,11 @@ void imguiCopy(nvapp::Application* app, T& src, const std::vector<T>& existingOr
   static char textStr[1024];
 
 
-  ImGui::PushFont(nvgui::getIconicFont());
-
-  if(ImGui::Button(fmt::format("{}###Snapshot{}", nvgui::icon_camera_slr, src.name).c_str()))
+  if(ImGui::Button(fmt::format("{}###Snapshot{}", ICON_MS_PHOTO_CAMERA, src.name).c_str()))
   {
     src.showSnapshot      = true;
     src.snapshotRequested = true;
   }
-  ImGui::PopFont();
 
 
   tooltip("Take a snapshot of the current values");
@@ -1141,23 +1138,18 @@ void imguiCopy(nvapp::Application* app, T& src, const std::vector<T>& existingOr
 
 
   ImGui::SameLine();
-  ImGui::PushFont(nvgui::getIconicFont());
-
   ImGui::BeginDisabled(!src.hasSnapshotContents);
 
-  if(ImGui::Button(fmt::format("{}###{}", nvgui::icon_clipboard, src.name).c_str()))
+  if(ImGui::Button(fmt::format("{}###{}", ICON_MS_CONTENT_PASTE, src.name).c_str()))
   {
     buttonClicked = true;
     ImGui::OpenPopup(fmt::format("Copy to...##{}", src.name).c_str());
   }
-  ImGui::PopFont();
   tooltip("Copy the snapshot values into another element");
 
 
   ImGui::SameLine();
-  ImGui::PushFont(nvgui::getIconicFont());
-
-  if(ImGui::Button(fmt::format("{}###SnapshotSaveToFile{}", nvgui::icon_file, src.name).c_str()))
+  if(ImGui::Button(fmt::format("{}###SnapshotSaveToFile{}", ICON_MS_INSERT_DRIVE_FILE, src.name).c_str()))
   {
     if(src.snapshotFileName.empty())
     {
@@ -1173,49 +1165,41 @@ void imguiCopy(nvapp::Application* app, T& src, const std::vector<T>& existingOr
       src.saveSnapshotToFileRequested = true;
     }
   }
-  ImGui::PopFont();
   tooltip("Save the snapshot values to file");
 
   ImGui::EndDisabled();
 }
 
 
-static inline bool imguiButton(const std::string& text,
-                               const std::string& tooltipText,
-                               bool               useActiveButtonStyle,
-                               bool               isActive,
-                               bool               useIconic,
-                               bool               enlargeFont,
-                               ImVec2             buttonSize = ImVec2(0, 0))
+static bool imguiButton(const std::string& text,
+                        const std::string& tooltipText,
+                        bool               useActiveButtonStyle,
+                        bool               isActive,
+                        bool               enlargeFont,
+                        ImVec2             buttonSize = ImVec2(0, 0))
 {
   if(useActiveButtonStyle)
   {
     imguiPushActiveButtonStyle(isActive);
   }
+
   if(enlargeFont)
   {
-    nvgui::getIconicFont()->Scale *= 2;
+    ImGui::PushFont(NULL, ImGui::GetStyle().FontSizeBase * 1.5F);
   }
-  if(useIconic)
-  {
-    ImGui::PushFont(nvgui::getIconicFont());
-  }
+
   bool res = ImGui::Button(text.c_str(), buttonSize);
+
+  if(enlargeFont)
+  {
+    ImGui::PopFont();
+  }
 
   if(useActiveButtonStyle)
   {
     imguiPopActiveButtonStyle();
   }
 
-  if(enlargeFont)
-  {
-    nvgui::getIconicFont()->Scale /= 2;
-  }
-
-  if(useIconic)
-  {
-    ImGui::PopFont();
-  }
   if(!tooltipText.empty())
   {
     tooltip(tooltipText);
@@ -1238,7 +1222,7 @@ void imguiElementShowButtons(std::vector<T>& elements, std::vector<T>& elementsC
 
     ImGui::PushID(int(elementIndex));
     if(imguiButton(elements[elementIndex].isAllocated ? elements[elementIndex].name.c_str() : "",
-                   elements[elementIndex].name, true, elements[elementIndex].show, false, false, LARGE_SQUARE_BUTTON_SIZE))
+                   elements[elementIndex].name, true, elements[elementIndex].show, false, LARGE_SQUARE_BUTTON_SIZE))
     {
       elements[elementIndex].show = !elements[elementIndex].show;
     }
@@ -1371,9 +1355,9 @@ void ElementInspector::onUIRender()
     }
 
 
-    if(imguiButton(m_internals->m_settings.isPaused ? nvgui::icon_media_pause : nvgui::icon_media_play,
+    if(imguiButton(m_internals->m_settings.isPaused ? ICON_MS_PAUSE : ICON_MS_PLAY_ARROW,
                    "Pause inspection, effectively freezing the displayed values", true,
-                   m_internals->m_settings.isPaused, true, true, MEDIUM_SQUARE_BUTTON_SIZE))
+                   m_internals->m_settings.isPaused, true, MEDIUM_SQUARE_BUTTON_SIZE))
     {
       m_internals->m_settings.isPaused = !m_internals->m_settings.isPaused;
     }
@@ -1382,7 +1366,7 @@ void ElementInspector::onUIRender()
 
 
     ImGui::BeginDisabled(!m_internals->m_settings.isPaused);
-    if(imguiButton(nvgui::icon_media_step_forward, "Capture the next frame", false, false, true, true, MEDIUM_SQUARE_BUTTON_SIZE))
+    if(imguiButton(ICON_MS_SKIP_NEXT, "Capture the next frame", false, false, true, MEDIUM_SQUARE_BUTTON_SIZE))
 
     {
       m_internals->m_settings.inspectNextFrame = true;
@@ -1392,7 +1376,7 @@ void ElementInspector::onUIRender()
 
 
     ImGui::SameLine();
-    if(imguiButton(nvgui::icon_camera_slr, "Take a snapshot of all inspection elements", false, false, true, true, MEDIUM_SQUARE_BUTTON_SIZE))
+    if(imguiButton(ICON_MS_PHOTO_CAMERA, "Take a snapshot of all inspection elements", false, false, true, MEDIUM_SQUARE_BUTTON_SIZE))
     {
       m_internals->requestFullSnapshot();
     }
@@ -1400,7 +1384,7 @@ void ElementInspector::onUIRender()
 
     ImGui::SameLine();
     ImGui::BeginDisabled(!m_internals->hasSnapshotContent());
-    if(imguiButton(nvgui::icon_file, "Save all snapshots to files", false, false, true, true, MEDIUM_SQUARE_BUTTON_SIZE))
+    if(imguiButton(ICON_MS_INSERT_DRIVE_FILE, "Save all snapshots to files", false, false, true, MEDIUM_SQUARE_BUTTON_SIZE))
     {
       m_internals->requestFullSnapshotSave();
     }
@@ -1412,7 +1396,7 @@ void ElementInspector::onUIRender()
       ImGui::SameLine();
       if(imguiButton("Show inactive\n blocks",
                      "If enabled, blocks for which no inspection is enabled will be shown with inactive buttons", true,
-                     m_internals->m_settings.showInactiveBlocks, false, false, {SQUARE_BUTTON_SIZE * 2, SQUARE_BUTTON_SIZE / 2}))
+                     m_internals->m_settings.showInactiveBlocks, false, {SQUARE_BUTTON_SIZE * 2, SQUARE_BUTTON_SIZE / 2}))
       {
         m_internals->m_settings.showInactiveBlocks = !m_internals->m_settings.showInactiveBlocks;
       }

@@ -120,38 +120,53 @@ private:
 class DescriptorPack
 {
 public:
+  DescriptorPack() = default;
+  DescriptorPack(DescriptorPack&& other) noexcept;
+  DescriptorPack& operator=(DescriptorPack&& other) noexcept;
+
   ~DescriptorPack();
 
-  DescriptorBindings           bindings;
-  VkDescriptorSetLayout        layout = VK_NULL_HANDLE;
-  VkDescriptorPool             pool   = VK_NULL_HANDLE;
-  std::vector<VkDescriptorSet> sets;
 
-  // After setting up `DescriptorPack::bindings`, call this function to
-  // initialize `layout`, `pool`, and `sets`.
+  // Call this function to initialize `layout`, `pool`, and `sets`.
   //
   // If `numSets` is 0, this only creates the layout.
   //
   // If `totalVariableCount` is non zero, it will be used to override the total requirement for the variable binding,
   // and `descriptorVariableCounts` must be non null and the length of `numSets`.
   // Otherwise the regular `binding.descriptorCount * numSets` is used.
-  VkResult initFromBindings(VkDevice                         device,
-                            uint32_t                         numSets                  = 1,
-                            VkDescriptorSetLayoutCreateFlags layoutFlags              = 0,
-                            VkDescriptorPoolCreateFlags      poolFlags                = 0,
-                            uint32_t                         totalVariableCount       = 0,
-                            const uint32_t*                  descriptorVariableCounts = nullptr);
+  VkResult init(const DescriptorBindings&        bindings,
+                VkDevice                         device,
+                uint32_t                         numSets                  = 1,
+                VkDescriptorSetLayoutCreateFlags layoutFlags              = 0,
+                VkDescriptorPoolCreateFlags      poolFlags                = 0,
+                uint32_t                         totalVariableCount       = 0,
+                const uint32_t*                  descriptorVariableCounts = nullptr);
   void     deinit();
+
+  VkDescriptorSetLayout               getLayout() const { return m_layout; }
+  const VkDescriptorSetLayout*        getLayoutPtr() const { return &m_layout; }
+  VkDescriptorPool                    getPool() const { return m_pool; };
+  const std::vector<VkDescriptorSet>& getSets() const { return m_sets; }
+  VkDescriptorSet                     getSet(uint32_t setIndex) const { return m_sets[setIndex]; }
+  const VkDescriptorSet*              getSetPtr(uint32_t setIndex = 0) const { return &m_sets[setIndex]; }
 
   // Wrapper to get a `VkWriteDescriptorSet` for a descriptor set stored in `sets` if it's not empty.
   // Empty `sets` usage is legal in the push descriptor use-case.
   // see `DescriptorBindings::getWriteSet` for more details
-  VkWriteDescriptorSet getWriteSet(uint32_t binding, uint32_t dsetIndex = 0, uint32_t dstArrayElement = ~0, uint32_t descriptorCount = 1) const
+  VkWriteDescriptorSet makeWrite(uint32_t binding, uint32_t setIndex = 0, uint32_t dstArrayElement = ~0, uint32_t descriptorCount = 1) const
   {
-    return bindings.getWriteSet(binding, sets.empty() ? nullptr : sets[dsetIndex], dstArrayElement, descriptorCount);
+    return m_bindings.getWriteSet(binding, m_sets.empty() ? nullptr : m_sets[setIndex], dstArrayElement, descriptorCount);
   }
 
 private:
+  DescriptorPack(const DescriptorPack&)            = delete;
+  DescriptorPack& operator=(const DescriptorPack&) = delete;
+
+  DescriptorBindings           m_bindings;
+  VkDescriptorSetLayout        m_layout = VK_NULL_HANDLE;
+  VkDescriptorPool             m_pool   = VK_NULL_HANDLE;
+  std::vector<VkDescriptorSet> m_sets;
+
   VkDevice m_device = nullptr;
 };
 

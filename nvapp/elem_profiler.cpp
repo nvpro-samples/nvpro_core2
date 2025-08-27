@@ -300,16 +300,13 @@ void ElementProfiler::renderTable(View& view)
   ImGui::SameLine();
   ImGui::Checkbox("detailed", &view.state->table.detailed);
 
-  // There is not copy icon in the list, we use share
-  // align on the right
+  // Copy content
   ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 33);
-  ImGui::PushFont(nvgui::getIconicFont());
-  if(ImGui::Button(nvgui::icon_share))
+  if(ImGui::Button(ICON_MS_CONTENT_COPY))
   {
     ImGui::LogToClipboard();
     copy = true;
   }
-  ImGui::PopFont();
   if(ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
     ImGui::SetTooltip("Copy data to clipboard");
 

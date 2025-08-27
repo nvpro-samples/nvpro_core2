@@ -28,13 +28,14 @@ namespace nvvk {
 
 //-----------------------------------
 // Image helpers
-VkResult imageToRgba8Linear(VkCommandBuffer  cmd,
-                            VkDevice         device,
-                            VkPhysicalDevice physicalDevice,
-                            VkImage          srcImage,
-                            VkExtent2D       size,
-                            VkImage&         dstImage,
-                            VkDeviceMemory&  dstImageMemory);
+VkResult imageToLinear(VkCommandBuffer  cmd,
+                       VkDevice         device,
+                       VkPhysicalDevice physicalDevice,
+                       VkImage          srcImage,
+                       VkExtent2D       size,
+                       VkImage&         dstImage,
+                       VkDeviceMemory&  dstImageMemory,
+                       VkFormat         format);
 
 void saveImageToFile(VkDevice                     device,
                      VkImage                      dstImage,

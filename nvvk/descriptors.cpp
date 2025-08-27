@@ -152,17 +152,20 @@ std::vector<VkDescriptorPoolSize> DescriptorBindings::calculatePoolSizes(uint32_
 
 //////////////////////////////////////////////////////////////////////////
 
-VkResult DescriptorPack::initFromBindings(VkDevice                         device,
-                                          uint32_t                         numSets,
-                                          VkDescriptorSetLayoutCreateFlags layoutFlags,
-                                          VkDescriptorPoolCreateFlags      poolFlags,
-                                          uint32_t                         totalVariableCount,
-                                          const uint32_t*                  descriptorVariableCounts)
+VkResult DescriptorPack::init(const DescriptorBindings&        bindings,
+                              VkDevice                         device,
+                              uint32_t                         numSets,
+                              VkDescriptorSetLayoutCreateFlags layoutFlags,
+                              VkDescriptorPoolCreateFlags      poolFlags,
+                              uint32_t                         totalVariableCount,
+                              const uint32_t*                  descriptorVariableCounts)
 {
   assert(nullptr == m_device && "initFromBindings must not be called twice in a row!");
   m_device = device;
 
-  NVVK_FAIL_RETURN(bindings.createDescriptorSetLayout(device, layoutFlags, &layout));
+  m_bindings = bindings;
+
+  NVVK_FAIL_RETURN(bindings.createDescriptorSetLayout(device, layoutFlags, &m_layout));
 
   if(numSets > 0)
   {
@@ -173,13 +176,13 @@ VkResult DescriptorPack::initFromBindings(VkDevice                         devic
                                                            .maxSets = numSets,
                                                            .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
                                                            .pPoolSizes    = poolSizes.data()};
-    NVVK_FAIL_RETURN(vkCreateDescriptorPool(device, &poolCreateInfo, nullptr, &pool));
+    NVVK_FAIL_RETURN(vkCreateDescriptorPool(device, &poolCreateInfo, nullptr, &m_pool));
 
     // Sets
-    sets.resize(numSets);
-    std::vector<VkDescriptorSetLayout> allocInfoLayouts(numSets, layout);
+    m_sets.resize(numSets);
+    std::vector<VkDescriptorSetLayout> allocInfoLayouts(numSets, m_layout);
     VkDescriptorSetAllocateInfo        allocInfo{.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-                                                 .descriptorPool     = pool,
+                                                 .descriptorPool     = m_pool,
                                                  .descriptorSetCount = numSets,
                                                  .pSetLayouts        = allocInfoLayouts.data()};
     // Optional variable descriptor counts
@@ -193,7 +196,7 @@ VkResult DescriptorPack::initFromBindings(VkDevice                         devic
       allocInfo.pNext = &varInfo;
     }
 
-    NVVK_FAIL_RETURN(vkAllocateDescriptorSets(device, &allocInfo, sets.data()));
+    NVVK_FAIL_RETURN(vkAllocateDescriptorSets(device, &allocInfo, m_sets.data()));
   }
 
   return VK_SUCCESS;
@@ -201,19 +204,42 @@ VkResult DescriptorPack::initFromBindings(VkDevice                         devic
 
 void DescriptorPack::deinit()
 {
-  bindings.clear();
-  sets.clear();
+  m_bindings.clear();
+  m_sets.clear();
 
   if(m_device)  // Only run if ever initialized
   {
-    vkDestroyDescriptorSetLayout(m_device, layout, nullptr);
-    layout = VK_NULL_HANDLE;
+    vkDestroyDescriptorSetLayout(m_device, m_layout, nullptr);
+    m_layout = VK_NULL_HANDLE;
 
-    vkDestroyDescriptorPool(m_device, pool, nullptr);
-    pool = VK_NULL_HANDLE;
+    vkDestroyDescriptorPool(m_device, m_pool, nullptr);
+    m_pool = VK_NULL_HANDLE;
 
     m_device = nullptr;
   }
+}
+
+
+DescriptorPack::DescriptorPack(DescriptorPack&& other) noexcept
+{
+  this->operator=(std::move(other));
+}
+
+DescriptorPack& DescriptorPack::operator=(DescriptorPack&& other) noexcept
+{
+  assert(!m_device && "can't move into non-empty object");
+
+  m_sets = std::move(other.m_sets);
+
+  m_pool   = other.m_pool;
+  m_layout = other.m_layout;
+  m_device = other.m_device;
+
+  other.m_pool   = VK_NULL_HANDLE;
+  other.m_layout = VK_NULL_HANDLE;
+  other.m_device = VK_NULL_HANDLE;
+
+  return *this;
 }
 
 DescriptorPack::~DescriptorPack()
@@ -609,24 +635,25 @@ static void usage_DescriptorBindings()
   // Or have DescriptorPack simplify the above:
   nvvk::DescriptorPack dpack;
   {
-    dpack.bindings.addBinding(SHADERIO_BINDING, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr,
-                              VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
+    nvvk::DescriptorBindings bindings;
+    bindings.addBinding(SHADERIO_BINDING, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr,
+                        VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
     // The second argument, NUM_SETS here, can be left 0 when the intend is to use push descriptors, it defaults to `1`
-    NVVK_CHECK(dpack.initFromBindings(device, NUM_SETS));
+    NVVK_CHECK(dpack.init(bindings, device, NUM_SETS));
   }
 
   // To update DescriptorSets:
   {
     // std::vectors inside for VkWriteDescriptorSets as well as the corresponding payloads.
     nvvk::WriteSetContainer writeContainer;
-    // getWriteSet returns a VkWriteDescriptorSet without actual binding information,
+    // makeDescriptorWrite returns a VkWriteDescriptorSet without actual binding information,
     // the append function takes care of that.
 
     // when preparing push descriptors, `dpack.sets[0]` would be omitted / nullptr
-    writeContainer.append(dpack.bindings.getWriteSet(SHADERIO_BINDING, dpack.sets[0]), myBufferA);
+    writeContainer.append(dpack.makeWrite(SHADERIO_BINDING, 0), myBufferA);
 
     // shortcut to provide `dpack.sets[1]` (also works when dpack.sets.empty() for push descriptors)
-    writeContainer.append(dpack.getWriteSet(SHADERIO_BINDING, 1), myBufferB);
+    writeContainer.append(dpack.makeWrite(SHADERIO_BINDING, 1), myBufferB);
 
     vkUpdateDescriptorSets(device, writeContainer.size(), writeContainer.data(), 0, nullptr);
 
@@ -637,7 +664,7 @@ static void usage_DescriptorBindings()
   // To create a pipeline layout with an additional push constant range:
   VkPushConstantRange pushRange{.stageFlags = VK_SHADER_STAGE_ALL, .offset = 0, .size = sizeof(PushConstants)};
   VkPipelineLayout    pipelineLayout = VK_NULL_HANDLE;
-  NVVK_CHECK(nvvk::createPipelineLayout(device, &pipelineLayout, {dpack.layout}, {pushRange}));
+  NVVK_CHECK(nvvk::createPipelineLayout(device, &pipelineLayout, {dpack.getLayout()}, {pushRange}));
 
   // Cleanup
   vkDestroyPipelineLayout(device, pipelineLayout, nullptr);

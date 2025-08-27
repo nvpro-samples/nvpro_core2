@@ -923,7 +923,7 @@ void nvvkgltf::Scene::parseAnimations()
             break;
           }
           default: {
-            LOGE("Unknown animation type");
+            LOGW("Unknown animation type: %d\n", accessor.type);
             break;
           }
         }

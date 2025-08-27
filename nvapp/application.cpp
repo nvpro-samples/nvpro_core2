@@ -896,7 +896,13 @@ void nvapp::Application::saveImageToFile(VkImage srcImage, VkExtent2D imageSize,
   VkImage          dstImage       = {};
   VkDeviceMemory   dstImageMemory = {};
   VkCommandBuffer  cmd            = createTempCmdBuffer();
-  nvvk::imageToRgba8Linear(cmd, device, physicalDevice, srcImage, imageSize, dstImage, dstImageMemory);
+
+  VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
+  if(filename.extension() == ".hdr")
+  {
+    format = VK_FORMAT_R32G32B32A32_SFLOAT;
+  }
+  nvvk::imageToLinear(cmd, device, physicalDevice, srcImage, imageSize, dstImage, dstImageMemory, format);
   submitAndWaitTempCmdBuffer(cmd);
 
   nvvk::saveImageToFile(device, dstImage, dstImageMemory, imageSize, filename, quality);
@@ -929,7 +935,7 @@ void nvapp::Application::saveScreenShot(const std::filesystem::path& filename, i
   vkDeviceWaitIdle(m_device);
   VkCommandBuffer cmd = createTempCmdBuffer();
   nvvk::cmdImageMemoryBarrier(cmd, {srcImage, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_GENERAL});
-  nvvk::imageToRgba8Linear(cmd, m_device, m_physicalDevice, srcImage, size, dstImage, dstImageMemory);
+  nvvk::imageToLinear(cmd, m_device, m_physicalDevice, srcImage, size, dstImage, dstImageMemory, VK_FORMAT_R8G8B8A8_UNORM);
   nvvk::cmdImageMemoryBarrier(cmd, {srcImage, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR});
   submitAndWaitTempCmdBuffer(cmd);
 

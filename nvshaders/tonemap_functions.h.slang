@@ -48,6 +48,27 @@ inline float3 toLinear(float3 srgb)
   return lerp(low, high, float3(greaterThan(srgb, float3(0.04045F))));
 }
 
+// Calculates luminance based off a EV100 (perceptual radiance) value
+float calcEV100Luminance(float EV100)
+{
+  /* Note: Using standard definition of EV100 for luminance: */
+  /* https://en.wikipedia.org/wiki/Exposure_value */
+  return exp2(EV100) / float(100.0f / 12.5f);
+}
+
+float calcLuminanceEV100(float luminance)
+{
+  /* Note: Using standard definition of EV100 for luminance: */
+  /* https://en.wikipedia.org/wiki/Exposure_value            */
+  return log2(luminance * float(100.0f / 12.5f));
+}
+
+float  calcBt709Luminance(float3 linearColor)       
+{                                                             
+  return dot(linearColor, float3(0.2126, 0.7152, 0.0722)); 
+}
+
+
 /*-------------------------------------------------------------------------------------------------
 # Function `tonemapFilmic`
 > Filmic tonemapping operator by Jim Hejl and Richard Burgess-Dawson,

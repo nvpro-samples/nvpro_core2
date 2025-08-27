@@ -216,17 +216,17 @@ void HdrIbl::destroyEnvironment()
 //
 void HdrIbl::createDescriptorSetLayout()
 {
-  nvvk::DescriptorBindings& bindings = m_descPack.bindings;
+  nvvk::DescriptorBindings bindings;
   bindings.addBinding(shaderio::EnvBindings::eHdr, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL);  // HDR image
   bindings.addBinding(shaderio::EnvBindings::eImpSamples, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);  // importance sampling
-  NVVK_CHECK(m_descPack.initFromBindings(m_device, 1));
-  NVVK_DBG_NAME(m_descPack.layout);
-  NVVK_DBG_NAME(m_descPack.pool);
-  NVVK_DBG_NAME(m_descPack.sets[0]);
+  NVVK_CHECK(m_descPack.init(bindings, m_device, 1));
+  NVVK_DBG_NAME(m_descPack.getLayout());
+  NVVK_DBG_NAME(m_descPack.getPool());
+  NVVK_DBG_NAME(m_descPack.getSet(0));
 
   nvvk::WriteSetContainer writeContainer;
-  writeContainer.append(bindings.getWriteSet(shaderio::EnvBindings::eHdr, m_descPack.sets[0]), m_texHdr);
-  writeContainer.append(bindings.getWriteSet(shaderio::EnvBindings::eImpSamples, m_descPack.sets[0]), m_accelImpSmpl);
+  writeContainer.append(bindings.getWriteSet(shaderio::EnvBindings::eHdr, m_descPack.getSet(0)), m_texHdr);
+  writeContainer.append(bindings.getWriteSet(shaderio::EnvBindings::eImpSamples, m_descPack.getSet(0)), m_accelImpSmpl);
   vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
 }
 

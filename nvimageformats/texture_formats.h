@@ -25,13 +25,21 @@ OpenGL.
 * A method for getting the size of a Vulkan subresource using linear tiling.
 * The extended ASTC values for DXGI_FORMAT.
 
+Configuration variables (must be defined for both the .h and .cpp files):
+* NV_IMAGE_FORMATS_NO_VULKAN: Turns off Vulkan format support; removes the
+    vulkan/vulkan_core.h dependency.
+* NV_IMAGE_FORMATS_NO_DXGI: Turns off DXGI format support; removes the
+    directx/dxgiformat.h dependency.
+
 -----------------------------------------------------------------------------*/
 
 #pragma once
 #include <cstddef>
 #include <cstdint>
 
+#ifndef NV_IMAGE_FORMATS_NO_VULKAN
 #include <vulkan/vulkan_core.h>  // For VkFormat
+#endif
 
 namespace texture_formats {
 
@@ -54,24 +62,28 @@ struct OpenGLFormat
 // API texture format name translation functions.
 // Each of these returns an "unknown" format -- 0 -- if it couldn't figure out
 // what the corresponding format was.
+#if !defined(NV_IMAGE_FORMATS_NO_DXGI)
 OpenGLFormat dxgiToOpenGL(uint32_t dxgiFormat);
 uint32_t     openGLToDXGI(const OpenGLFormat& glFormat);
-VkFormat     dxgiToVulkan(uint32_t dxgiFormat);
+#endif
+#if !defined(NV_IMAGE_FORMATS_NO_VULKAN) && !defined(NV_IMAGE_FORMATS_NO_DXGI)
+VkFormat dxgiToVulkan(uint32_t dxgiFormat);
+uint32_t vulkanToDXGI(VkFormat vkFormat);
+#endif
+#if !defined(NV_IMAGE_FORMATS_NO_VULKAN)
 VkFormat     openGLToVulkan(const OpenGLFormat& glFormat);
-uint32_t     vulkanToDXGI(VkFormat vkFormat);
 OpenGLFormat vulkanToOpenGL(VkFormat vkFormat);
+#endif
 
+#ifndef NV_IMAGE_FORMATS_NO_DXGI
 // Returns the enum name of a DXGI format. If the name isn't contained in
 // texture_format's tables, returns nullptr.
 const char* getDXGIFormatName(uint32_t dxgiFormat);
 
-// Returns the enum name of a VkFormat. If the name isn't contained in
-// texture_format's tables, returns nullptr.
-const char* getVkFormatName(VkFormat vkFormat);
-
 // Returns whether the given DXGI format ends in _SRGB, i.e. whether the GPU
 // automatically performs sRGB-to-linear conversion when sampling it.
 bool isDXGIFormatSRGB(uint32_t dxgiFormat);
+
 // Tries to change the given DXGI format to another one that uses the given
 // transfer function, if it exists. Otherwise, returns the input.
 // For instance, tryForceDXGITransferFunction(DXGI_FORMAT_BC2_UNORM, true)
@@ -82,13 +94,21 @@ bool isDXGIFormatSRGB(uint32_t dxgiFormat);
 // typically contain sRGB data, but the engine usually knows whether it wants
 // the GPU to perform automatic sRGB-to-linear conversion.
 uint32_t tryForceDXGIFormatTransferFunction(uint32_t dxgiFormat, bool srgb);
+#endif
+
+#ifndef NV_IMAGE_FORMATS_NO_VULKAN
+// Returns the enum name of a VkFormat. If the name isn't contained in
+// texture_format's tables, returns nullptr.
+const char* getVkFormatName(VkFormat vkFormat);
 
 // Returns whether the given VkFormat includes _SRGB, i.e. whether the GPU
 // automatically performs sRGB-to-linear conversion when sampling it.
 bool isVkFormatSRGB(VkFormat vkFormat);
+
 // Tries to change the given VkFormat to another one that uses the given
 // transfer function, if it exists. Otherwise, returns the input.
 VkFormat tryForceVkFormatTransferFunction(VkFormat vkFormat, bool srgb);
+#endif
 
 
 // DXGI ASTC extension
@@ -143,7 +163,7 @@ const uint32_t DXGI_FORMAT_ASTC_12X12_UNORM_SRGB = 187;
 namespace checked_math {
 
 // Multiplies two values, returning false if the calculation would overflow.
-inline bool mul2(size_t a, size_t b, size_t& out)
+[[nodiscard]] inline bool mul2(size_t a, size_t b, size_t& out)
 {
   if((a != 0) && (b > SIZE_MAX / a))  // Safe way of checking a * b > SIZE_MAX
   {
@@ -154,7 +174,7 @@ inline bool mul2(size_t a, size_t b, size_t& out)
 }
 
 // Multiplies three values, returning false if the calculation would overflow.
-inline bool mul3(size_t a, size_t b, size_t c, size_t& out)
+[[nodiscard]] inline bool mul3(size_t a, size_t b, size_t c, size_t& out)
 {
   // a * b * 0 is always OK, even if a * b overflows.
   if(c == 0)
@@ -170,7 +190,7 @@ inline bool mul3(size_t a, size_t b, size_t c, size_t& out)
 }
 
 // Multiplies four values, returning false if the calculation would overflow.
-inline bool mul4(size_t a, size_t b, size_t c, size_t d, size_t& out)
+[[nodiscard]] inline bool mul4(size_t a, size_t b, size_t c, size_t d, size_t& out)
 {
   // a * b * c * 0 is always OK, even if a * b * c overflows.
   if(d == 0)
@@ -186,7 +206,7 @@ inline bool mul4(size_t a, size_t b, size_t c, size_t d, size_t& out)
 }
 
 // Multiplies five values, returning false if the calculation would overflow.
-inline bool mul5(size_t a, size_t b, size_t c, size_t d, size_t e, size_t& out)
+[[nodiscard]] inline bool mul5(size_t a, size_t b, size_t c, size_t d, size_t e, size_t& out)
 {
   // a * b * c * d * 0 is always OK, even if a * b * c * d overflows.
   if(e == 0)

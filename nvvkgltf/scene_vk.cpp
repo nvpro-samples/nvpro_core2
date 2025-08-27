@@ -441,6 +441,11 @@ void nvvkgltf::SceneVk::updateRenderPrimitivesBuffer(VkCommandBuffer cmd, nvvk::
     // Get blended position
     std::vector<glm::vec3> blendedPositions = getBlendedPositions(positionAccessor, positionData.data(), primitive, mesh, model);
 
+    // Flush any pending buffer operations and add synchronization before updating morph/skinning buffers
+    staging.cmdUploadAppended(cmd);
+    nvvk::cmdMemoryBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COPY_BIT,
+                           VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+
     // Update buffer
     VertexBuffers& vertexBuffers = m_vertexBuffers[renderPrimID];
     staging.appendBuffer(vertexBuffers.position, 0, std::span(blendedPositions));
@@ -492,6 +497,11 @@ void nvvkgltf::SceneVk::updateRenderPrimitivesBuffer(VkCommandBuffer cmd, nvvk::
 
     // Get skinned positions
     std::vector<glm::vec3> skinnedPositions = getSkinnedPositions(basePositionData, weights, joints, jointMatrices);
+
+    // Flush any pending buffer operations and add synchronization before updating morph/skinning buffers
+    staging.cmdUploadAppended(cmd);
+    nvvk::cmdMemoryBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COPY_BIT,
+                           VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
 
     // Update buffer
     VertexBuffers& vertexBuffers = m_vertexBuffers[skinNode.renderPrimID];

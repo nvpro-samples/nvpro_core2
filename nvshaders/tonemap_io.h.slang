@@ -25,6 +25,9 @@
 
 NAMESPACE_SHADERIO_BEGIN()
 
+#define TONEMAP_WORKGROUP_SIZE 16
+
+
 enum ToneMapMethod
 {
   eFilmic = 0,
@@ -40,8 +43,10 @@ enum ToneMapMethod
 // Bindings
 enum TonemapBinding
 {
-  eInput = 0,
-  eOutput
+  eImageInput = 0,
+  eImageOutput,
+  eHistogramInputOutput,
+  eLuminanceInputOutput,
 };
 
 
@@ -51,15 +56,29 @@ enum TonemapBinding
 -------------------------------------------------------------------------------------------------*/
 struct TonemapperData
 {
-  int   method     = ToneMapMethod::eFilmic;
-  int   isActive   = 1;
+  int isActive = 1;
+  int method   = ToneMapMethod::eFilmic;
+  // Effects
   float exposure   = 1.0f;
   float brightness = 1.0f;
   float contrast   = 1.0f;
   float saturation = 1.0f;
   float vignette   = 0.0f;
+  // Auto-Exposure
+  int      autoExposure         = 0;      // 0: off, 1: on
+  float    autoExposureSpeed    = 5.0F;   // Speed of auto-exposure adjustment
+  float    evMinValue           = -5.0F;  // Minimum EV value for auto-exposure
+  float    evMaxValue           = 10.0F;  // Maximum EV value for auto-exposure
+  uint32_t enableCenterMetering = 0;      // 0 = off, 1 = on
+  float    centerMeteringSize   = 0.5F;   // Size of the center metering area (0.0 to 1.0, where 1.0 is the full screen)
+  uint32_t averageMode          = 1;      // 0 = Mean, 1 = Median
 };
 
+
+
+#define EXPOSURE_HISTOGRAM_SIZE 256
+
 NAMESPACE_SHADERIO_END()
+
 
 #endif  // TONEMAMP_SHADERIO_H
