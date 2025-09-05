@@ -40,11 +40,11 @@ namespace nvgui {
 // - Note, each function has an extra argument, which will display the string as Tooltip
 //
 namespace PropertyEditor {
-bool begin(const char* label = ("PE::Table" + std::to_string(__LINE__)).c_str(), ImGuiTableFlags flag = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_Resizable);
+bool begin(const char* label = "PE::Table", ImGuiTableFlags flag = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_Resizable);
 void end();
 bool entry(const std::string& property_name, const std::function<bool()>& content_fct, const std::string& tooltip = {});
 void entry(const std::string& property_name, const std::string& value);
-bool treeNode(const std::string& name);
+bool treeNode(const std::string& name, ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanFullWidth);
 void treePop();
 
 

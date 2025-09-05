@@ -71,12 +71,12 @@ void entry(const std::string& property_name, const std::string& value)
   });
 }
 
-bool treeNode(const std::string& name)
+bool treeNode(const std::string& name, ImGuiTreeNodeFlags flags)
 {
   ImGui::TableNextRow();
   ImGui::TableNextColumn();
   ImGui::AlignTextToFramePadding();
-  return ImGui::TreeNodeEx(name.c_str(), ImGuiTreeNodeFlags_SpanFullWidth);
+  return ImGui::TreeNodeEx(name.c_str(), flags);
 }
 void treePop()
 {

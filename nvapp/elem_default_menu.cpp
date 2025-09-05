@@ -21,6 +21,7 @@
 #include <imgui/imgui.h>
 #include <implot/implot.h>
 #include <nvutils/logger.hpp>
+#include <nvgui/fonts.hpp>
 
 #include "elem_default_menu.hpp"
 
@@ -43,7 +44,7 @@ void nvapp::ElementDefaultMenu::onUIMenu()
 #endif
   if(ImGui::BeginMenu("File"))
   {
-    if(ImGui::MenuItem("Exit", "Ctrl+Q"))
+    if(ImGui::MenuItem(ICON_MS_POWER_SETTINGS_NEW " Exit", "Ctrl+Q"))
     {
       close_app = true;
     }
@@ -51,7 +52,7 @@ void nvapp::ElementDefaultMenu::onUIMenu()
   }
   if(ImGui::BeginMenu("View"))
   {
-    ImGui::MenuItem("V-Sync", "Ctrl+Shift+V", &v_sync);
+    ImGui::MenuItem(ICON_MS_BOTTOM_PANEL_OPEN " V-Sync", "Ctrl+Shift+V", &v_sync);
     ImGui::EndMenu();
   }
 #ifdef SHOW_IMGUI_DEMO

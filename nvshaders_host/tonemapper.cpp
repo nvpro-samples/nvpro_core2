@@ -36,11 +36,11 @@ VkResult nvshaders::Tonemapper::init(nvvk::ResourceAllocator* alloc, std::span<c
 
   // Create buffers
   alloc->createBuffer(m_exposureBuffer, sizeof(float),
-                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                      VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT | VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT,
                       VMA_MEMORY_USAGE_AUTO);
   NVVK_DBG_NAME(m_exposureBuffer.buffer);
   alloc->createBuffer(m_histogramBuffer, sizeof(uint32_t) * EXPOSURE_HISTOGRAM_SIZE,
-                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                      VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT | VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT,
                       VMA_MEMORY_USAGE_AUTO);
 
 

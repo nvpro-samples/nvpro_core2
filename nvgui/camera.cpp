@@ -29,6 +29,7 @@
 #include <nvutils/file_operations.hpp>
 #include <nvgui/property_editor.hpp>
 #include <nvgui/tooltip.hpp>
+#include <nvgui/fonts.hpp>
 
 #include "camera.hpp"
 
@@ -276,247 +277,403 @@ struct CameraPresetManager
 };
 
 
-//--------------------------------------------------------------------------------------------------
-// Display the values of the current camera: position, center, up and FOV
-//
-static void CurrentCameraTab(std::shared_ptr<nvutils::CameraManipulator> cameraM,
-                             nvutils::CameraManipulator::Camera&         camera,
-                             bool&                                       changed,
-                             bool&                                       instantSet)
+// Create a more compact button bar with better spacing
+static float s_buttonSpacing = 4.0f;
+
+// Calls PropertyEditor::begin() and sets the second column to auto-stretch.
+static bool PeBeginAutostretch(const char* label)
 {
-  bool y_is_up = camera.up.y == 1;
+  if(!PE::begin(label, ImGuiTableFlags_SizingFixedFit))
+    return false;
+  ImGui::TableSetupColumn("Property");
+  ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+  return true;
+}
 
-  if(PE::begin())
+//--------------------------------------------------------------------------------------------------
+// Quick Actions Bar with icon buttons
+//
+static void QuickActionsBar(std::shared_ptr<nvutils::CameraManipulator> cameraM, nvutils::CameraManipulator::Camera& camera, bool& changed)
+{
+  // We make the default button color match the background here so that it
+  // looks the same as in NavigationSettingsSection.
+  ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_ChildBg]);
+
+  // Home button
+  if(ImGui::Button(ICON_MS_HOME))
   {
-    PE::InputFloat3("Eye", &camera.eye.x, "%.5f", 0, "Position of the Camera");
-    changed |= ImGui::IsItemDeactivatedAfterEdit();
-    PE::InputFloat3("Center", &camera.ctr.x, "%.5f", 0, "Center of camera interest");
-    changed |= ImGui::IsItemDeactivatedAfterEdit();
-    PE::InputFloat3("Up", &camera.up.x, "%.5f", 0, "Up vector interest");
-    changed |= ImGui::IsItemDeactivatedAfterEdit();
-    if(PE::entry("Y is UP", [&] { return ImGui::Checkbox("##Y", &y_is_up); }, "Is Y pointing up or Z?"))
-    {
-      camera.up = y_is_up ? glm::vec3(0, 1, 0) : glm::vec3(0, 0, 1);
-      changed   = true;
-    }
-    if(glm::length(camera.up) < 0.0001f)
-    {
-      camera.up = y_is_up ? glm::vec3(0, 1, 0) : glm::vec3(0, 0, 1);
-      changed   = true;
-    }
-    if(PE::SliderFloat("FOV", &camera.fov, 1.F, 179.F, "%.1f deg", ImGuiSliderFlags_Logarithmic, "Field of view in degrees"))
-    {
-      instantSet = true;
-      changed    = true;
-    }
+    camera  = CameraPresetManager::getInstance().m_cameras[0];
+    changed = true;
+  }
+  nvgui::tooltip("Reset to home camera position");
 
-    if(PE::treeNode("Clip planes"))
-    {
-      glm::vec2 clip = cameraM->getClipPlanes();
-      PE::InputFloat("Near", &clip.x, 0, 0, "%.6f");
-      changed |= ImGui::IsItemDeactivatedAfterEdit();
-      PE::InputFloat("Far", &clip.y, 0, 0, "%.6f");
-      changed |= ImGui::IsItemDeactivatedAfterEdit();
-      PE::treePop();
-      cameraM->setClipPlanes(clip);
-    }
+  // Add/Save camera button
+  ImGui::SameLine(0, s_buttonSpacing);
+  if(ImGui::Button(ICON_MS_ADD_A_PHOTO))
+  {
+    CameraPresetManager::getInstance().addCamera(cameraM->getCamera());
+  }
+  nvgui::tooltip("Save current camera position");
 
-    if(cameraM->isAnimated())
-    {
-      // Ignoring any changes while the camera is moving to the goal.
-      // The camera has to be in the new position before setting a new value.
-      changed = false;
-    }
+  // Copy button
+  ImGui::SameLine(0, s_buttonSpacing);
+  if(ImGui::Button(ICON_MS_CONTENT_COPY))
+  {
+    std::string text = fmt::format("{{{}, {}, {}}}, {{{}, {}, {}}}, {{{}, {}, {}}}, {{{}}}",  //
+                                   camera.eye.x, camera.eye.y, camera.eye.z,                  //
+                                   camera.ctr.x, camera.ctr.y, camera.ctr.z,                  //
+                                   camera.up.x, camera.up.y, camera.up.z,                     //
+                                   camera.fov);
+    ImGui::SetClipboardText(text.c_str());
+  }
+  nvgui::tooltip("Copy camera state to clipboard");
 
-    ImGui::TableNextRow();
-    ImGui::TableNextColumn();
 
-    ImGui::TextDisabled("(?)");
-    nvgui::tooltip(cameraM->getHelp().c_str(), false, 0.0f);
-    ImGui::TableNextColumn();
-    if(ImGui::SmallButton("Copy"))
+  // Paste button
+  const char* pPastedString;
+  ImGui::SameLine(0, s_buttonSpacing);
+  if(ImGui::Button(ICON_MS_CONTENT_PASTE) && (pPastedString = ImGui::GetClipboardText()))
+  {
+    std::array<float, 10> val{};
+    int result = SAFE_SSCANF(pPastedString, "{%f, %f, %f}, {%f, %f, %f}, {%f, %f, %f}, {%f}", &val[0], &val[1], &val[2],
+                             &val[3], &val[4], &val[5], &val[6], &val[7], &val[8], &val[9]);
+    if(result >= 9)  // Before 2025-09-03, this format didn't include the FOV at the end
     {
-      std::string text = fmt::format("{{{:.5f}, {:.5f}, {:.5f}}}, {{{:.5f}, {:.5f}, {:.5f}}}, {{{:.5f}, {:.5f}, {:.5f}}}",
-                                     camera.eye.x, camera.eye.y, camera.eye.z, camera.ctr.x, camera.ctr.y, camera.ctr.z,
-                                     camera.up.x, camera.up.y, camera.up.z);
-      ImGui::SetClipboardText(text.c_str());
+      camera.eye = glm::vec3{val[0], val[1], val[2]};
+      camera.ctr = glm::vec3{val[3], val[4], val[5]};
+      camera.up  = glm::vec3{val[6], val[7], val[8]};
+      if(result == 10)
+        camera.fov = val[9];
+      changed = true;
     }
-    nvgui::tooltip("Copy to the clipboard the current camera: {eye}, {ctr}, {up}");
-    ImGui::SameLine();
-    const char* pPastedString;
-    if(ImGui::SmallButton("Paste") && (pPastedString = ImGui::GetClipboardText()))
-    {
-      float val[9]{};
-      int   result = SAFE_SSCANF(pPastedString, "{%f, %f, %f}, {%f, %f, %f}, {%f, %f, %f}", &val[0], &val[1], &val[2],
-                                 &val[3], &val[4], &val[5], &val[6], &val[7], &val[8]);
-      if(result == 9)  // 9 value properly scanned
-      {
-        camera.eye = glm::vec3{val[0], val[1], val[2]};
-        camera.ctr = glm::vec3{val[3], val[4], val[5]};
-        camera.up  = glm::vec3{val[6], val[7], val[8]};
-        changed    = true;
-      }
-    }
-    nvgui::tooltip("Paste from the clipboard the current camera: {eye}, {ctr}, {up}");
-    PE::end();
+  }
+  nvgui::tooltip("Paste camera state from clipboard");
+
+  // Help button, right-aligned
+  const float button_size = ImGui::CalcTextSize(ICON_MS_HELP).x + ImGui::GetStyle().FramePadding.x * 2.f;
+  ImGui::SameLine(ImGui::GetContentRegionMax().x - button_size, 0.0f);
+  if(ImGui::Button(ICON_MS_HELP))
+  {
+    ImGui::OpenPopup("Camera Help");
+  }
+  nvgui::tooltip("Show camera controls help");
+
+  ImGui::PopStyleColor();
+
+  // Help popup
+  if(ImGui::BeginPopupModal("Camera Help", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+  {
+    ImGui::Text("Camera Controls:");
+    ImGui::BulletText("Left Mouse: Orbit/Pan/Dolly (depends on mode)");
+    ImGui::BulletText("Right Mouse: Look around");
+    ImGui::BulletText("Middle Mouse: Pan");
+    ImGui::BulletText("Mouse Wheel: Zoom (change FOV)");
+    ImGui::BulletText("WASD: Move camera");
+    ImGui::BulletText("Q/E: Roll camera");
+    ImGui::Spacing();
+    ImGui::Text("Navigation Modes:");
+    ImGui::BulletText("Examine: Orbit around center point");
+    ImGui::BulletText("Fly: Free movement in 3D space");
+    ImGui::BulletText("Walk: Movement constrained to horizontal plane");
+
+    if(ImGui::Button("Close", ImVec2(120, 0)))
+      ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
   }
 }
 
 //--------------------------------------------------------------------------------------------------
-// Display buttons for all saved cameras. Allow to create and delete saved cameras
+// Camera Presets Grid with icons
 //
-static void SavedCameraTab(std::shared_ptr<nvutils::CameraManipulator> cameraM, nvutils::CameraManipulator::Camera& camera, bool& changed)
+static void PresetsSection(std::shared_ptr<nvutils::CameraManipulator> cameraM, nvutils::CameraManipulator::Camera& camera, bool& changed)
 {
-  // Dummy
-  ImVec2      button_sz(50, 30);
-  ImGuiStyle& style             = ImGui::GetStyle();
-  int         buttons_count     = (int)CameraPresetManager ::getInstance().m_cameras.size();
-  float       window_visible_x2 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+  auto& presetManager   = CameraPresetManager::getInstance();
+  int   buttonsCount    = (int)presetManager.m_cameras.size();
+  float windowVisibleX2 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
 
-  // The HOME camera button, different from the other ones
-  if(ImGui::Button("Home", ImVec2(ImGui::GetWindowContentRegionMax().x, 50)))
-  {
-    camera  = CameraPresetManager ::getInstance().m_cameras[0];
-    changed = true;
-  }
-  nvgui::tooltip("Reset the camera to its origin");
+  if(buttonsCount == 1)
+    ImGui::TextDisabled(" - No saved cameras");
 
-  // Display all the saved camera in an array of buttons
-  int delete_item = -1;
-  for(int n = 1; n < buttons_count; n++)
+  // Display saved cameras
+  int         delete_item = -1;
+  std::string thisLabel   = "#1";
+  std::string nextLabel;
+  for(int n = 1; n < buttonsCount; n++)
   {
+    nextLabel = fmt::format("#{}", n + 1);
     ImGui::PushID(n);
+    if(ImGui::Button(thisLabel.c_str()))
     {
-      std::string label = fmt::format("# {}", n);
-      if(ImGui::Button(label.c_str(), button_sz))
-      {
-        camera  = CameraPresetManager ::getInstance().m_cameras[n];
-        changed = true;
-      }
+      camera  = presetManager.m_cameras[n];
+      changed = true;
     }
 
-    // Middle click to delete a camera
+    // Middle click to delete
     if(ImGui::IsItemHovered() && ImGui::GetIO().MouseClicked[ImGuiMouseButton_Middle])
       delete_item = n;
 
-    // Displaying the position of the camera when hovering the button
-    {
-      std::string label =
-          fmt::format("Pos: {:.5f}, {:.5f}, {:.5f}", CameraPresetManager ::getInstance().m_cameras[n].eye.x,
-                      CameraPresetManager ::getInstance().m_cameras[n].eye.y,
-                      CameraPresetManager ::getInstance().m_cameras[n].eye.z);
-      nvgui::tooltip(label.c_str());
-    }
+    // Hover tooltip with position info and deletion instruction
+    const auto& cam = presetManager.m_cameras[n];
+    std::string tooltip =
+        fmt::format("Camera #{}\n({:.1f}, {:.1f}, {:.1f})\nMiddle click to delete", n, cam.eye.x, cam.eye.y, cam.eye.z);
+    nvgui::tooltip(tooltip.c_str());
 
-    // Wrapping all buttons (see ImGUI Demo)
+    // Auto-wrap buttons
     float last_button_x2 = ImGui::GetItemRectMax().x;
-    float next_button_x2 = last_button_x2 + style.ItemSpacing.x + button_sz.x;  // Expected position if next button was on same line
-    if(n + 1 < buttons_count && next_button_x2 < window_visible_x2)
-      ImGui::SameLine();
+    float next_button_x2 =
+        last_button_x2 + s_buttonSpacing + ImGui::CalcTextSize(nextLabel.c_str()).x + ImGui::GetStyle().FramePadding.x * 2.f;
+    if(n + 1 < buttonsCount && next_button_x2 < windowVisibleX2)
+      ImGui::SameLine(0, s_buttonSpacing);
+
+
+    thisLabel = std::move(nextLabel);
 
     ImGui::PopID();
   }
 
-  // Adding a camera button
-  if(ImGui::Button("+"))
-  {
-    CameraPresetManager ::getInstance().addCamera(cameraM->getCamera());
-  }
-  nvgui::tooltip("Add a new saved camera");
-  ImGui::SameLine();
-  ImGui::TextDisabled("(?)");
-  nvgui::tooltip("Middle-click a camera to delete it", false, 0.0f);
-
-  // Remove element
+  // Delete camera if requested
   if(delete_item > 0)
   {
-    CameraPresetManager ::getInstance().removeCamera(delete_item);
+    presetManager.removeCamera(delete_item);
   }
 }
 
 //--------------------------------------------------------------------------------------------------
-// This holds all camera setting, like the speed, the movement mode, transition duration
+// Navigation Settings Section: Mode (examine, fly, walk), Speed
 //
-static void CameraExtraTab(std::shared_ptr<nvutils::CameraManipulator> cameraM, bool& changed)
+static void NavigationSettingsSection(std::shared_ptr<nvutils::CameraManipulator> cameraM, bool& changed)
 {
-  // Navigation Mode
-  if(PE::begin())
+  ImGui::Separator();
+  // Dear ImGui in v1.92 has a FIXME where it doesn't add 1px of spacing after separators
+  ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1.f);
+
+  auto mode     = cameraM->getMode();
+  auto speed    = cameraM->getSpeed();
+  auto duration = static_cast<float>(cameraM->getAnimationDuration());
+
+  // Change the button color to show the one that's currently active, and to
+  // make the other ones match the color of the background.
+  ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyle().Colors[ImGuiCol_Button]);
+
+  auto setColor = [&](bool selected) {
+    ImGui::GetStyle().Colors[ImGuiCol_Button] =
+        selected ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_ChildBg];
+  };
+
+  // Left-aligned navigation buttons
+  setColor(mode == nvutils::CameraManipulator::Examine);
+  if(ImGui::Button(ICON_MS_ORBIT))
   {
-    auto mode     = cameraM->getMode();
-    auto speed    = cameraM->getSpeed();
-    auto duration = static_cast<float>(cameraM->getAnimationDuration());
+    cameraM->setMode(nvutils::CameraManipulator::Examine);
+    changed = true;
+  }
+  nvgui::tooltip("Orbit around a point of interest");
+  ImGui::SameLine(0, s_buttonSpacing);
+  setColor(mode == nvutils::CameraManipulator::Fly);
+  if(ImGui::Button(ICON_MS_FLIGHT))
+  {
+    cameraM->setMode(nvutils::CameraManipulator::Fly);
+    changed = true;
+  }
+  nvgui::tooltip("Fly: Free camera movement");
+  ImGui::SameLine(0, s_buttonSpacing);
+  setColor(mode == nvutils::CameraManipulator::Walk);
+  if(ImGui::Button(ICON_MS_DIRECTIONS_WALK))
+  {
+    cameraM->setMode(nvutils::CameraManipulator::Walk);
+    changed = true;
+  }
+  nvgui::tooltip("Walk: Stay on a horizontal plane");
 
-    changed |= PE::entry(
-        "Navigation",
-        [&] {
-          int rmode = static_cast<int>(mode);
-          changed |= ImGui::RadioButton("Examine", &rmode, nvutils::CameraManipulator::Examine);
-          nvgui::tooltip("The camera orbit around a point of interest");
-          changed |= ImGui::RadioButton("Fly", &rmode, nvutils::CameraManipulator::Fly);
-          nvgui::tooltip("The camera is free and move toward the looking direction");
-          changed |= ImGui::RadioButton("Walk", &rmode, nvutils::CameraManipulator::Walk);
-          nvgui::tooltip("The camera is free but stay on a plane");
-          cameraM->setMode(static_cast<nvutils::CameraManipulator::Modes>(rmode));
-          return changed;
-        },
-        "Camera Navigation Mode");
-
-    changed |= PE::InputFloat("Speed", &speed, 0, 0, "%.5f", 0, "Changing the default speed movement");
-    changed |= PE::SliderFloat("Transition", &duration, 0.0F, 2.0F, "%.3f", 0, "Nb seconds to move to new position");
-
-    cameraM->setSpeed(speed);
-    cameraM->setAnimationDuration(duration);
-
-    if(changed)
+  ImGui::PopStyleColor();
+  const bool showSettings = (mode == nvutils::CameraManipulator::Fly || mode == nvutils::CameraManipulator::Walk);
+  // Speed and transition controls (only shown when fly or walk is selected)
+  if(showSettings)
+  {
+    if(PeBeginAutostretch("##Speed"))
     {
-      CameraPresetManager ::getInstance().markIniSettingsDirty();
+      // ImGuiSliderFlags_Logarithmic requires a value range for its scaling to work.
+      const float speedMin = 1e-3f;
+      const float speedMax = 1e+3f;
+      changed |= PE::DragFloat("Speed", &speed, 2e-4f * (speedMax - speedMin), speedMin, speedMax, "%.2f",
+                               ImGuiSliderFlags_Logarithmic, "Speed of camera movement");
+      cameraM->setSpeed(speed);
+      PE::end();
     }
-
-    PE::end();
   }
 }
 
 //--------------------------------------------------------------------------------------------------
-// Display the camera eye and center of interest position of the camera (nvutils::CameraManipulator)
-// Allow also to modify the field-of-view (FOV)
-// And basic control information is displayed
-bool nvgui::CameraWidget(std::shared_ptr<nvutils::CameraManipulator> cameraManip)
+// Camera Position Section : Eye, Center, Up vectors
+//
+static void PositionSection(std::shared_ptr<nvutils::CameraManipulator> cameraM,
+                            nvutils::CameraManipulator::Camera&         camera,
+                            bool&                                       changed,
+                            ImGuiTreeNodeFlags                          flag = ImGuiTreeNodeFlags_None)
+{
+  // We'll ignore changes during animation (but don't want to ignore other
+  // changes), so we track changes locally and decide whether to commit them
+  // at the end:
+  bool myChanged = false;
+
+  if(ImGui::TreeNodeEx("Position", flag))
+  {
+    if(PeBeginAutostretch("##Position"))
+    {
+      myChanged |= PE::InputFloat3("Eye", &camera.eye.x);
+      myChanged |= PE::InputFloat3("Center", &camera.ctr.x);
+      myChanged |= PE::InputFloat3("Up", &camera.up.x);
+      PE::end();
+    }
+    ImGui::TreePop();
+  }
+
+  if(!cameraM->isAnimated())  // Ignore changes during animation
+  {
+    changed |= myChanged;
+  }
+}
+
+//--------------------------------------------------------------------------------------------------
+// Projection Settings Section: field of view, Z-clip planes
+//
+static void ProjectionSettingsSection(std::shared_ptr<nvutils::CameraManipulator> cameraManip,
+                                      nvutils::CameraManipulator::Camera&         camera,
+                                      bool&                                       changed,
+                                      ImGuiTreeNodeFlags                          flag = ImGuiTreeNodeFlags_None)
+{
+  if(ImGui::TreeNodeEx("Projection", flag))
+  {
+    if(PeBeginAutostretch("##Projection"))
+    {
+      if(PE::SliderFloat("FOV", &camera.fov, 1.F, 179.F, "%.1f°", ImGuiSliderFlags_Logarithmic, "Field of view of the camera (degrees)"))
+      {
+        changed = true;
+        // This should be set instantly; changing the current camera does the trick.
+        cameraManip->setFov(camera.fov);
+      }
+
+      // ImGuiSliderFlags_Logarithmic requires a value range for its scaling to work.
+      const float minClip = 1e-5f;
+      const float maxClip = 1e+9f;
+      glm::vec2   clip    = cameraManip->getClipPlanes();
+      if(PE::DragFloat2("Z-Clip", &clip.x, 2e-5f * (maxClip - minClip), minClip, maxClip, "%.6f",
+                        ImGuiSliderFlags_Logarithmic, "Near/Far clip planes for depth buffer"))
+      {
+        changed = true;
+
+        // We don't enforce min/max since you have to ctrl-click to set
+        // out-of-bounds values, so if it's out-of-bounds then the user's setting
+        // it intentionally.
+
+        // This should also be set instantly:
+        cameraManip->setClipPlanes(clip);
+      }
+
+      PE::end();
+    }
+    ImGui::TreePop();
+  }
+}
+
+
+//--------------------------------------------------------------------------------------------------
+// Advanced Settings Section : Up vector (Y-up, Z-up), animation transition time
+//
+static void OtherSettingsSection(std::shared_ptr<nvutils::CameraManipulator> cameraM,
+                                 nvutils::CameraManipulator::Camera&         camera,
+                                 bool&                                       changed,
+                                 ImGuiTreeNodeFlags                          flag = ImGuiTreeNodeFlags_None)
+{
+  if(ImGui::TreeNodeEx("Other", flag))
+  {
+    if(PeBeginAutostretch("##Other"))
+    {
+      PE::entry("Up vector", [&] {
+        const bool yIsUp = camera.up.y == 1;
+        if(ImGui::RadioButton("Y-up", yIsUp))
+        {
+          camera.up = glm::vec3(0, 1, 0);
+          changed   = true;
+        }
+        ImGui::SameLine();
+        if(ImGui::RadioButton("Z-up", !yIsUp))
+        {
+          camera.up = glm::vec3(0, 0, 1);
+          changed   = true;
+        }
+        if(glm::length(camera.up) < 0.0001f)
+        {
+          camera.up = yIsUp ? glm::vec3(0, 1, 0) : glm::vec3(0, 0, 1);
+          changed   = true;
+        }
+        return changed;
+      });
+
+      auto duration = static_cast<float>(cameraM->getAnimationDuration());
+      changed |= PE::SliderFloat("Transition", &duration, 0.0F, 2.0F, "%.2fs", ImGuiSliderFlags_None,
+                                 "Transition duration of camera movement");
+      cameraM->setAnimationDuration(duration);
+
+      PE::end();
+    }
+    ImGui::TreePop();
+  }
+}
+
+//--------------------------------------------------------------------------------------------------
+// Unified camera widget: position, presets, navigation settings
+//
+bool nvgui::CameraWidget(std::shared_ptr<nvutils::CameraManipulator> cameraManip, bool embed, CameraWidgetSections openSections)
 {
   assert(cameraManip && "CameraManipulator is not set");
-  bool changed{false};
-  bool instantSet{false};
-  auto camera = cameraManip->getCamera();
+  bool                               changed{false};
+  nvutils::CameraManipulator::Camera camera = cameraManip->getCamera();
 
   // Updating the camera manager
   CameraPresetManager::getInstance().update(cameraManip);
 
-  // Starting UI
-  if(ImGui::BeginTabBar("CameraManipulator"))
+  if(embed)
   {
-    if(ImGui::BeginTabItem("Current"))
+    ImGui::Text("Camera Settings");
+    if(!ImGui::BeginChild("CameraPanel", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY))
     {
-      CurrentCameraTab(cameraManip, camera, changed, instantSet);
-      ImGui::EndTabItem();
+      return false;
     }
+  }
 
-    if(ImGui::BeginTabItem("Cameras"))
-    {
-      SavedCameraTab(cameraManip, camera, changed);
-      ImGui::EndTabItem();
-    }
+  // Main camera panel with modern design
+  {
+    QuickActionsBar(cameraManip, camera, changed);
 
-    if(ImGui::BeginTabItem("Extra"))
+    PresetsSection(cameraManip, camera, changed);
+
+    NavigationSettingsSection(cameraManip, changed);
+
+    ImGui::Separator();
+
+    // Clip planes / FOV section
+    ProjectionSettingsSection(cameraManip, camera, changed,
+                              (openSections & CameraSection_Projection) ? ImGuiTreeNodeFlags_DefaultOpen : ImGuiTreeNodeFlags_None);
+
+    PositionSection(cameraManip, camera, changed,
+                    (openSections & CameraSection_Position) ? ImGuiTreeNodeFlags_DefaultOpen : ImGuiTreeNodeFlags_None);
+
+    // Up vector / Animation duration section
+    OtherSettingsSection(cameraManip, camera, changed,
+                         (openSections & CameraSection_Other) ? ImGuiTreeNodeFlags_DefaultOpen : ImGuiTreeNodeFlags_None);
+
+    if(embed)
     {
-      CameraExtraTab(cameraManip, changed);
-      ImGui::EndTabItem();
+      ImGui::EndChild();
     }
-    ImGui::EndTabBar();
   }
 
   // Apply the change back to the camera
   if(changed)
   {
-    cameraManip->setCamera(camera, instantSet);
+    CameraPresetManager::getInstance().markIniSettingsDirty();
+    cameraManip->setCamera(camera, false);
   }
 
   return changed;

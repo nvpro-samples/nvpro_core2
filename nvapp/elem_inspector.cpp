@@ -2498,7 +2498,7 @@ void ElementInspectorInternal::createInspectedBuffer(InspectedBuffer&   inspecte
   inspectedBuffer.formatSizeInBytes = computeFormatSizeInBytes(format);
   uint32_t sizeInBytes              = inspectedBuffer.formatSizeInBytes * entryCount;
 
-  m_alloc->createBuffer(inspectedBuffer.hostBuffer, sizeInBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
+  m_alloc->createBuffer(inspectedBuffer.hostBuffer, sizeInBytes, VK_BUFFER_USAGE_2_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
                         VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
   inspectedBuffer.format      = format;
   inspectedBuffer.entryCount  = entryCount;
@@ -4036,7 +4036,7 @@ void ElementInspectorInternal::initComputeInspection(uint32_t index, const Eleme
 
   var.showWarps.resize(blockCount * (var.maxWarpInBlock - var.minWarpInBlock + 1), false);
 
-  m_alloc->createBuffer(var.deviceBuffer, bufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+  m_alloc->createBuffer(var.deviceBuffer, bufferSize, VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT);
 
   createInspectedBuffer(var, var.deviceBuffer.buffer, info.name, var.format, entryCount, info.comment);
 
@@ -4052,7 +4052,7 @@ void ElementInspectorInternal::initComputeInspection(uint32_t index, const Eleme
     metadata[0].minWarpInBlock = var.minWarpInBlock;
     metadata[0].maxWarpInBlock = var.maxWarpInBlock;
     m_alloc->createBuffer(var.metadata, std::span(metadata).size_bytes(),
-                          VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+                          VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT);
     uploader.appendBuffer(var.metadata, 0, std::span(metadata));
     uploader.cmdUploadAppended(cmd);
     cmd.submitAndWait();
@@ -4212,7 +4212,7 @@ void ElementInspectorInternal::initCustomInspection(uint32_t index, const Elemen
   uint32_t bufferSize = entryCount * u32PerThread * sizeof(uint32_t);
 
 
-  m_alloc->createBuffer(var.deviceBuffer, bufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+  m_alloc->createBuffer(var.deviceBuffer, bufferSize, VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT);
 
   createInspectedBuffer(var, var.deviceBuffer.buffer, info.name, var.format, entryCount, info.comment);
 
@@ -4226,7 +4226,7 @@ void ElementInspectorInternal::initCustomInspection(uint32_t index, const Elemen
     metadata[0].maxCoord     = var.maxCoord;
     metadata[0].extent       = var.extent;
     m_alloc->createBuffer(var.metadata, std::span(metadata).size_bytes(),
-                          VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+                          VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT);
     uploader.appendBuffer(var.metadata, 0, std::span(metadata));
     uploader.cmdUploadAppended(cmd);
     cmd.submitAndWait();
@@ -4390,7 +4390,7 @@ void ElementInspectorInternal::initFragmentInspection(uint32_t index, const Elem
   uint32_t bufferSize = fragmentCount * u32PerThread * sizeof(uint32_t);
 
 
-  m_alloc->createBuffer(var.deviceBuffer, bufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+  m_alloc->createBuffer(var.deviceBuffer, bufferSize, VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT);
 
 
   nvvk::StagingUploader uploader;
@@ -4406,7 +4406,7 @@ void ElementInspectorInternal::initFragmentInspection(uint32_t index, const Elem
     metadata[0].renderSize   = var.renderSize;
 
     m_alloc->createBuffer(var.metadata, std::span(metadata).size_bytes(),
-                          VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+                          VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT);
     uploader.appendBuffer(var.metadata, 0, std::span(metadata));
     uploader.cmdUploadAppended(cmd);
     cmd.submitAndWait();

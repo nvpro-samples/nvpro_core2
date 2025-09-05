@@ -24,7 +24,10 @@
 #include <open_iconic/open_iconic.h>
 #include <roboto/roboto_mono.h>
 #include <roboto/roboto_regular.h>
-#include <material_symbols/material_symbols_rounded_filled_regular.h>
+
+#include <material_symbols/material_symbols_rounded_regular.h>
+#define MATERIAL_SYMBOLS_DATA g_materialSymbolsRounded_compressed_data
+#define MATERIAL_SYMBOLS_SIZE g_materialSymbolsRounded_compressed_size
 
 #include "fonts.hpp"
 
@@ -78,8 +81,7 @@ void nvgui::addDefaultFont(float fontSize, bool appendIcons)
 
     if(appendIcons)  // If appendIcons is true, merge Material Symbols into the default font
     {
-      g_defaultFont = appendFontWithMaterialSymbols(g_materialSymbolsRounded_filled_compressed_data,
-                                                    g_materialSymbolsRounded_filled_compressed_size, fontSize);
+      g_defaultFont = appendFontWithMaterialSymbols(MATERIAL_SYMBOLS_DATA, MATERIAL_SYMBOLS_SIZE, fontSize);
     }
   }
 }

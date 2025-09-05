@@ -207,13 +207,12 @@ bool nvvkgltf::SceneRtx::cmdBuildBottomLevelAccelerationStructure(VkCommandBuffe
 
   destroyScratchBuffers();
 
-  uint32_t minAlignment = m_rtASProperties.minAccelerationStructureScratchOffsetAlignment;
   // 1) finding the largest scratch size
   VkDeviceSize scratchSize = m_blasBuilder->getScratchSize(hintMaxBudget, m_blasBuildData);
   // 2) allocating the scratch buffer
   NVVK_CHECK(m_alloc->createBuffer(m_blasScratchBuffer, scratchSize,
-                                   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-                                       | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
+                                   VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT
+                                       | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
   NVVK_DBG_NAME(m_blasScratchBuffer.buffer);
 
   std::span<nvvk::AccelerationStructureBuildData> blasBuildData(m_blasBuildData);
@@ -306,8 +305,8 @@ void nvvkgltf::SceneRtx::cmdCreateBuildTopLevelAccelerationStructure(VkCommandBu
 
   // Create a buffer holding the actual instance data (matrices++) for use by the AS builder
   NVVK_CHECK(m_alloc->createBuffer(m_instancesBuffer, std::span(m_tlasInstances).size_bytes(),
-                                   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
-                                       | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR));
+                                   VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
+                                       | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR));
   NVVK_CHECK(staging.appendBuffer(m_instancesBuffer, 0, std::span(m_tlasInstances)));
   NVVK_DBG_NAME(m_instancesBuffer.buffer);
 
@@ -326,8 +325,8 @@ void nvvkgltf::SceneRtx::cmdCreateBuildTopLevelAccelerationStructure(VkCommandBu
 
   // Create the scratch buffer needed during build of the TLAS
   NVVK_CHECK(m_alloc->createBuffer(m_tlasScratchBuffer, sizeInfo.buildScratchSize,
-                                   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
-                                       | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
+                                   VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT
+                                       | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
   NVVK_DBG_NAME(m_tlasScratchBuffer.buffer);
 
   VkAccelerationStructureCreateInfoKHR createInfo = m_tlasBuildData.makeCreateInfo();
@@ -375,7 +374,7 @@ void nvvkgltf::SceneRtx::updateTopLevelAS(VkCommandBuffer cmd, nvvk::StagingUplo
   if(m_tlasScratchBuffer.buffer == VK_NULL_HANDLE)
   {
     NVVK_CHECK(m_alloc->createBuffer(m_tlasScratchBuffer, m_tlasBuildData.sizeInfo.buildScratchSize,
-                                     VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT));
+                                     VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT));
     NVVK_DBG_NAME(m_tlasScratchBuffer.buffer);
   }
 

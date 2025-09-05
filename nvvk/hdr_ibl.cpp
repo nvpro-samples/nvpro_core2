@@ -150,7 +150,7 @@ void HdrIbl::loadEnvironment(VkCommandBuffer cmd, nvvk::StagingUploader& staging
         std::vector<shaderio::EnvAccel> envAccel =
             createEnvironmentAccel(pixels, imgSize.width, imgSize.height, m_average, m_integral);
 
-        NVVK_CHECK(m_alloc->createBuffer(m_accelImpSmpl, std::span(envAccel).size_bytes(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT));
+        NVVK_CHECK(m_alloc->createBuffer(m_accelImpSmpl, std::span(envAccel).size_bytes(), VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT));
         NVVK_CHECK(staging.appendBuffer(m_accelImpSmpl, 0, std::span(envAccel)));
         NVVK_DBG_NAME(m_accelImpSmpl.buffer);
 
@@ -176,7 +176,7 @@ void HdrIbl::loadEnvironment(VkCommandBuffer cmd, nvvk::StagingUploader& staging
     NVVK_CHECK(staging.appendImage(m_texHdr, std::span(color), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
     NVVK_DBG_NAME(m_texHdr.image);
 
-    NVVK_CHECK(m_alloc->createBuffer(m_accelImpSmpl, std::span(color).size_bytes(), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT));
+    NVVK_CHECK(m_alloc->createBuffer(m_accelImpSmpl, std::span(color).size_bytes(), VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT));
     NVVK_DBG_NAME(m_accelImpSmpl.buffer);
   }
 

@@ -19,6 +19,7 @@
 
 
 #include <nvutils/logger.hpp>
+#include <nvgui/fonts.hpp>
 #include <nvgui/property_editor.hpp>
 
 #include "elem_gpu_monitor.hpp"
@@ -274,7 +275,7 @@ void ElementGpuMonitor::onUIMenu()
 {
   if(ImGui::BeginMenu("View"))
   {
-    ImGui::MenuItem("NVML Monitor", nullptr, &showWindow);
+    ImGui::MenuItem(ICON_MS_BROWSE_ACTIVITY " NVML Monitor", nullptr, &showWindow);
     ImGui::EndMenu();
   }
 }

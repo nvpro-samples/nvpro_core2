@@ -29,12 +29,14 @@
 
 namespace nvgui {
 
-inline bool skySimpleParametersUI(shaderio::SkySimpleParameters& params)
+inline bool skySimpleParametersUI(shaderio::SkySimpleParameters& params,
+                                  const char*                    label = "PE::Table",
+                                  ImGuiTableFlags flag = ImGuiTableFlags_BordersOuter | ImGuiTableFlags_Resizable)
 {
   namespace PE = nvgui::PropertyEditor;
 
   bool changed{false};
-  if(PE::begin())
+  if(PE::begin(label, flag))
   {
 
     changed |= nvgui::azimuthElevationSliders(params.sunDirection, false, params.directionUp.y >= params.directionUp.z);

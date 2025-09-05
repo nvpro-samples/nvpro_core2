@@ -51,12 +51,12 @@ std::vector<shaderio::GltfLight> getShaderLights(const std::vector<nvvkgltf::Ren
                                                  const std::vector<tinygltf::Light>&       gltfLights);
 
 // Common buffer creation usage flags
-static auto s_bufferUsageFlag =
-    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT           // Buffer read/write access within shaders, without size limitation
-    | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT  // The buffer can be referred to using its address instead of a binding
-    | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR  // Usage as a data source for acceleration structure builds
-    | VK_BUFFER_USAGE_TRANSFER_DST_BIT                                      // Buffer can be copied into
-    | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;  // Buffer can be copied from (e.g. for inspection)
+static VkBufferUsageFlags2 s_bufferUsageFlag =
+    VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT           // Buffer read/write access within shaders, without size limitation
+    | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT  // The buffer can be referred to using its address instead of a binding
+    | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR  // Usage as a data source for acceleration structure builds
+    | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT                                      // Buffer can be copied into
+    | VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT;  // Buffer can be copied from (e.g. for inspection)
 
 //-------------------------------------------------------------------------------------------------
 //
@@ -116,7 +116,7 @@ void nvvkgltf::SceneVk::create(VkCommandBuffer cmd, nvvk::StagingUploader& stagi
   scene_desc.numLights        = static_cast<uint32_t>(scn.getRenderLights().size());
 
   NVVK_CHECK(m_alloc->createBuffer(m_bSceneDesc, std::span(&scene_desc, 1).size_bytes(),
-                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT));
+                                   VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
   NVVK_CHECK(staging.appendBuffer(m_bSceneDesc, 0, std::span(&scene_desc, 1)));
   NVVK_DBG_NAME(m_bSceneDesc.buffer);
 }
@@ -282,12 +282,12 @@ void nvvkgltf::SceneVk::updateMaterialBuffer(VkCommandBuffer cmd, nvvk::StagingU
   if(m_bMaterial.buffer == VK_NULL_HANDLE)
   {
     NVVK_CHECK(m_alloc->createBuffer(m_bMaterial, std::span(shadeMaterials).size_bytes(),
-                                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT));
+                                     VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
     NVVK_CHECK(staging.appendBuffer(m_bMaterial, 0, std::span(shadeMaterials)));
     NVVK_DBG_NAME(m_bMaterial.buffer);
 
     NVVK_CHECK(m_alloc->createBuffer(m_bTextureInfos, std::span(textureInfos).size_bytes(),
-                                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT));
+                                     VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
     NVVK_CHECK(staging.appendBuffer(m_bTextureInfos, 0, std::span(textureInfos)));
     NVVK_DBG_NAME(m_bTextureInfos.buffer);
   }
@@ -386,7 +386,7 @@ void nvvkgltf::SceneVk::updateRenderNodesBuffer(VkCommandBuffer cmd, nvvk::Stagi
   if(m_bRenderNode.buffer == VK_NULL_HANDLE)
   {
     NVVK_CHECK(m_alloc->createBuffer(m_bRenderNode, std::span(instanceInfo).size_bytes(),
-                                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT));
+                                     VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
     NVVK_CHECK(staging.appendBuffer(m_bRenderNode, 0, std::span(instanceInfo)));
     NVVK_DBG_NAME(m_bRenderNode.buffer);
   }
@@ -411,7 +411,7 @@ void nvvkgltf::SceneVk::updateRenderLightsBuffer(VkCommandBuffer cmd, nvvk::Stag
   if(m_bLights.buffer == VK_NULL_HANDLE)
   {
     NVVK_CHECK(m_alloc->createBuffer(m_bLights, std::span(shaderLights).size_bytes(),
-                                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT));
+                                     VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
     NVVK_CHECK(staging.appendBuffer(m_bLights, 0, std::span(shaderLights)));
     NVVK_DBG_NAME(m_bLights.buffer);
   }
@@ -533,9 +533,9 @@ bool updateAttributeBuffer(VkCommandBuffer            cmd,            // Command
 
     if(attributeBuffer.buffer == VK_NULL_HANDLE)
     {
-      // We add VK_BUFFER_USAGE_VERTEX_BUFFER_BIT so it can be bound to
+      // We add VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT so it can be bound to
       // a vertex input binding:
-      VkBufferUsageFlags bufferUsageFlag = s_bufferUsageFlag | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+      VkBufferUsageFlags2 bufferUsageFlag = s_bufferUsageFlag | VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT;
       NVVK_CHECK(alloc->createBuffer(attributeBuffer, std::span(data).size_bytes(), bufferUsageFlag));
       NVVK_CHECK(staging->appendBuffer(attributeBuffer, 0, std::span(data)));
       return true;
@@ -607,7 +607,7 @@ void nvvkgltf::SceneVk::createVertexBuffers(VkCommandBuffer cmd, nvvk::StagingUp
       }
 
       NVVK_CHECK(m_alloc->createBuffer(vertexBuffers.color, std::span(tempIntData).size_bytes(),
-                                       s_bufferUsageFlag | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT));
+                                       s_bufferUsageFlag | VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT));
       NVVK_CHECK(staging.appendBuffer(vertexBuffers.color, 0, std::span(tempIntData)));
     }
 
@@ -645,7 +645,8 @@ void nvvkgltf::SceneVk::createVertexBuffers(VkCommandBuffer cmd, nvvk::StagingUp
 
     // Creating the buffer for the indices
     nvvk::Buffer& i_buffer = m_bIndices[primID];
-    NVVK_CHECK(m_alloc->createBuffer(i_buffer, std::span(indexBuffer).size_bytes(), s_bufferUsageFlag | VK_BUFFER_USAGE_INDEX_BUFFER_BIT));
+    NVVK_CHECK(m_alloc->createBuffer(i_buffer, std::span(indexBuffer).size_bytes(),
+                                     s_bufferUsageFlag | VK_BUFFER_USAGE_2_INDEX_BUFFER_BIT));
     NVVK_CHECK(staging.appendBuffer(i_buffer, 0, std::span(indexBuffer)));
     NVVK_DBG_NAME(i_buffer.buffer);
 

@@ -111,7 +111,7 @@
  ```
 
  When the inspection is desired, simply add it to the current command buffer. Required barriers are added internally.
- IMPORTANT: the buffer MUST have been created with the VK_BUFFER_USAGE_TRANSFER_SRC_BIT flag
+ IMPORTANT: the buffer MUST have been created with the VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT flag
  ```cpp
  g_inspectorElement->inspectBuffer(cmd, 0);
  ```

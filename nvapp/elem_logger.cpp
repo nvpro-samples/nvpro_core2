@@ -19,6 +19,7 @@
 
 
 #include "elem_logger.hpp"
+#include <nvgui/fonts.hpp>
 
 
 nvapp::ElementLogger::ElementLogger(bool show /*= false*/)
@@ -58,7 +59,7 @@ void nvapp::ElementLogger::onUIMenu()
 {
   if(ImGui::BeginMenu("View"))
   {
-    ImGui::MenuItem("Log Window", "Ctrl+Shift+L", &m_showLog);
+    ImGui::MenuItem(ICON_MS_TEXT_AD " Log Window", "Ctrl+Shift+L", &m_showLog);
     ImGui::EndMenu();
   }
 }

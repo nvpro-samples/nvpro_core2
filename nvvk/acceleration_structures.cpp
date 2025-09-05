@@ -626,9 +626,9 @@ void AccelerationStructureHelper::blasSubmitBuildAndWait(const std::vector<Accel
   VkDeviceSize hintScratchBudget = m_blasScratchBudget;  // Limiting the size of the scratch buffer to 2MB
   VkDeviceSize scratchSize       = blasBuilder.getScratchSize(hintScratchBudget, blasBuildData);
 
-  const VkDeviceSize alignment = m_accelStructProps.minAccelerationStructureScratchOffsetAlignment;
-  NVVK_CHECK(m_alloc->createBuffer(blasScratchBuffer, scratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-                                   VMA_MEMORY_USAGE_AUTO_PREFER_HOST, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT, alignment));
+  NVVK_CHECK(m_alloc->createBuffer(blasScratchBuffer, scratchSize,
+                                   VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
+                                       | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
 
   // Start the build and compaction of the BLAS
   VkDeviceSize hintBuildBudget = m_blasAccelerationStructureBudget;  // Limiting the size of the scratch buffer to 2MB
@@ -714,9 +714,8 @@ void AccelerationStructureHelper::tlasSubmitBuildAndWait(const std::vector<VkAcc
 
   // Create the scratch buffer
   NVVK_CHECK(m_alloc->createBuffer(tlasScratchBuffer, sizeInfo.buildScratchSize,
-                                   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                                   VMA_MEMORY_USAGE_AUTO, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
-                                   m_accelStructProps.minAccelerationStructureScratchOffsetAlignment));
+                                   VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT
+                                       | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
   NVVK_DBG_NAME(tlasScratchBuffer.buffer);
 
   // Create the TLAS
@@ -750,7 +749,7 @@ void AccelerationStructureHelper::tlasSubmitUpdateAndWait(const std::vector<VkAc
   if(tlasScratchBuffer.buffer == VK_NULL_HANDLE)
   {
     NVVK_CHECK(m_alloc->createBuffer(tlasScratchBuffer, tlasBuildData.sizeInfo.buildScratchSize,
-                                     VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT));
+                                     VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT));
     NVVK_DBG_NAME(tlasScratchBuffer.buffer);
   }
 

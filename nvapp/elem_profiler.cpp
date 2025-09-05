@@ -63,7 +63,7 @@ void ElementProfiler::onUIMenu()
   {
     for(auto& view : m_views)
     {
-      ImGui::MenuItem(view.state->name.c_str(), "", &view.state->show);
+      ImGui::MenuItem((ICON_MS_BLOOD_PRESSURE " " + view.state->name).c_str(), "", &view.state->show);
     }
     ImGui::EndMenu();
   }
@@ -301,7 +301,7 @@ void ElementProfiler::renderTable(View& view)
   ImGui::Checkbox("detailed", &view.state->table.detailed);
 
   // Copy content
-  ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 33);
+  ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 38);
   if(ImGui::Button(ICON_MS_CONTENT_COPY))
   {
     ImGui::LogToClipboard();
