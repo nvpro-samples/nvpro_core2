@@ -42,13 +42,13 @@ inline void addSceneCamerasToWidget(std::shared_ptr<nvutils::CameraManipulator> 
   if(!cameras.empty())
   {
     const auto& camera = cameras[0];
-    cameraManip->setCamera({camera.eye, camera.center, camera.up, static_cast<float>(glm::degrees(camera.yfov))});
-    cameraManip->setClipPlanes({camera.znear, camera.zfar});
+    cameraManip->setCamera(
+        {camera.eye, camera.center, camera.up, static_cast<float>(glm::degrees(camera.yfov)), {camera.znear, camera.zfar}});
     nvgui::SetHomeCamera({camera.eye, camera.center, camera.up, static_cast<float>(glm::degrees(camera.yfov))});
 
     for(const auto& cam : cameras)
     {
-      nvgui::AddCamera({cam.eye, cam.center, cam.up, static_cast<float>(glm::degrees(cam.yfov))});
+      nvgui::AddCamera({cam.eye, cam.center, cam.up, static_cast<float>(glm::degrees(cam.yfov)), {camera.znear, camera.zfar}});
     }
   }
   else

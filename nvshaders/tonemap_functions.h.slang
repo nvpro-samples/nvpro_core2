@@ -26,10 +26,7 @@
 
 NAMESPACE_SHADERIO_BEGIN()
 
-/*-------------------------------------------------------------------------------------------------
-# Function `toSrgb`
-> Converts a color from linear RGB to sRGB.
--------------------------------------------------------------------------------------------------*/
+// Converts a color from linear RGB to sRGB.
 inline float3 toSrgb(float3 rgb)
 {
   float3 low  = rgb * 12.92f;
@@ -37,10 +34,7 @@ inline float3 toSrgb(float3 rgb)
   return lerp(low, high, float3(greaterThan(rgb, float3(0.0031308F))));
 }
 
-/*-------------------------------------------------------------------------------------------------
-# Function `toLinear`
-> Converts a color from sRGB to linear RGB.
--------------------------------------------------------------------------------------------------*/
+// Converts a color from sRGB to linear RGB.
 inline float3 toLinear(float3 srgb)
 {
   float3 low  = srgb / 12.92F;
@@ -48,24 +42,28 @@ inline float3 toLinear(float3 srgb)
   return lerp(low, high, float3(greaterThan(srgb, float3(0.04045F))));
 }
 
-// Calculates luminance based off a EV100 (perceptual radiance) value
-float calcEV100Luminance(float EV100)
+// Converts from logarithmic photographer's EV100 ("exposure in stops") to
+// linear scene luminance in candela-seconds/m^2.
+inline float ev100Luminance(float ev100)
 {
-  /* Note: Using standard definition of EV100 for luminance: */
-  /* https://en.wikipedia.org/wiki/Exposure_value */
-  return exp2(EV100) / float(100.0f / 12.5f);
+  // The constant factor doesn't really matter; the auto-exposure code only needs
+  // a logarithmic scale, and using EV100 here gives values photographers are familiar with.
+  // See https://en.wikipedia.org/wiki/Exposure_value#Relationship_of_EV_to_lighting_conditions
+  // for the equation source, and historical background as to why this is called EV100.
+  return exp2(ev100) / float(100.0f / 12.5f);
 }
 
-float calcLuminanceEV100(float luminance)
+// Converts from linear scene luminance to photographer's EV100 ("exposure in stops").
+// See ev100Luminance().
+inline float luminanceEv100(float luminance)
 {
-  /* Note: Using standard definition of EV100 for luminance: */
-  /* https://en.wikipedia.org/wiki/Exposure_value            */
   return log2(luminance * float(100.0f / 12.5f));
 }
 
-float  calcBt709Luminance(float3 linearColor)       
-{                                                             
-  return dot(linearColor, float3(0.2126, 0.7152, 0.0722)); 
+// Returns the luminance of a linear color in the BT.709 standard.
+inline float bt709Luminance(float3 linearColor)
+{
+  return dot(linearColor, float3(0.2126, 0.7152, 0.0722));
 }
 
 
@@ -213,6 +211,108 @@ inline float3 tonemapKhronosPBR(float3 color)
   return toSrgb(color);
 }
 
+// Computes the CIE 1960 chromaticity coordinates of a light source given
+// temperature and tint.
+//
+// ANSI C78.377-2008 defines light colors in terms of a correlated color
+// temperature `t` of a blackbody, plus a tint shift `duv`, which is the
+// distance from the "Planckian locus" of blackbody chromaticities in the
+// CIE 1960 color space; negative values are more magenta.
+//
+// Note that the D65 Illuminant D white point used for sRGB cooresponds to
+// `t == 6506.11144` and `duv = 0.00325895312`, i.e. daylight is very slightly
+// green compared to a blackbody, which matches the standard.
+//
+// This parameterization of white balance/tint is rather physically based, but
+// might not be the best for artists -- in your own apps, you may wish to
+// provide RGB white balance parameters instead.
+inline float2 cie1960LightColor(float t, float duv)
+{
+  // The approximation for the locus we use here is from Michael P.Krystek,
+  // "An algorithm to calculate correlated colour temperature"(1985),
+  // as it appears in https: // en.wikipedia.org/wiki/Planckian_locus#Approximation .
+  // We compute the derivative analytically.
+  // As a result of this approximation, D65 is at 6506 rather than the usual
+  // 6504 K.
+  float  rcpUDenom = 1.0F / ((7.08145163e-7F * t + 8.42420235e-4F) * t + 1.F);
+  float  rcpVDenom = 1.0F / ((1.61456053e-7F * t - 2.89741816e-5F) * t + 1.F);
+  float2 uv        = float2(((1.28641212e-7F * t + 1.54118254e-4F) * t + 0.860117757F) * rcpUDenom,  //
+                            ((4.20481691e-8F * t + 4.22806245e-5F) * t + 0.317398726F) * rcpVDenom);
+
+  // For the derivative, note that we can re - use the denominator, since
+  // d/dt f(t) / g(t) = (f'(t)g(t) - f(t)g'(t)) / g(t)^2:
+  float2 derivative =
+      float2(((-7.68136056380576e-13F * t - 9.60894034459919e-7F) * t - 0.000570462348979613F) * rcpUDenom * rcpUDenom,  //
+             ((-8.04477403759601e-12F * t - 1.8395552854377e-8F) * t + 5.14769928267326e-5F) * rcpVDenom * rcpVDenom);
+  derivative = normalize(derivative);  // Normalize it
+
+  // Apply the duv offset
+  uv += duv * float2(derivative.y, -derivative.x);
+  return uv;
+}
+
+// Converts from CIE 1960 (u, v) chromaticity to CIE 1931 XYZ, normalizing
+// to a brightness of Y=1.
+inline float3 cie1931XyzFromCie1960UV(float2 uv)
+{
+  // From https://en.wikipedia.org/wiki/CIE_1960_color_space#Relation_to_CIE_XYZ
+  float2 xy = uv * float2(3.f, 2.f) / (2.f * uv.x - 8.f * uv.y + 4.f);
+  // From https://en.wikipedia.org/wiki/CIE_1931_color_space#CIE_xyY_color_space :
+  // For low color temperatures and high Duv, the light color might get a
+  // negative z = 1 - x - y value, which is totally impossible.
+  // Scale the xy value back in to prevent this:
+  xy /= max(1.f, xy.x + xy.y);
+  // Convert to (x, y, 1-x-y) then divide by y
+  float rcpY = 1.f / xy.y;
+  return float3(xy.x * rcpY, 1.f, (1.f - xy.x) * rcpY - 1.f);
+}
+
+// Returns a matrix that corrects a light source with the given Kelvin
+// temperature and Duv tint to RGB (1,1,1), then multiplies by exposure.
+// Use it like mul(inputMatrix, color).
+inline float3x3 getColorCorrectionMatrix(float exposure, float temperature, float tint)
+{
+  // Suesstrunk, Holm, and Finlayson's paper "Chromatic Adaptation
+  // Performance of Different RGB Sensors" (2001,
+  // https://web.archive.org/web/20061018020916/http://infoscience.epfl.ch/getfile.py?mode=best&recid=34049 )
+  // found that the CMCCAT2000 space performed the best at mapping colors
+  // between scenes with different illuminations, based on data from 16
+  // data sets.
+  //
+  // Following their approach, we'll convert colors and the light source
+  // color to CMCCAT2000, divide by the whitepoint and apply exposure, and
+  // then convert back to linear RGB.
+  // Since these are all linear operations, it's the same as multiplying by
+  // a single 3x3 matrix.
+  //
+  // Here are the matrices we'll need:
+  const float3x3 kCmccat2000FromCie1931Xyz = float3x3(0.7982F, 0.3389F, -0.1371F,              // Row 1
+                                                      -0.5918F, 1.5512F, 0.0406F,              // Row 2
+                                                      0.0008F, 0.0239F, 0.9753F);              // Row 3
+  const float3x3 kCmccat2000FromRgb        = float3x3(0.39858179F, 0.51147528F, 0.03823013F,   //
+                                                      0.08651038F, 0.90263008F, 0.04376704F,   //
+                                                      0.02423435F, 0.13363512F, 0.92889263F);  //
+  const float3x3 kRgbFromCmccat2000        = float3x3(2.86209568F, -1.61563711F, -0.04166966,  //
+                                                      -0.27259146F, 1.26953249F, -0.04859816,  //
+                                                      -0.0354543F, -0.14049009F, 1.0846294);
+
+  // Whitepoint to CMCCAT2000
+  float3 whitepointXYZ        = cie1931XyzFromCie1960UV(cie1960LightColor(temperature, tint));
+  float3 whitepointCmccat2000 = mul(kCmccat2000FromCie1931Xyz, whitepointXYZ);
+  // Componentwise multiplier.
+  // Note that even for D65, whitepointCmccat2000 isn't [1,1,1], so we need to
+  // apply a normalization factor. This is mul(kCmccat2000FromRgb, float3(1,1,1)):
+  float3   middleFactor = exposure * (float3(0.948287308f, 1.03290749f, 1.08676255f) / whitepointCmccat2000);
+  float3x3 right        = float3x3(middleFactor[0] * kCmccat2000FromRgb[0],  //
+                                   middleFactor[1] * kCmccat2000FromRgb[1],  //
+                                   middleFactor[2] * kCmccat2000FromRgb[2]);
+  // Fold all the matrices together
+  float3x3 result = mul(kRgbFromCmccat2000, right);
+  // Note that for the default exposure, temperature, and tint we now have the
+  // identity matrix to within 2e-7.
+  return result;
+}
+
 /*-------------------------------------------------------------------------------------------------
 > Applies the given tone mapper and color grading settings to a given color.
 
@@ -220,8 +320,11 @@ Requires the UV coordinate so that it can apply vignetting.
 -------------------------------------------------------------------------------------------------*/
 inline float3 applyTonemap(TonemapperData tm, float3 color, float2 uv)
 {
-  // Exposure
-  color *= tm.exposure;
+  // Exposure and white balance.
+  // These are combined into a matrix and applied together before tonemapping
+  // because they're correcting for scene lighting and camera parameters.
+  color = mul(tm.inputMatrix, color);
+
   float3 c;
   // Tonemap
   switch(tm.method)
@@ -246,7 +349,8 @@ inline float3 applyTonemap(TonemapperData tm, float3 color, float2 uv)
       break;
   }
 
-  // contrast and clamp
+  // SDR color grading.
+  // contrast and clamp (just in case)
   c = clamp(lerp(float3(0.5F), c, float3(tm.contrast)), float3(0.F), float3(1.F));
   // brightness
   c = pow(c, float3(1.0F / tm.brightness));

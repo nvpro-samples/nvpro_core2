@@ -28,6 +28,8 @@
 #include <nvvk/debug_util.hpp>
 #include <nvvk/default_structs.hpp>
 
+#include "nvshaders/tonemap_functions.h.slang"
+
 VkResult nvshaders::Tonemapper::init(nvvk::ResourceAllocator* alloc, std::span<const uint32_t> spirv)
 {
   assert(!m_device);
@@ -128,9 +130,11 @@ void nvshaders::Tonemapper::runCompute(VkCommandBuffer                 cmd,
   NVVK_DBG_SCOPE(cmd);  // <-- Helps to debug in NSight
 
   // Push constant
-  shaderio::TonemapperData tonemapperEx = tonemapper;
-  tonemapperEx.autoExposureSpeed *= float(m_timer.getSeconds());
-  vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(shaderio::TonemapperData), &tonemapperEx);
+  shaderio::TonemapperData tonemapperData = tonemapper;
+  tonemapperData.autoExposureSpeed *= float(m_timer.getSeconds());
+  tonemapperData.inputMatrix =
+      shaderio::getColorCorrectionMatrix(tonemapperData.exposure, tonemapper.temperature, tonemapper.tint);
+  vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(shaderio::TonemapperData), &tonemapperData);
   m_timer.reset();
 
   // Push information to the descriptor set

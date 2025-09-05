@@ -84,6 +84,12 @@ glm::vec<N, ScalarType, Precision> mul(glm::mat<N, N, ScalarType, Precision> M, 
   return v * M;
 }
 
+template <glm::length_t N, typename ScalarType, glm::qualifier Precision>
+glm::mat<N, N, ScalarType, Precision> mul(glm::mat<N, N, ScalarType, Precision> A, glm::mat<N, N, ScalarType, Precision> B)
+{
+  return B * A;
+}
+
 #define SLANG_DEFAULT(x) = (x)
 
 NAMESPACE_SHADERIO_END()
@@ -131,6 +137,11 @@ NAMESPACE_SHADERIO_END()
 
 
 vec3 mul(vec3 a, mat3 b)
+{
+  return b * a;
+}
+
+mat3 mul(mat3 a, mat3 b)
 {
   return b * a;
 }

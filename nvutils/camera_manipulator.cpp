@@ -22,8 +22,15 @@
 #include <chrono>
 #include <iostream>
 #include <cmath>
+#include <fmt/format.h>
 
 #include "camera_manipulator.hpp"
+
+#ifdef _MSC_VER
+#define SAFE_SSCANF sscanf_s
+#else
+#define SAFE_SSCANF sscanf
+#endif
 
 namespace nvutils {
 
@@ -55,13 +62,14 @@ void CameraManipulator::setCamera(Camera camera, bool instantSet /*=true*/)
   }
 }
 
+
 //--------------------------------------------------------------------------------------------------
 // Creates a viewing matrix derived from an eye point, a reference point indicating the center of
 // the scene, and an up vector
 //
 void CameraManipulator::setLookat(const glm::vec3& eye, const glm::vec3& center, const glm::vec3& up, bool instantSet)
 {
-  setCamera({eye, center, up, m_current.fov}, instantSet);
+  setCamera({eye, center, up, m_current.fov, m_current.clip}, instantSet);
 }
 
 //-----------------------------------------------------------------------------
@@ -215,10 +223,11 @@ void CameraManipulator::updateAnim()
 
   // Interpolate camera position and interest
   // The distance of the camera between the interest is preserved to create a nicer interpolation
-  m_current.ctr = glm::mix(m_snapshot.ctr, m_goal.ctr, t);
-  m_current.up  = glm::mix(m_snapshot.up, m_goal.up, t);
-  m_current.eye = computeBezier(t, m_bezier[0], m_bezier[1], m_bezier[2]);
-  m_current.fov = glm::mix(m_snapshot.fov, m_goal.fov, t);
+  m_current.ctr  = glm::mix(m_snapshot.ctr, m_goal.ctr, t);
+  m_current.up   = glm::mix(m_snapshot.up, m_goal.up, t);
+  m_current.eye  = computeBezier(t, m_bezier[0], m_bezier[1], m_bezier[2]);
+  m_current.fov  = glm::mix(m_snapshot.fov, m_goal.fov, t);
+  m_current.clip = glm::mix(m_snapshot.clip, m_goal.clip, t);
 
   updateLookatMatrix();
 }
@@ -502,6 +511,38 @@ void CameraManipulator::fit(const glm::vec3& boxMin, const glm::vec3& boxMax, bo
 
   // Set the new camera position and interest point
   setLookat(newEye, boxCenter, m_current.up, instantFit);
+}
+
+std::string CameraManipulator::Camera::getString() const
+{
+  return fmt::format("{{{}, {}, {}}}, {{{}, {}, {}}}, {{{}, {}, {}}}, {{{}}}, {{{}, {}}}",  //
+                     eye.x, eye.y, eye.z,                                                   //
+                     ctr.x, ctr.y, ctr.z,                                                   //
+                     up.x, up.y, up.z,                                                      //
+                     fov, clip.x, clip.y);
+}
+
+bool CameraManipulator::Camera::setFromString(const std::string& text)
+{
+  if(text.empty())
+    return false;
+
+  std::array<float, 12> val{};
+  int result = SAFE_SSCANF(text.c_str(), "{%f, %f, %f}, {%f, %f, %f}, {%f, %f, %f}, {%f}, {%f, %f}", &val[0], &val[1],
+                           &val[2], &val[3], &val[4], &val[5], &val[6], &val[7], &val[8], &val[9], &val[10], &val[11]);
+  if(result >= 9)  // Before 2025-09-03, this format didn't include the FOV at the end
+  {
+    eye = glm::vec3{val[0], val[1], val[2]};
+    ctr = glm::vec3{val[3], val[4], val[5]};
+    up  = glm::vec3{val[6], val[7], val[8]};
+    if(result >= 10)
+      fov = val[9];
+    if(result >= 11)
+      clip = glm::vec2{val[10], val[11]};
+
+    return true;
+  }
+  return false;
 }
 
 }  // namespace nvutils

@@ -50,20 +50,24 @@ enum TonemapBinding
 };
 
 
-/*-------------------------------------------------------------------------------------------------
-# Struct `Tonemapper`
-> Tonemapper settings.
--------------------------------------------------------------------------------------------------*/
+// Tonemapper settings.
 struct TonemapperData
 {
   int isActive = 1;
   int method   = ToneMapMethod::eFilmic;
-  // Effects
-  float exposure   = 1.0f;
-  float brightness = 1.0f;
+
+  // Input color correction
+  float exposure = 1.0f;
+  float temperature = 6506.11144f;  // Color temperature in degrees Kelvin. The default produces sRGB white for our approximation
+  float tint = 3.25895312e-3f;  // Tint adjustment as an ANSI C78.377-2008 Duv value. The default produces sRGB white for our approximation
+  float3x3 inputMatrix = {};  // Will be computed from the above
+
+  // Post effects
   float contrast   = 1.0f;
+  float brightness = 1.0f;
   float saturation = 1.0f;
   float vignette   = 0.0f;
+
   // Auto-Exposure
   int      autoExposure         = 0;      // 0: off, 1: on
   float    autoExposureSpeed    = 5.0F;   // Speed of auto-exposure adjustment
@@ -73,7 +77,6 @@ struct TonemapperData
   float    centerMeteringSize   = 0.5F;   // Size of the center metering area (0.0 to 1.0, where 1.0 is the full screen)
   uint32_t averageMode          = 1;      // 0 = Mean, 1 = Median
 };
-
 
 
 #define EXPOSURE_HISTOGRAM_SIZE 256

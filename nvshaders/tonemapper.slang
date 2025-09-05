@@ -115,7 +115,7 @@ Histogram Construction:
 // This function classifies a pixel into a histogram bucket based on its luminance.
 uint inputToHistogramBucket(const float3 inputColor)
 {
-  const float inputLuminance = calcBt709Luminance(inputColor);
+  const float inputLuminance = bt709Luminance(inputColor);
 
   // Classify near-black pixels (excluded from exposure calculation)
   const float kEpsilon = 0.00001f;
@@ -125,7 +125,7 @@ uint inputToHistogramBucket(const float3 inputColor)
   }
 
   // Convert luminance to EV100 and normalize to [0,1] range
-  const float ev100        = calcLuminanceEV100(inputLuminance);
+  const float ev100        = luminanceEv100(inputLuminance);
   const float evRange      = tm.evMaxValue - tm.evMinValue;
   const float normalizedEV = saturate((ev100 - tm.evMinValue) / evRange);
 
@@ -330,7 +330,7 @@ void AutoExposure(uint2 threadId: SV_DispatchThreadID, uint linearIndex: SV_Grou
     // Convert normalized EV100 to EV100
     const float evRange         = tm.evMaxValue - tm.evMinValue;
     const float currentEV100    = normalizedEV * evRange + tm.evMinValue;
-    const float targetLuminance = calcEV100Luminance(currentEV100);
+    const float targetLuminance = ev100Luminance(currentEV100);
 
     // Get previous luminance
     const float previousLuminance = OutLuminance[0];

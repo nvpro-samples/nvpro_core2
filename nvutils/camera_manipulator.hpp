@@ -87,19 +87,24 @@ public:
 
   struct Camera
   {
-    glm::vec3 eye = glm::vec3(10, 10, 10);
-    glm::vec3 ctr = glm::vec3(0, 0, 0);
-    glm::vec3 up  = glm::vec3(0, 1, 0);
-    float     fov = 60.0f;
+    glm::vec3 eye  = glm::vec3(10, 10, 10);
+    glm::vec3 ctr  = glm::vec3(0, 0, 0);
+    glm::vec3 up   = glm::vec3(0, 1, 0);
+    float     fov  = 60.0f;
+    glm::vec2 clip = {0.001f, 100000.0f};
 
     bool operator!=(const Camera& rhr) const
     {
-      return (eye != rhr.eye) || (ctr != rhr.ctr) || (up != rhr.up) || (fov != rhr.fov);
+      return (eye != rhr.eye) || (ctr != rhr.ctr) || (up != rhr.up) || (fov != rhr.fov) || (clip != rhr.clip);
     }
     bool operator==(const Camera& rhr) const
     {
-      return (eye == rhr.eye) && (ctr == rhr.ctr) && (up == rhr.up) && (fov == rhr.fov);
+      return (eye == rhr.eye) && (ctr == rhr.ctr) && (up == rhr.up) && (fov == rhr.fov) && (clip == rhr.clip);
     }
+
+    // basic serialization, mostly for copy/paste
+    std::string getString() const;
+    bool        setFromString(const std::string& text);
   };
 
 public:
@@ -118,7 +123,6 @@ public:
 
   // To call when the size of the window change.  This allows to do nicer movement according to the window size.
   void setWindowSize(glm::uvec2 winSize) { m_windowSize = winSize; }
-
 
   Camera getCamera() const { return m_current; }
   void   setCamera(Camera camera, bool instantSet = true);
@@ -140,7 +144,7 @@ public:
 
   const glm::mat4 getPerspectiveMatrix() const
   {
-    glm::mat4 projMatrix = glm::perspectiveRH_ZO(getRadFov(), getAspectRatio(), m_clipPlanes.x, m_clipPlanes.y);
+    glm::mat4 projMatrix = glm::perspectiveRH_ZO(getRadFov(), getAspectRatio(), m_current.clip.x, m_current.clip.y);
     projMatrix[1][1] *= -1;  // Flip the Y axis
     return projMatrix;
   }
@@ -180,8 +184,8 @@ public:
   float getRadFov() const { return glm::radians(m_current.fov); }
 
   // Clip planes
-  void             setClipPlanes(glm::vec2 clip) { m_clipPlanes = clip; }
-  const glm::vec2& getClipPlanes() const { return m_clipPlanes; }
+  void             setClipPlanes(glm::vec2 clip) { m_current.clip = clip; }
+  const glm::vec2& getClipPlanes() const { return m_current.clip; }
 
   // Animation duration
   double getAnimationDuration() const { return m_duration; }
@@ -228,10 +232,8 @@ protected:
   glm::uvec2 m_windowSize = glm::uvec2(1, 1);
 
   // Other
-  float     m_speed      = 3.f;
-  glm::vec2 m_mouse      = glm::vec2(0.f, 0.f);
-  glm::vec2 m_clipPlanes = glm::vec2(0.001f, 100000000.f);
-
+  float     m_speed = 3.f;
+  glm::vec2 m_mouse = glm::vec2(0.f, 0.f);
 
   Modes m_mode = Examine;
 };
