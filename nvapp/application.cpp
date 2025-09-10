@@ -840,7 +840,6 @@ void nvapp::Application::initializeImGuiContextAndSettings()
   // Initialize fonts
   nvgui::addDefaultFont();
   io.FontDefault = nvgui::getDefaultFont();
-  nvgui::addIconicFont();
   nvgui::addMonospaceFont();
 }
 

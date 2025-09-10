@@ -313,12 +313,10 @@ inline float3x3 getColorCorrectionMatrix(float exposure, float temperature, floa
   return result;
 }
 
-/*-------------------------------------------------------------------------------------------------
-> Applies the given tone mapper and color grading settings to a given color.
-
-Requires the UV coordinate so that it can apply vignetting.
--------------------------------------------------------------------------------------------------*/
-inline float3 applyTonemap(TonemapperData tm, float3 color, float2 uv)
+// Applies the given tone mapper and color grading settings to a given color.
+// Requires the pixel index so it can dither,
+// and the screen size so that it can apply vignetting.
+inline float3 applyTonemap(TonemapperData tm, float3 color, float2 pixel, float2 imageSize)
 {
   // Exposure and white balance.
   // These are combined into a matrix and applied together before tonemapping
@@ -358,8 +356,31 @@ inline float3 applyTonemap(TonemapperData tm, float3 color, float2 uv)
   float3 i = float3(dot(c, float3(0.299F, 0.587F, 0.114F)));
   c        = lerp(i, c, float3(tm.saturation));
   // vignette
-  float2 center_uv = ((uv)-float2(0.5F)) * float2(2.0F);
+  float2 center_uv = (pixel / imageSize) * 2.0F - 1.0F;
   c *= 1.0F - dot(center_uv, center_uv) * tm.vignette;
+
+  // Dither assuming 8-bit output.
+  if(tm.dither == 1)
+  {
+    const float levelsMinus1 = 255.F;
+    // Based on Fardan Niqbal's survey at https://www.shadertoy.com/view/cl2GRm,
+    // we use R2 noise in [0, 1]:
+    float noise = fract(dot(pixel, float2(0.245122331F, 0.430159704F)));
+    // routed through a triangular wave to [-.5,.5]:
+    noise = .5F - 2.F * abs(noise - .5F);
+    // shaped so its probability distribution function is a triangle over [-1, 1]:
+    const float trinoise = sign(noise) * (1.F - sqrt(1.F - 2.F * abs(noise)));
+    // We use triangular noise for most of the range (so that the amount of
+    // noise appears uniform) but switch to uniform at the ends:
+    const bool3 useUniform = greaterThan(float3(.5F / levelsMinus1), c)  //
+                             || greaterThan(c, float3(1.F - .5F / levelsMinus1));
+    // Note that because we add noise in sRGB space, we gain an average of
+    // 4 * 10^-6 luminance (roughly 0.279/L^2 where L is the number of levels).
+    // http://www.thetenthplanet.de/archives/5367 does energy-preserving dither,
+    // but with a box instead of a triangular kernel, so the amount of noise
+    // has a banding pattern over the image.
+    c += lerp(float3(trinoise), float3(noise), float3(useUniform)) / levelsMinus1;
+  }
 
   return c;
 }

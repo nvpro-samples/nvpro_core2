@@ -46,8 +46,9 @@ public:
     int               plotHeight = 250;         // height common to all plots
     struct
     {
-      bool detailed = false;  // draw detailed timers avg, min, max, last
-    } table;                  // table settings
+      bool     detailed = false;  // draw detailed timers avg, min, max, last
+      uint32_t levels   = ~0u;    // number of levels to open first
+    } table;                      // table settings
     struct
     {
       ImPlotBarGroupsFlags stacked = false;  // draw timers as stacked
@@ -59,7 +60,7 @@ public:
     } pieChart;              // pieChart settings
     struct
     {
-      bool cpuLine  = true;  // draw higher lecvel CPU timer
+      bool cpuLine  = true;  // draw higher level CPU timer
       bool gpuLines = true;  // draw GPU timers as lines
       bool gpuFills = true;  // draw GPU timers as filled areas
     } lineChart;             // lineChart settings
@@ -119,9 +120,7 @@ private:
                       uint32_t                                   endIndex,
                       uint32_t                                   currentLevel = 0);
 
-  //
-
-  void displayTableNode(const EntryNode& node, bool detailed, uint32_t depth = 0);
+  void displayTableNode(const EntryNode& node, bool detailed, uint32_t defaultOpenLevels, uint32_t depth);
 
   void renderTable(View& view);
 

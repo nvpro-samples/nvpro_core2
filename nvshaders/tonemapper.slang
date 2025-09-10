@@ -88,8 +88,7 @@ void Tonemap(uint2 globalThreadID: SV_DispatchThreadID)
     }
 
     // Apply the tonemapping pipeline
-    float2 screenPos = float2(globalThreadID.xy) / float2(imageSize);
-    color.xyz        = applyTonemap(tm, color.xyz, screenPos);
+    color.xyz = applyTonemap(tm, color.xyz, float2(globalThreadID.xy), float2(imageSize));
   }
 
   // Write the color to the output texture

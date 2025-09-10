@@ -113,6 +113,7 @@ bool tonemapperWidget(shaderio::TonemapperData& tonemapper)
                                "Size of center area for exposure calculation (0.01 = small spot, 1.0 = full frame)");
       ImGui::EndDisabled();
     }
+    changed |= PE::Checkbox("Dither", reinterpret_cast<bool*>(&tonemapper.dither));
 
     ImGui::EndDisabled();
     if(ImGui::SmallButton("reset"))

@@ -211,19 +211,14 @@ uint32_t ElementProfiler::addEntries(const nvutils::ProfilerTimeline::Snapshot& 
   return endIndex;
 }
 
-void ElementProfiler::displayTableNode(const EntryNode& node, bool detailed, uint32_t depth)
+void ElementProfiler::displayTableNode(const EntryNode& node, bool detailed, uint32_t defaultOpenLevels, uint32_t depth)
 {
   ImGuiTableFlags flags = ImGuiTreeNodeFlags_SpanFullWidth | ImGuiTreeNodeFlags_SpanAllColumns;
 
-  // Systematically open the first level
-  if(depth < 1)
-  {
-    flags |= ImGuiTreeNodeFlags_DefaultOpen;
-  }
   ImGui::TableNextRow();
   ImGui::TableNextColumn();
   const bool is_folder = (node.child.empty() == false);
-  flags                = is_folder ? flags | ImGuiTreeNodeFlags_DefaultOpen :
+  flags                = is_folder ? flags | (depth < defaultOpenLevels ? ImGuiTreeNodeFlags_DefaultOpen : 0) :
                                      flags | ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_Bullet | ImGuiTreeNodeFlags_NoTreePushOnOpen;
   bool        open     = ImGui::TreeNodeEx(node.name.c_str(), flags);
   const auto& info     = node.timerInfo;
@@ -265,7 +260,7 @@ void ElementProfiler::displayTableNode(const EntryNode& node, bool detailed, uin
   {
     for(int child_n = 0; child_n < static_cast<int>(node.child.size()); child_n++)
     {
-      displayTableNode(node.child[child_n], detailed, depth + 1);
+      displayTableNode(node.child[child_n], detailed, defaultOpenLevels, depth + 1);
     }
     ImGui::TreePop();
   }
@@ -353,12 +348,12 @@ void ElementProfiler::renderTable(View& view)
 
         for(const auto& node : m_frameNodes[i].child)
         {
-          displayTableNode(node, view.state->table.detailed);
+          displayTableNode(node, view.state->table.detailed, view.state->table.levels, 0);
         }
 
         for(const auto& node : m_singleNodes[i].child)
         {
-          displayTableNode(node, view.state->table.detailed);
+          displayTableNode(node, view.state->table.detailed, view.state->table.levels, 0);
         }
 
         ImGui::EndTable();
