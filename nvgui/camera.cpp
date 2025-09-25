@@ -115,7 +115,7 @@ struct CameraPresetManager
   void addCamera(const nvutils::CameraManipulator::Camera& camera)
   {
     bool unique = true;
-    for(const auto& c : m_cameras)
+    for(const nvutils::CameraManipulator::Camera& c : m_cameras)
     {
       if(c == camera)
       {
@@ -225,7 +225,7 @@ struct CameraPresetManager
           camera.clip = {vfVal[0], vfVal[1]};
         else
           camera.clip = currentClipPlanes;  // For old JSON files that didn't have clip planes saved
-        m_cameras.emplace_back(camera);
+        addCamera(camera);
       }
       i.close();
     }
