@@ -301,7 +301,7 @@ void nvutils::Logger::addPrefixes(LogLevel level, std::string& message)
     logStream << message;
     message = logStream.str();
   }
-  suppressPrefixes = message.back() != '\n';
+  suppressPrefixes = message.empty() || message.back() != '\n';
 }
 
 

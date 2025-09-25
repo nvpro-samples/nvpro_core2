@@ -27,10 +27,11 @@
 
 #include <glm/vec2.hpp>
 #include <imgui/imgui.h>
-#include "nvgui/settings_handler.hpp"
 
+#include <nvgui/settings_handler.hpp>
 #include <nvvk/resources.hpp>
 #include <nvvk/swapchain.hpp>
+#include "frame_pacer.hpp"
 
 /*-------------------------------------------------------------------------------------------------
 # class nvapp::Application
@@ -163,6 +164,7 @@ struct ApplicationCreateInfo
   // Swapchain
   // VK_PRESENT_MODE_MAX_ENUM_KHR means no preference
   VkPresentModeKHR preferredVsyncOffMode = VK_PRESENT_MODE_MAX_ENUM_KHR;
+  VkPresentModeKHR preferredVsyncOnMode  = VK_PRESENT_MODE_MAX_ENUM_KHR;
 };
 
 
@@ -290,6 +292,7 @@ private:
   std::vector<VkSemaphoreSubmitInfo>     m_signalSemaphores;  // Possible extra frame signal semaphores
   std::vector<VkCommandBufferSubmitInfo> m_commandBuffers;    // Possible extra frame command buffers
 
+  FramePacer m_framePacer;  // Low-latency system
 
   GLFWwindow* m_windowHandle{nullptr};  // GLFW Window
   VkExtent2D  m_viewportSize{0, 0};     // Size of the viewport

@@ -473,6 +473,9 @@ bool ParameterParser::Tokenized::initFromFile(const std::filesystem::path& filen
 
   m_content = buffer.str();
 
+  // Remove carriage-return
+  std::erase_if(m_content, [](std::string::value_type x) { return x == '\r'; });
+
   processContent();
 
   return true;

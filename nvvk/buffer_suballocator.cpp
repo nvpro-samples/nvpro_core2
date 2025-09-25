@@ -210,7 +210,7 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
     subAllocation.size                = static_cast<uint32_t>(size);
     subAllocation.alignmentMinusOne   = alignment - 1;
     subAllocation.block               = uint16_t(freeBlockIndex);
-#ifdef _DEBUG
+#ifndef NDEBUG
     subAllocation.allocator = this;
 #endif
 
@@ -257,7 +257,7 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
       subAllocation.size              = static_cast<uint32_t>(size);
       subAllocation.alignmentMinusOne = alignment - 1;
       subAllocation.block             = uint16_t(activeBlockIndex);
-#ifdef _DEBUG
+#ifndef NDEBUG
       subAllocation.allocator = this;
 #endif
 
@@ -308,7 +308,7 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
       subAllocation.size              = static_cast<uint32_t>(size);
       subAllocation.alignmentMinusOne = alignment - 1;
       subAllocation.block             = uint16_t(freeBlockIndex);
-#ifdef _DEBUG
+#ifndef NDEBUG
       subAllocation.allocator = this;
 #endif
 
@@ -329,7 +329,7 @@ void BufferSubAllocator::subFree(BufferSubAllocation& subAllocation)
     return;
   }
 
-#ifdef _DEBUG
+#ifndef NDEBUG
   assert(subAllocation.allocator == this);
 #endif
 
@@ -398,7 +398,7 @@ BufferRange BufferSubAllocator::subRange(const BufferSubAllocation& subAllocatio
     return {};
   }
 
-#ifdef _DEBUG
+#ifndef NDEBUG
   assert(subAllocation.allocator == this);
 #endif
 

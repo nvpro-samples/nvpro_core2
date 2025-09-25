@@ -20,7 +20,7 @@
 #include <array>
 #include <filesystem>
 
-#include <vulkan/vulkan_core.h>
+#include <volk/volk.h>
 
 #include <GLFW/glfw3.h>
 #undef APIENTRY
@@ -114,6 +114,7 @@ void nvapp::Application::init(ApplicationCreateInfo& info)
         .surface               = m_surface,
         .cmdPool               = m_transientCmdPool,
         .preferredVsyncOffMode = info.preferredVsyncOffMode,
+        .preferredVsyncOnMode  = info.preferredVsyncOnMode,
     };
 
     NVVK_CHECK(m_swapchain.init(swapChainInit));
@@ -121,9 +122,16 @@ void nvapp::Application::init(ApplicationCreateInfo& info)
 
     // Create what is needed to submit the scene for each frame in-flight
     createFrameSubmission(m_swapchain.getMaxFramesInFlight());
-    // Set the resource free queue
-    resetFreeQueue(m_swapchain.getMaxFramesInFlight());
   }
+  else
+  {
+    // In headless mode, there's only 2 pipeline stages (CPU and GPU, no display),
+    // so we double instead of triple-buffer.
+    createFrameSubmission(2);
+  }
+
+  // Set up the resource free queue
+  resetFreeQueue(getFrameCycleSize());
 
 
   // Initializing Dear ImGui
@@ -134,7 +142,7 @@ void nvapp::Application::initGlfw(ApplicationCreateInfo& info)
 {
   glfwInit();
 
-  // Create the GLTF Window
+  // Create the GLFW Window
   glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
   glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);  // Aware of DPI scaling
   m_windowHandle = glfwCreateWindow(m_windowSize.width, m_windowSize.height, info.name.c_str(), nullptr, nullptr);
@@ -282,7 +290,12 @@ void nvapp::Application::run()
   // Main rendering loop
   while(!glfwWindowShouldClose(m_windowHandle))
   {
-    // Window System Events
+    // Window System Events.
+    // We add a delay before polling to reduce latency.
+    if(m_vsyncWanted)
+    {
+      m_framePacer.pace();
+    }
     glfwPollEvents();
 
     // Skip rendering when minimized
@@ -687,10 +700,6 @@ void nvapp::Application::headlessRun()
     ImGui::EndFrame();
   }
 
-  // Number of frames in flight, which is the number of frames that can be processed concurrently
-  constexpr int32_t numFramesInFlight = 5;
-  createFrameSubmission(numFramesInFlight);
-
   // Rendering n-times the scene
   for(uint32_t frameID = 0; frameID < m_headlessFrameCount && !m_headlessClose; frameID++)
   {
@@ -699,12 +708,12 @@ void nvapp::Application::headlessRun()
 
     waitForFrameCompletion();
 
-    prepareFrameToSignal(numFramesInFlight);
+    prepareFrameToSignal(getFrameCycleSize());
 
     VkCommandBuffer cmd = beginCommandRecording();  // Start the command buffer
     drawFrame(cmd);                                 // Call onUIRender() and onRender() for each element
-    endFrame(cmd, numFramesInFlight);               // End the frame and submit it
-    advanceFrame(numFramesInFlight);                // Advance to the next frame in the ring buffer
+    endFrame(cmd, getFrameCycleSize());             // End the frame and submit it
+    advanceFrame(getFrameCycleSize());              // Advance to the next frame in the ring buffer
 
     ImGui::EndFrame();
   }

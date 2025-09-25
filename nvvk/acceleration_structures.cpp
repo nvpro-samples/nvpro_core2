@@ -345,7 +345,7 @@ VkResult AccelerationStructureBuilder::cmdBuildAccelerationStructures(VkCommandB
                                       collectedRangeInfo.data());
 
   // Barrier to ensure proper synchronization after building
-  accelerationStructureBarrier(cmd, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR, VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR);
+  accelerationStructureBarrier(cmd, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR, VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
 
   // If a query pool is available, record the properties of the built acceleration structures
   if(queryPool != VK_NULL_HANDLE)

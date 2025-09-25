@@ -55,7 +55,7 @@ public:
 private:
   nvutils::ParameterSequencer::InitInfo m_sequencerInfo;
   nvutils::ParameterSequencer           m_sequencer;
-  nvapp::Application*                   m_app;
-  bool                                  m_doSequences;
+  nvapp::Application*                   m_app         = nullptr;
+  bool                                  m_doSequences = false;
 };
 }  // namespace nvapp

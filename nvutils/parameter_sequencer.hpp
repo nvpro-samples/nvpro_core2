@@ -51,6 +51,14 @@ namespace nvutils {
 class ParameterSequencer
 {
 public:
+  // Information passed to InitInfo::postCallbacks about the sequence that
+  // just ran.
+  struct State
+  {
+    uint32_t    index = 0;    // Sequence index within script
+    std::string description;  // Sequence description within script
+  };
+
   class InitInfo
   {
   public:
@@ -82,8 +90,9 @@ public:
     // optional, after each sequence we print the results provided from this manager
     ProfilerManager* profilerManager{};
 
-    // To get called after a new benchmark setting
-    std::vector<std::function<void()>> postCallbacks;
+    // To get called after a new benchmark setting.
+    // The input to each function is the description of the previous benchmark.
+    std::vector<std::function<void(const State&)>> postCallbacks;
   };
 
   // The script is parsed using the provided `parameterParser` (must be kept alive).
@@ -119,9 +128,8 @@ protected:
 
   // current frame count
   uint32_t m_frameCount = 0;
-  // current sequence index within script
-  uint32_t m_sequenceIndex = 0;
-  // last sequence description string within script
-  std::string m_sequenceDescription;
+
+  // Info about the current sequence
+  State m_sequenceState = {};
 };
 }  // namespace nvutils

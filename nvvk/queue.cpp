@@ -163,7 +163,7 @@ VkResult QueueTimeline::submit(SubmitInfo& submitInfo, SemaphoreState& submitSta
     waitSemaphores.push_back(makeSemaphoreSubmitInfo(it));
   }
 
-#ifdef _DEBUG
+#ifndef NDEBUG
   for(const VkSemaphoreSubmitInfo& it : signalSemaphores)
   {
     assert(it.semaphore != m_timelineSemaphore

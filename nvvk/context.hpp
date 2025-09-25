@@ -163,7 +163,9 @@ private:
 
 
 //--------------------------------------------------------------------------
-// This function adds the surface extension needed for the platform
-void addSurfaceExtensions(std::vector<const char*>& instanceExtensions);
+// This function adds the surface extensions needed for the platform.
+// If `deviceExtensions` is provided, then it also adds the
+// swapchain device extensions.
+void addSurfaceExtensions(std::vector<const char*>& instanceExtensions, std::vector<nvvk::ExtensionInfo>* deviceExtensions = nullptr);
 
 }  // namespace nvvk

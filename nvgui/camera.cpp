@@ -126,7 +126,7 @@ struct CameraPresetManager
     if(unique)
     {
       m_cameras.emplace_back(camera);
-      markIniSettingsDirty();
+      markJsonSettingsDirty();
     }
   }
 
@@ -134,10 +134,10 @@ struct CameraPresetManager
   void removeCamera(int delete_item)
   {
     m_cameras.erase(m_cameras.begin() + delete_item);
-    markIniSettingsDirty();
+    markJsonSettingsDirty();
   }
 
-  void markIniSettingsDirty()
+  void markJsonSettingsDirty()
   {
     if(m_settingsDirtyTimer <= 0.0f)
       m_settingsDirtyTimer = 0.1f;
@@ -672,7 +672,7 @@ bool nvgui::CameraWidget(std::shared_ptr<nvutils::CameraManipulator> cameraManip
   // Apply the change back to the camera
   if(changed || instantChanged)
   {
-    CameraPresetManager::getInstance().markIniSettingsDirty();
+    CameraPresetManager::getInstance().markJsonSettingsDirty();
     cameraManip->setCamera(camera, instantChanged);
   }
 

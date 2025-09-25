@@ -680,10 +680,9 @@ VkResult nvvk::Context::printGpus(VkInstance instance, VkPhysicalDevice usedGpu)
   return VK_SUCCESS;
 }
 
-void nvvk::addSurfaceExtensions(std::vector<const char*>& instanceExtensions)
+void nvvk::addSurfaceExtensions(std::vector<const char*>& instanceExtensions, std::vector<nvvk::ExtensionInfo>* deviceExtensions)
 {
   instanceExtensions.emplace_back(VK_KHR_SURFACE_EXTENSION_NAME);
-  instanceExtensions.emplace_back(VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME);
   instanceExtensions.emplace_back(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
 
 #if defined(VK_USE_PLATFORM_WIN32_KHR)
@@ -707,6 +706,11 @@ void nvvk::addSurfaceExtensions(std::vector<const char*>& instanceExtensions)
 #if defined(VK_USE_PLATFORM_MACOS_MVK)
   instanceExtensions.emplace_back(VK_MVK_MACOS_SURFACE_EXTENSION_NAME);
 #endif
+
+  if(deviceExtensions)
+  {
+    deviceExtensions->push_back({VK_KHR_SWAPCHAIN_EXTENSION_NAME});
+  }
 }
 
 //--------------------------------------------------------------------------------------------------

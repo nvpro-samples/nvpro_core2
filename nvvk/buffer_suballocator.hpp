@@ -54,7 +54,7 @@ private:
   uint16_t alignmentMinusOne{};
 
   uint16_t block{};
-#ifdef _DEBUG
+#ifndef NDEBUG
   BufferSubAllocator* allocator{};
 #endif
 };

@@ -26,26 +26,28 @@
 #include "debug_util.hpp"
 #include "swapchain.hpp"
 
-
 VkResult nvvk::Swapchain::init(const InitInfo& info)
 {
-  m_physicalDevice        = info.physicalDevice;
-  m_device                = info.device;
-  m_queue                 = info.queue;
-  m_surface               = info.surface;
-  m_cmdPool               = info.cmdPool;
-  m_preferredVsyncOffMode = info.preferredVsyncOffMode;
+  m_physicalDevice = info.physicalDevice;
+  m_device         = info.device;
+  m_queue          = info.queue;
+  m_surface        = info.surface;
+  m_cmdPool        = info.cmdPool;
+  if(info.preferredVsyncOffMode != VK_PRESENT_MODE_MAX_ENUM_KHR)
+    m_preferredVsyncOffMode = info.preferredVsyncOffMode;
+  if(info.preferredVsyncOnMode != VK_PRESENT_MODE_MAX_ENUM_KHR)
+    m_preferredVsyncOnMode = info.preferredVsyncOnMode;
 
   VkBool32 supportsPresent = VK_FALSE;
-  VkResult result =
-      vkGetPhysicalDeviceSurfaceSupportKHR(info.physicalDevice, info.queue.familyIndex, info.surface, &supportsPresent);
+  NVVK_FAIL_RETURN(vkGetPhysicalDeviceSurfaceSupportKHR(info.physicalDevice, info.queue.familyIndex, info.surface, &supportsPresent));
 
   if(supportsPresent != VK_TRUE)
   {
     LOGW("Selected queue family %d cannot present on surface %px. Swapchain creation failed.\n", info.queue.familyIndex, info.surface);
     return VK_ERROR_INITIALIZATION_FAILED;
   }
-  return result;
+
+  return VK_SUCCESS;
 }
 
 void nvvk::Swapchain::deinit()
@@ -295,18 +297,16 @@ VkSurfaceFormat2KHR nvvk::Swapchain::selectSwapSurfaceFormat(const std::vector<V
   return availableFormats[0];
 }
 
-VkPresentModeKHR nvvk::Swapchain::selectSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes, bool vSync /*= true*/)
+VkPresentModeKHR nvvk::Swapchain::selectSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes, bool vSync) const
 {
-  if(vSync)
-  {
-    return VK_PRESENT_MODE_FIFO_KHR;
-  }
-
   bool mailboxSupported = false, immediateSupported = false;
 
   for(VkPresentModeKHR mode : availablePresentModes)
   {
-    if(mode == m_preferredVsyncOffMode)
+    if(vSync && (mode == m_preferredVsyncOnMode))
+      return mode;
+
+    if(!vSync && (mode == m_preferredVsyncOffMode))
       return mode;
 
     if(mode == VK_PRESENT_MODE_MAILBOX_KHR)
@@ -315,7 +315,7 @@ VkPresentModeKHR nvvk::Swapchain::selectSwapPresentMode(const std::vector<VkPres
       immediateSupported = true;
   }
 
-  if(immediateSupported)
+  if(!vSync && immediateSupported)
   {
     return VK_PRESENT_MODE_IMMEDIATE_KHR;  // Best mode for low latency
   }

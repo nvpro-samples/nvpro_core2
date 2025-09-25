@@ -19,6 +19,8 @@
 
 #include <vulkan/vulkan_core.h>
 
+#pragma once
+
 namespace nvvk {
 
 // Simple container of the various physical device features and properties.

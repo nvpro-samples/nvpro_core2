@@ -38,7 +38,7 @@ bool ParameterSequencer::init(const InitInfo& info)
   {
     assert(m_info.scriptFilename.empty());
 
-    m_tokenizedScript.initFromString(m_sequenceDescription, {});
+    m_tokenizedScript.initFromString(m_info.scriptContent, {});
   }
   else if(!m_info.scriptFilename.empty())
   {
@@ -59,6 +59,8 @@ bool ParameterSequencer::init(const InitInfo& info)
   // skip first SEQUENCE
   m_currentArgument = 1;
 
+  assert(m_info.parameterParser && "Parameter parser must be specified");
+  assert(m_info.parameterRegistry && "Parameter registry must be specified");
   ParameterParser&   parser   = *m_info.parameterParser;
   ParameterRegistry& registry = *m_info.parameterRegistry;
   parser.add(registry.add({.name = "sequenceframes", .help = "number of frames to run each parameter sequence"},
@@ -69,9 +71,8 @@ bool ParameterSequencer::init(const InitInfo& info)
                           &m_info.profilerResetFrameCount, 0, 8));
 
 
-  m_frameCount    = 0;
-  m_sequenceIndex = 0;
-  m_completed     = false;
+  m_frameCount = 0;
+  m_completed  = false;
 
   return true;
 }
@@ -92,15 +93,15 @@ bool ParameterSequencer::prepareFrame()
       {
         m_info.profilerManager->appendPrint(statsFrame, statsSingle, true);
         // print old stats
-        Logger::getInstance().log(Logger::eSTATS, "ParameterSequence %d \"%s\" = {\n%s\n%s}\n", m_sequenceIndex,
-                                  m_sequenceDescription.c_str(), statsFrame.c_str(), statsSingle.c_str());
+        Logger::getInstance().log(Logger::eSTATS, "ParameterSequence %d \"%s\" = {\n%s\n%s}\n", m_sequenceState.index,
+                                  m_sequenceState.description.c_str(), statsFrame.c_str(), statsSingle.c_str());
       }
 
       // Callback all registered functions
       for(auto& func : m_info.postCallbacks)
-        func();
+        func(m_sequenceState);
 
-      m_sequenceIndex++;
+      m_sequenceState.index++;
     }
 
     // test if done
@@ -108,7 +109,7 @@ bool ParameterSequencer::prepareFrame()
 
     if(!m_completed)
     {
-      m_sequenceDescription = m_tokenizedScript.getArgs(m_currentArgument)[0];
+      m_sequenceState.description = m_tokenizedScript.getArgs(m_currentArgument)[0];
       m_currentArgument++;
 
       auto   args       = m_tokenizedScript.getArgs(m_currentArgument);
@@ -169,7 +170,6 @@ static void usage_ParameterSequencer()
   // one sequence should run for 128 frames
   sequencerInfo.sequenceFrameCount = 128;
 
-
   // always need a parser
   sequencerInfo.parameterParser = &parser;
   // and registry of internal parameters
@@ -180,6 +180,11 @@ static void usage_ParameterSequencer()
   nvutils::ProfilerTimeline* timeline = profilerManager.createTimeline({"primary"});
 
   sequencerInfo.profilerManager = &profilerManager;
+
+  // optionally, add a function called once each sequence is finished:
+  sequencerInfo.postCallbacks.push_back([](const nvutils::ParameterSequencer::State& sequence) {
+    LOGI("Finished sequence %d: %s\n", sequence.index, sequence.description.c_str());
+  });
 
   // initialize the sequencer
   nvutils::ParameterSequencer sequencer;
@@ -193,7 +198,7 @@ static void usage_ParameterSequencer()
 
     if(doSequences)
     {
-      // The `preparFrame` call will change sequence settings every `128` frames (as defined in the settings above)
+      // The `prepareFrame` call will change sequence settings every `128` frames (as defined in the settings above)
       // and will print profiler results from the previous sequence to the global logger with full timer details.
       if(sequencer.prepareFrame())
       {

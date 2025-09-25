@@ -18,13 +18,13 @@
  */
 
 #pragma once
-#include <vector>
+
 #include <cassert>
+#include <vector>
 
 #include "resources.hpp"
 
 namespace nvvk {
-
 
 //--- Swapchain ------------------------------------------------------------------------------------------------------------
 /*--
@@ -64,7 +64,8 @@ public:
     QueueInfo        queue{};
     VkSurfaceKHR     surface{};
     VkCommandPool    cmdPool{};
-    VkPresentModeKHR preferredVsyncOffMode = VK_PRESENT_MODE_MAX_ENUM_KHR;  // Using this mode when != VK_PRESENT_MODE_MAX_ENUM_KHR
+    VkPresentModeKHR preferredVsyncOffMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+    VkPresentModeKHR preferredVsyncOnMode  = VK_PRESENT_MODE_FIFO_KHR;
   };
 
   // Initialize the swapchain with the provided context and surface, then we can create and re-create it
@@ -128,13 +129,15 @@ private:
 
   /*--
    * The present mode is chosen based on the vSync option
-   * The FIFO mode is the most common, and is used when vSync is enabled.
+   * The `preferredVsyncOnMode` is used when vSync is enabled and the mode is supported.
    * The `preferredVsyncOffMode` is used when vSync is disabled and the mode is supported.
-   * Otherwise:
-   * The IMMEDIATE mode is used when vSync is disabled, and is the best mode for low latency.
-   * The MAILBOX mode is used when vSync is disabled, and is the best mode for triple buffering.
+   * Otherwise, from most preferred to least:
+   *   1. IMMEDIATE mode, when vSync is disabled (tearing allowed), since it's lowest-latency.
+   *   2. MAILBOX mode, since it's the lowest-latency mode without tearing. Note that frame pacing is needed
+          when vSync is on.
+   *   3. FIFO mode, since all swapchains must support it.
   -*/
-  VkPresentModeKHR selectSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes, bool vSync = true);
+  VkPresentModeKHR selectSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes, bool vSync = true) const;
 
 private:
   Swapchain(Swapchain&) = delete;                    //
@@ -154,9 +157,17 @@ private:
   uint32_t                    m_frameImageIndex    = 0;  // Index of the swapchain image we're currently rendering to
   bool                        m_needRebuild        = false;  // Flag indicating if the swapchain needs to be rebuilt
 
-  VkPresentModeKHR m_preferredVsyncOffMode = VK_PRESENT_MODE_MAX_ENUM_KHR;  // used if available
+  VkPresentModeKHR m_preferredVsyncOffMode = VK_PRESENT_MODE_IMMEDIATE_KHR;  // used if available
+  VkPresentModeKHR m_preferredVsyncOnMode  = VK_PRESENT_MODE_FIFO_KHR;       // used if available
 
-  uint32_t m_maxFramesInFlight = 3;  // Best for pretty much all cases
+  // Triple buffering allows us to pipeline CPU and GPU work, which gives us
+  // good throughput if their sum takes more than a frame.
+  // But if we're using VK_PRESENT_MODE_FIFO_KHR without frame pacing and
+  // workloads are < 1 frame, then work can be waiting for multiple frames for
+  // the swapchain image to be available, increasing latency. For this reason,
+  // it's good to use a frame pacer with the swapchain.
+  uint32_t m_maxFramesInFlight = 3;
 };
+
 
 }  // namespace nvvk
