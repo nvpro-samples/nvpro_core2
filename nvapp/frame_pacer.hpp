@@ -29,14 +29,9 @@ double getMonitorsMinRefreshRate();
 // long enough so that the GPU presents just before the compositor picks up
 // the frame to composite.
 //
-// For now, we aim for an easier goal: submit a frame just over once per VSync,
-// so we don't throw away work or let VSyncs pass without new frames.
-// The current algorithm doesn't need to know where VSyncs are, but will prefer
-// presenting too fast whenever possible. This means the swapchain should use
-// a mode like MAILBOX if available.
-//
-// Because this is a somewhat complex control system in itself, we put it in
-// its own class.
+// For now, we aim for an easier goal: submit a frame once VSync. Since the
+// compositor consumes one frame per VSync, we should render at most one frame
+// per VSync; any faster and we'd get swapchain backpressure and thus latency.
 class FramePacer
 {
 public:

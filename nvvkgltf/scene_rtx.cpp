@@ -212,7 +212,8 @@ bool nvvkgltf::SceneRtx::cmdBuildBottomLevelAccelerationStructure(VkCommandBuffe
   // 2) allocating the scratch buffer
   NVVK_CHECK(m_alloc->createBuffer(m_blasScratchBuffer, scratchSize,
                                    VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT
-                                       | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
+                                       | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+                                   VMA_MEMORY_USAGE_AUTO, {}, m_blasBuilder->getScratchAlignment()));
   NVVK_DBG_NAME(m_blasScratchBuffer.buffer);
 
   std::span<nvvk::AccelerationStructureBuildData> blasBuildData(m_blasBuildData);

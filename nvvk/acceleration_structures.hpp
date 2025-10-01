@@ -228,6 +228,9 @@ public:
   // - Provide size to cmdCreateBlas function.
   VkDeviceSize getScratchSize(VkDeviceSize hintMaxBudget, const std::span<nvvk::AccelerationStructureBuildData>& buildData) const;
 
+  // Get the minimum offset alignment of the scratch buffer
+  VkDeviceSize getScratchAlignment() const { return m_scratchAlignment; }
+
 private:
   AccelerationStructureBuilder& operator=(const AccelerationStructureBuilder&) = default;
 

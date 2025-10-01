@@ -82,8 +82,8 @@ void FramePacer::pace(double refreshRate)
   const double cpuTime   = m_cpuTimer.getSeconds();
   double       sleepTime = refreshInterval - cpuTime;
 #ifdef _WIN32
-  // On Windows, we know that 1ms is just about the right time to add; it's
-  // just under the average amount that Windows adds to the sleep call.
+  // On Windows, we know that 1ms is just about the right time to subtract;
+  // it's just under the average amount that Windows adds to the sleep call.
   // On Linux the timers are accurate enough that we don't need this.
   sleepTime -= 1e-3;
 #endif

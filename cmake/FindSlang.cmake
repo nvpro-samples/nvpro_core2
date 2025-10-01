@@ -1,6 +1,7 @@
 # FindSlang.cmake
 #
 # Downloads the Slang SDK.
+# You can use a custom installation instead by setting Slang_ROOT and Slang_VERSION.
 #
 # Sets the following variables:
 # Slang_VERSION: The downloaded version of Slang.
@@ -9,64 +10,76 @@
 # Slang_SLANGC_EXECUTABLE: Path to the Slang compiler.
 # Slang_LIBRARY: Linker library.
 # Slang_DLL: Shared library.
+# Slang_GLSL_MODULE: Shared library containing a precompiled GLSL module.
+# Slang_GLSLANG: Shared library used for SLANG_OPTIMIZATION_LEVEL_HIGH.
 #
 # Creates an imported library, `Slang`, that can be linked against.
+#
+# Because Slang DLLs are dynamically loaded, samples will need to explicitly
+# specify them in their copy_to_runtime_and_install calls if they use them, like this:
+# copy_to_runtime_and_install(...
+#   FILES ${Slang_GLSLANG} ${Slang_GLSL_MODULE} ${Slang_DLL}
+#   PROGRAMS ${Slang_SLANGD_EXECUTABLE}
+#   ...
+# )
 
 set(Slang_VERSION "2025.13.1")
 
-string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" ARCH_PROC)
-if(ARCH_PROC MATCHES "^(arm|aarch64)")
-    if(WIN32)
-        set(PACKMAN_ARCH "arm64")
-    else()
-        set(PACKMAN_ARCH "aarch64")
-    endif()
-    set(GITHUB_ARCH "aarch64")
-elseif(ARCH_PROC MATCHES "^(x86_64|amd64|i[3-6]86)")
-    if(WIN32)
-        set(PACKMAN_ARCH "x64")
-    else()
-        set(PACKMAN_ARCH "x86_64")
-    endif()
-    set(GITHUB_ARCH "x86_64")
-else()
-    message(FATAL_ERROR "Unhandled architecture '${ARCH_PROC}'")
-endif()
+if(NOT Slang_ROOT)
+  string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" ARCH_PROC)
+  if(ARCH_PROC MATCHES "^(arm|aarch64)")
+      if(WIN32)
+          set(PACKMAN_ARCH "arm64")
+      else()
+          set(PACKMAN_ARCH "aarch64")
+      endif()
+      set(GITHUB_ARCH "aarch64")
+  elseif(ARCH_PROC MATCHES "^(x86_64|amd64|i[3-6]86)")
+      if(WIN32)
+          set(PACKMAN_ARCH "x64")
+      else()
+          set(PACKMAN_ARCH "x86_64")
+      endif()
+      set(GITHUB_ARCH "x86_64")
+  else()
+      message(FATAL_ERROR "Unhandled architecture '${ARCH_PROC}'")
+  endif()
 
-if(WIN32)
-    set(SLANG_OS "windows")
-else()
-    set(SLANG_OS "linux")
-endif()
+  if(WIN32)
+      set(SLANG_OS "windows")
+  else()
+      set(SLANG_OS "linux")
+  endif()
 
-# Download Slang SDK.
-# We provide two URLs here since some users' proxies might break one or the other.
-# The "d4i3qtqj3r0z5.cloudfront.net" address is the public Omniverse Packman
-# server; it is not private.
-set(Slang_URLS
-    "https://d4i3qtqj3r0z5.cloudfront.net/slang%40v${Slang_VERSION}-${SLANG_OS}-${PACKMAN_ARCH}-release.zip"
-    "https://github.com/shader-slang/slang/releases/download/v${Slang_VERSION}/slang-${Slang_VERSION}-${SLANG_OS}-${GITHUB_ARCH}.zip"
-)
-
-include(DownloadPackage)
-download_package(
-  NAME "Slang-${SLANG_OS}-${GITHUB_ARCH}"
-  URLS ${Slang_URLS}
-  VERSION ${Slang_VERSION}
-  LOCATION Slang_SOURCE_DIR
-)
-
-# On Linux, the Cloudfront download of Slang might not have the executable bit
-# set on its executables and DLLs. This causes find_program to fail. To fix this,
-# call chmod a+rwx on those directories:
-if(UNIX)
-  file(CHMOD_RECURSE ${Slang_SOURCE_DIR}/bin ${Slang_SOURCE_DIR}/lib
-       FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_WRITE GROUP_EXECUTE WORLD_READ WORLD_WRITE WORLD_EXECUTE
+  # Download Slang SDK.
+  # We provide two URLs here since some users' proxies might break one or the other.
+  # The "d4i3qtqj3r0z5.cloudfront.net" address is the public Omniverse Packman
+  # server; it is not private.
+  set(Slang_URLS
+      "https://d4i3qtqj3r0z5.cloudfront.net/slang%40v${Slang_VERSION}-${SLANG_OS}-${PACKMAN_ARCH}-release.zip"
+      "https://github.com/shader-slang/slang/releases/download/v${Slang_VERSION}/slang-${Slang_VERSION}-${SLANG_OS}-${GITHUB_ARCH}.zip"
   )
-endif()
 
-set(Slang_ROOT ${Slang_SOURCE_DIR} CACHE PATH "Path to the Slang SDK root directory")
-mark_as_advanced(Slang_ROOT)
+  include(DownloadPackage)
+  download_package(
+    NAME "Slang-${SLANG_OS}-${GITHUB_ARCH}"
+    URLS ${Slang_URLS}
+    VERSION ${Slang_VERSION}
+    LOCATION Slang_SOURCE_DIR
+  )
+
+  # On Linux, the Cloudfront download of Slang might not have the executable bit
+  # set on its executables and DLLs. This causes find_program to fail. To fix this,
+  # call chmod a+rwx on those directories:
+  if(UNIX)
+    file(CHMOD_RECURSE ${Slang_SOURCE_DIR}/bin ${Slang_SOURCE_DIR}/lib
+         FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_WRITE GROUP_EXECUTE WORLD_READ WORLD_WRITE WORLD_EXECUTE
+    )
+  endif()
+
+  set(Slang_ROOT ${Slang_SOURCE_DIR} CACHE PATH "Path to the Slang SDK root directory")
+  mark_as_advanced(Slang_ROOT)
+endif()
 
 find_path(Slang_INCLUDE_DIR
   slang.h
@@ -78,7 +91,7 @@ mark_as_advanced(Slang_INCLUDE_DIR)
 
 find_program(Slang_SLANGC_EXECUTABLE
   NAMES slangc 
-  HINTS ${Slang_SOURCE_DIR}/bin
+  HINTS ${Slang_ROOT}/bin
   NO_DEFAULT_PATH
   DOC "Slang compiler (slangc)"
 )
@@ -86,7 +99,7 @@ mark_as_advanced(Slang_SLANGC_EXECUTABLE)
 
 find_program(Slang_SLANGD_EXECUTABLE
   NAMES slangd
-  HINTS ${Slang_SOURCE_DIR}/bin
+  HINTS ${Slang_ROOT}/bin
   NO_DEFAULT_PATH
   DOC "Slang language server (slangd)"
 )
@@ -94,7 +107,7 @@ mark_as_advanced(Slang_SLANGD_EXECUTABLE)
 
 find_library(Slang_LIBRARY
   NAMES slang
-  HINTS ${Slang_SOURCE_DIR}/lib
+  HINTS ${Slang_ROOT}/lib
   NO_DEFAULT_PATH
   DOC "Slang linker library"
 )
@@ -103,7 +116,7 @@ mark_as_advanced(Slang_LIBRARY)
 if(WIN32)
   find_file(Slang_DLL
     NAMES slang.dll
-    HINTS ${Slang_SOURCE_DIR}/bin
+    HINTS ${Slang_ROOT}/bin
     NO_DEFAULT_PATH
     DOC "Slang shared library (.dll)"
   )
@@ -144,8 +157,8 @@ endif()
 # IMPLIB as core Slang.
 find_file(Slang_GLSL_MODULE
   NAMES ${CMAKE_SHARED_LIBRARY_PREFIX}slang-glsl-module${CMAKE_SHARED_LIBRARY_SUFFIX}
-  HINTS ${Slang_SOURCE_DIR}/bin
-        ${Slang_SOURCE_DIR}/lib
+  HINTS ${Slang_ROOT}/bin
+        ${Slang_ROOT}/lib
   NO_DEFAULT_PATH
   DOC "Slang embedded GLSL module"
 )
@@ -163,11 +176,11 @@ if(NOT TARGET SlangGlslModule)
 endif()
 
 # Additionally, SLANG_OPTIMIZATION_LEVEL_HIGH requires slang-glslang.dll.
-# Find it and link with it by default:
+# Find it:
 find_file(Slang_GLSLANG
   NAMES ${CMAKE_SHARED_LIBRARY_PREFIX}slang-glslang${CMAKE_SHARED_LIBRARY_SUFFIX}
-  HINTS ${Slang_SOURCE_DIR}/bin
-        ${Slang_SOURCE_DIR}/lib
+  HINTS ${Slang_ROOT}/bin
+        ${Slang_ROOT}/lib
   NO_DEFAULT_PATH
   DOC "slang-glslang shared library"
 )

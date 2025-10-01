@@ -345,7 +345,8 @@ VkResult AccelerationStructureBuilder::cmdBuildAccelerationStructures(VkCommandB
                                       collectedRangeInfo.data());
 
   // Barrier to ensure proper synchronization after building
-  accelerationStructureBarrier(cmd, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR, VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
+  accelerationStructureBarrier(cmd, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
+                               VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
 
   // If a query pool is available, record the properties of the built acceleration structures
   if(queryPool != VK_NULL_HANDLE)
@@ -628,7 +629,8 @@ void AccelerationStructureHelper::blasSubmitBuildAndWait(const std::vector<Accel
 
   NVVK_CHECK(m_alloc->createBuffer(blasScratchBuffer, scratchSize,
                                    VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
-                                       | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
+                                       | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+                                   VMA_MEMORY_USAGE_AUTO, {}, m_accelStructProps.minAccelerationStructureScratchOffsetAlignment));
 
   // Start the build and compaction of the BLAS
   VkDeviceSize hintBuildBudget = m_blasAccelerationStructureBudget;  // Limiting the size of the scratch buffer to 2MB
@@ -715,7 +717,8 @@ void AccelerationStructureHelper::tlasSubmitBuildAndWait(const std::vector<VkAcc
   // Create the scratch buffer
   NVVK_CHECK(m_alloc->createBuffer(tlasScratchBuffer, sizeInfo.buildScratchSize,
                                    VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT
-                                       | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
+                                       | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
+                                   VMA_MEMORY_USAGE_AUTO, {}, m_accelStructProps.minAccelerationStructureScratchOffsetAlignment));
   NVVK_DBG_NAME(tlasScratchBuffer.buffer);
 
   // Create the TLAS
@@ -749,7 +752,8 @@ void AccelerationStructureHelper::tlasSubmitUpdateAndWait(const std::vector<VkAc
   if(tlasScratchBuffer.buffer == VK_NULL_HANDLE)
   {
     NVVK_CHECK(m_alloc->createBuffer(tlasScratchBuffer, tlasBuildData.sizeInfo.buildScratchSize,
-                                     VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT));
+                                     VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT,
+                                     VMA_MEMORY_USAGE_AUTO, {}, m_accelStructProps.minAccelerationStructureScratchOffsetAlignment));
     NVVK_DBG_NAME(tlasScratchBuffer.buffer);
   }
 
