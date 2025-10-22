@@ -53,6 +53,23 @@ void DescriptorBindings::addBinding(const VkDescriptorSetLayoutBinding& layoutBi
   m_bindingFlags.push_back(bindingFlags);
 }
 
+void DescriptorBindings::addBindings(std::span<const VkDescriptorSetLayoutBinding> layoutBindings, VkDescriptorBindingFlags bindingFlags)
+{
+  for(auto& b : layoutBindings)
+  {
+    addBinding(b, bindingFlags);
+  }
+}
+
+void DescriptorBindings::addBindings(std::initializer_list<const VkDescriptorSetLayoutBinding> layoutBindings,
+                                     VkDescriptorBindingFlags                                  bindingFlags)
+{
+  for(auto& b : layoutBindings)
+  {
+    addBinding(b, bindingFlags);
+  }
+}
+
 VkWriteDescriptorSet DescriptorBindings::getWriteSet(uint32_t binding, VkDescriptorSet dstSet, uint32_t dstArrayElement, uint32_t descriptorCount) const
 {
   VkWriteDescriptorSet writeSet = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};

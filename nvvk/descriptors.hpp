@@ -55,6 +55,9 @@ public:
                   VkDescriptorBindingFlags bindingFlags       = 0);
 
   void addBinding(const VkDescriptorSetLayoutBinding& layoutBinding, VkDescriptorBindingFlags bindingFlags = 0);
+  void addBindings(std::span<const VkDescriptorSetLayoutBinding> layoutBindings, VkDescriptorBindingFlags bindingFlags = 0);
+  void addBindings(std::initializer_list<const VkDescriptorSetLayoutBinding> layoutBindings,
+                   VkDescriptorBindingFlags                                  bindingFlags = 0);
 
   // Fills a `VkWriteDescriptorSet` struct for `descriptorCounts` descriptors,
   // starting at element `dstArrayElement`.

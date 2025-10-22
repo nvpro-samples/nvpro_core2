@@ -20,9 +20,9 @@
 #include "slang.hpp"
 
 
-nvslang::SlangCompiler::SlangCompiler()
+nvslang::SlangCompiler::SlangCompiler(bool enableGLSL)
 {
-  SlangGlobalSessionDesc desc{.enableGLSL = true};
+  SlangGlobalSessionDesc desc{.enableGLSL = enableGLSL};
   slang::createGlobalSession(&desc, m_globalSession.writeRef());
 }
 

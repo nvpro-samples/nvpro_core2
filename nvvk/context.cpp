@@ -185,6 +185,15 @@ VkResult nvvk::Context::createInstance()
   return VK_SUCCESS;
 }
 
+// Returns true if and only if Vulkan versionA >= Vulkan versionB, ignoring the
+// variant part of the version.
+static bool vkVersionAtLeast(uint32_t versionA, uint32_t versionB)
+{
+  const uint32_t aWithoutVariant = versionA - VK_MAKE_API_VERSION(VK_API_VERSION_VARIANT(versionA), 0, 0, 0);
+  const uint32_t bWithoutVariant = versionB - VK_MAKE_API_VERSION(VK_API_VERSION_VARIANT(versionB), 0, 0, 0);
+  return aWithoutVariant >= bWithoutVariant;
+}
+
 VkResult nvvk::Context::selectPhysicalDevice()
 {
   if(m_instance == VK_NULL_HANDLE)
@@ -204,9 +213,9 @@ VkResult nvvk::Context::selectPhysicalDevice()
   std::vector<VkPhysicalDevice> gpus(deviceCount);
   NVVK_FAIL_RETURN(vkEnumeratePhysicalDevices(m_instance, &deviceCount, gpus.data()));
 
-  // Find the discrete GPU if present, or use first one available.
   if((contextInfo.forceGPU == -1) || (contextInfo.forceGPU >= int(deviceCount)))
   {
+    // Find the discrete GPU if one is present. If not, use the first one available.
     m_physicalDevice = gpus[0];
     for(VkPhysicalDevice& device : gpus)
     {
@@ -222,6 +231,7 @@ VkResult nvvk::Context::selectPhysicalDevice()
       if(properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
       {
         m_physicalDevice = device;
+        break;
       }
     }
   }
@@ -235,8 +245,7 @@ VkResult nvvk::Context::selectPhysicalDevice()
     VkPhysicalDeviceProperties properties;
     vkGetPhysicalDeviceProperties(m_physicalDevice, &properties);
     uint32_t apiVersion = properties.apiVersion;
-    if((VK_VERSION_MAJOR(apiVersion) < VK_VERSION_MAJOR(contextInfo.apiVersion))
-       || (VK_VERSION_MINOR(apiVersion) < VK_VERSION_MINOR(contextInfo.apiVersion)))
+    if(!vkVersionAtLeast(apiVersion, contextInfo.apiVersion))
     {
       LOGW("Requested Vulkan version (%d.%d) is higher than available version (%d.%d).\n", VK_VERSION_MAJOR(contextInfo.apiVersion),
            VK_VERSION_MINOR(contextInfo.apiVersion), VK_VERSION_MAJOR(apiVersion), VK_VERSION_MINOR(apiVersion));
@@ -247,11 +256,11 @@ VkResult nvvk::Context::selectPhysicalDevice()
 
   // Query the physical device features
   m_deviceFeatures.pNext = &m_deviceFeatures11;
-  if(contextInfo.apiVersion >= VK_API_VERSION_1_2)
+  if(vkVersionAtLeast(contextInfo.apiVersion, VK_API_VERSION_1_2))
     m_deviceFeatures11.pNext = &m_deviceFeatures12;
-  if(contextInfo.apiVersion >= VK_API_VERSION_1_3)
+  if(vkVersionAtLeast(contextInfo.apiVersion, VK_API_VERSION_1_3))
     m_deviceFeatures12.pNext = &m_deviceFeatures13;
-  if(contextInfo.apiVersion >= VK_API_VERSION_1_4)
+  if(vkVersionAtLeast(contextInfo.apiVersion, VK_API_VERSION_1_4))
     m_deviceFeatures13.pNext = &m_deviceFeatures14;
   vkGetPhysicalDeviceFeatures2(m_physicalDevice, &m_deviceFeatures);
 
@@ -657,8 +666,11 @@ VkResult nvvk::Context::printGpus(VkInstance instance, VkPhysicalDevice usedGpu)
 
   std::stringstream          textBlock;
   VkPhysicalDeviceProperties properties;
+  uint32_t                   usedGpuIndex = 0;
   for(uint32_t d = 0; d < deviceCount; d++)
   {
+    if(gpus[d] == usedGpu)
+      usedGpuIndex = d;
     vkGetPhysicalDeviceProperties(gpus[d], &properties);
     textBlock << " - " << d << ") " << properties.deviceName << "\n";
   }
@@ -674,7 +686,7 @@ VkResult nvvk::Context::printGpus(VkInstance instance, VkPhysicalDevice usedGpu)
     return VK_ERROR_INITIALIZATION_FAILED;
   }
 
-  LOGI("Using GPU:\n");
+  LOGI("Using GPU %u:\n", usedGpuIndex);
   vkGetPhysicalDeviceProperties(usedGpu, &properties);
   printPhysicalDeviceProperties(properties);
   return VK_SUCCESS;

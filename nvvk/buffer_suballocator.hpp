@@ -30,7 +30,6 @@
 
 namespace nvvk {
 
-
 class BufferSubAllocation
 {
 public:
@@ -55,7 +54,7 @@ private:
 
   uint16_t block{};
 #ifndef NDEBUG
-  BufferSubAllocator* allocator{};
+  class BufferSubAllocator* allocator{};
 #endif
 };
 
