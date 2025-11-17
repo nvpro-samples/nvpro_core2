@@ -499,7 +499,7 @@ void nvapp::Application::onViewportSizeChange(VkExtent2D size)
 
   m_viewportSize = size;
   // Recreate the G-Buffer to the size of the viewport
-  vkQueueWaitIdle(m_queues[0].queue);
+  NVVK_CHECK(vkQueueWaitIdle(m_queues[0].queue));
   {
     VkCommandBuffer cmd{};
     NVVK_CHECK(nvvk::beginSingleTimeCommands(cmd, m_device, m_transientCmdPool));

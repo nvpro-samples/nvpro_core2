@@ -304,10 +304,14 @@ void nvvkgltf::SceneRtx::cmdCreateBuildTopLevelAccelerationStructure(VkCommandBu
     buildFlags |= VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
   }
 
-  // Create a buffer holding the actual instance data (matrices++) for use by the AS builder
+  // Create a buffer holding the actual instance data (matrices++) for use by the AS builder.
+  // Instance buffer device addresses must be aligned to 16 bytes according to
+  // https://vulkan.lunarg.com/doc/view/1.4.328.1/windows/antora/spec/latest/chapters/accelstructures.html#VUID-vkCmdBuildAccelerationStructuresKHR-pInfos-03717 .
+  constexpr VmaAllocationCreateFlags instanceAllocFlags   = 0;
+  constexpr VkDeviceSize             instanceMinAlignment = 16;
   NVVK_CHECK(m_alloc->createBuffer(m_instancesBuffer, std::span(m_tlasInstances).size_bytes(),
-                                   VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT
-                                       | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR));
+                                   VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+                                   VMA_MEMORY_USAGE_AUTO, instanceAllocFlags, instanceMinAlignment));
   NVVK_CHECK(staging.appendBuffer(m_instancesBuffer, 0, std::span(m_tlasInstances)));
   NVVK_DBG_NAME(m_instancesBuffer.buffer);
 

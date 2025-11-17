@@ -50,14 +50,6 @@
 std::vector<shaderio::GltfLight> getShaderLights(const std::vector<nvvkgltf::RenderLight>& rlights,
                                                  const std::vector<tinygltf::Light>&       gltfLights);
 
-// Common buffer creation usage flags
-static VkBufferUsageFlags2 s_bufferUsageFlag =
-    VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT           // Buffer read/write access within shaders, without size limitation
-    | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT  // The buffer can be referred to using its address instead of a binding
-    | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR  // Usage as a data source for acceleration structure builds
-    | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT                                      // Buffer can be copied into
-    | VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT;  // Buffer can be copied from (e.g. for inspection)
-
 //-------------------------------------------------------------------------------------------------
 //
 //
@@ -90,17 +82,24 @@ void nvvkgltf::SceneVk::deinit()
 //--------------------------------------------------------------------------------------------------
 // Create all Vulkan resources to hold a nvvkgltf::Scene
 //
-void nvvkgltf::SceneVk::create(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn, bool generateMipmaps /*= true*/)
+void nvvkgltf::SceneVk::create(VkCommandBuffer        cmd,
+                               nvvk::StagingUploader& staging,
+                               const nvvkgltf::Scene& scn,
+                               bool                   generateMipmaps /*= true*/,
+                               bool                   enableRayTracing /*= true*/)
 {
   nvutils::ScopedTimer st(__FUNCTION__);
   destroy();  // Make sure not to leave allocated buffers
+
+  m_generateMipmaps   = generateMipmaps;
+  m_rayTracingEnabled = enableRayTracing;
 
   namespace fs     = std::filesystem;
   fs::path basedir = fs::path(scn.getFilename()).parent_path();
   updateMaterialBuffer(cmd, staging, scn);
   updateRenderNodesBuffer(cmd, staging, scn);
   createVertexBuffers(cmd, staging, scn);
-  createTextureImages(cmd, staging, scn.getModel(), basedir, generateMipmaps);
+  createTextureImages(cmd, staging, scn.getModel(), basedir);
   updateRenderLightsBuffer(cmd, staging, scn);
 
   // Update the buffers for morph and skinning
@@ -512,13 +511,13 @@ void nvvkgltf::SceneVk::updateRenderPrimitivesBuffer(VkCommandBuffer cmd, nvvk::
 // Function to create attribute buffers in Vulkan only if the attribute is present
 // Return true if a buffer was created, false if the buffer was updated
 template <typename T>
-bool updateAttributeBuffer(VkCommandBuffer            cmd,            // Command buffer to record the copy
-                           const std::string&         attributeName,  // Name of the attribute: POSITION, NORMAL, ...
-                           const tinygltf::Model&     model,          // GLTF model
-                           const tinygltf::Primitive& primitive,      // GLTF primitive
-                           nvvk::ResourceAllocator*   alloc,          // Allocator to create the buffer
-                           nvvk::StagingUploader*     staging,
-                           nvvk::Buffer&              attributeBuffer)  // Buffer to be created
+bool nvvkgltf::SceneVk::updateAttributeBuffer(VkCommandBuffer cmd,               // Command buffer to record the copy
+                                              const std::string& attributeName,  // Name of the attribute: POSITION, NORMAL, ...
+                                              const tinygltf::Model&     model,      // GLTF model
+                                              const tinygltf::Primitive& primitive,  // GLTF primitive
+                                              nvvk::ResourceAllocator*   alloc,      // Allocator to create the buffer
+                                              nvvk::StagingUploader*     staging,
+                                              nvvk::Buffer&              attributeBuffer)  // Buffer to be created
 {
   const auto& findResult = primitive.attributes.find(attributeName);
   if(findResult != primitive.attributes.end())
@@ -535,7 +534,7 @@ bool updateAttributeBuffer(VkCommandBuffer            cmd,            // Command
     {
       // We add VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT so it can be bound to
       // a vertex input binding:
-      VkBufferUsageFlags2 bufferUsageFlag = s_bufferUsageFlag | VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT;
+      VkBufferUsageFlags2 bufferUsageFlag = getBufferUsageFlags() | VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT;
       NVVK_CHECK(alloc->createBuffer(attributeBuffer, std::span(data).size_bytes(), bufferUsageFlag));
       NVVK_CHECK(staging->appendBuffer(attributeBuffer, 0, std::span(data)));
       return true;
@@ -546,6 +545,25 @@ bool updateAttributeBuffer(VkCommandBuffer            cmd,            // Command
     }
   }
   return false;
+}
+
+//--------------------------------------------------------------------------------------------------
+// Returns the common usage flags used for all buffers.
+VkBufferUsageFlags2 nvvkgltf::SceneVk::getBufferUsageFlags() const
+{
+  VkBufferUsageFlags2 bufferUsageFlag =
+      VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT           // Buffer read/write access within shaders, without size limitation
+      | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT  // The buffer can be referred to using its address instead of a binding
+      | VK_BUFFER_USAGE_2_TRANSFER_DST_BIT           // Buffer can be copied into
+      | VK_BUFFER_USAGE_2_TRANSFER_SRC_BIT;          // Buffer can be copied from (e.g. for inspection)
+
+  if(m_rayTracingEnabled)
+  {
+    // Usage as a data source for acceleration structure builds
+    bufferUsageFlag |= VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+  }
+
+  return bufferUsageFlag;
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -607,7 +625,7 @@ void nvvkgltf::SceneVk::createVertexBuffers(VkCommandBuffer cmd, nvvk::StagingUp
       }
 
       NVVK_CHECK(m_alloc->createBuffer(vertexBuffers.color, std::span(tempIntData).size_bytes(),
-                                       s_bufferUsageFlag | VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT));
+                                       getBufferUsageFlags() | VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT));
       NVVK_CHECK(staging.appendBuffer(vertexBuffers.color, 0, std::span(tempIntData)));
     }
 
@@ -646,7 +664,7 @@ void nvvkgltf::SceneVk::createVertexBuffers(VkCommandBuffer cmd, nvvk::StagingUp
     // Creating the buffer for the indices
     nvvk::Buffer& i_buffer = m_bIndices[primID];
     NVVK_CHECK(m_alloc->createBuffer(i_buffer, std::span(indexBuffer).size_bytes(),
-                                     s_bufferUsageFlag | VK_BUFFER_USAGE_2_INDEX_BUFFER_BIT));
+                                     getBufferUsageFlags() | VK_BUFFER_USAGE_2_INDEX_BUFFER_BIT));
     NVVK_CHECK(staging.appendBuffer(i_buffer, 0, std::span(indexBuffer)));
     NVVK_DBG_NAME(i_buffer.buffer);
 
@@ -665,16 +683,19 @@ void nvvkgltf::SceneVk::createVertexBuffers(VkCommandBuffer cmd, nvvk::StagingUp
   }
 
   // Creating the buffer of all primitive information
-  NVVK_CHECK(m_alloc->createBuffer(m_bRenderPrim, std::span(renderPrim).size_bytes(), s_bufferUsageFlag));
+  NVVK_CHECK(m_alloc->createBuffer(m_bRenderPrim, std::span(renderPrim).size_bytes(), getBufferUsageFlags()));
   NVVK_CHECK(staging.appendBuffer(m_bRenderPrim, 0, std::span(renderPrim)));
   NVVK_DBG_NAME(m_bRenderPrim.buffer);
 
   // Barrier to make sure the data is in the GPU
   VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
   barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-  barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
-  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-                       VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+  barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+  if(m_rayTracingEnabled)
+  {
+    barrier.dstAccessMask |= VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+  }
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
 }
 
 // This version updates all the vertex buffers
@@ -759,8 +780,7 @@ static VkSamplerCreateInfo getSampler(const tinygltf::Model& model, int index)
 void nvvkgltf::SceneVk::createTextureImages(VkCommandBuffer              cmd,
                                             nvvk::StagingUploader&       staging,
                                             const tinygltf::Model&       model,
-                                            const std::filesystem::path& basedir,
-                                            bool                         generateMipmaps)
+                                            const std::filesystem::path& basedir)
 {
   nvutils::ScopedTimer st(std::string(__FUNCTION__) + "\n");
 
@@ -825,7 +845,7 @@ void nvvkgltf::SceneVk::createTextureImages(VkCommandBuffer              cmd,
   // Create Vulkan images
   for(size_t i = 0; i < m_images.size(); i++)
   {
-    if(!createImage(cmd, staging, m_images[i], generateMipmaps))
+    if(!createImage(cmd, staging, m_images[i]))
     {
       addDefaultImage((uint32_t)i, {255, 0, 255, 255});  // Image not present or incorrectly loaded (image.empty)
     }
@@ -1098,7 +1118,7 @@ void nvvkgltf::SceneVk::loadImage(const std::filesystem::path& basedir, const ti
   }
 }
 
-bool nvvkgltf::SceneVk::createImage(const VkCommandBuffer& cmd, nvvk::StagingUploader& staging, SceneImage& image, bool generateMipmaps)
+bool nvvkgltf::SceneVk::createImage(const VkCommandBuffer& cmd, nvvk::StagingUploader& staging, SceneImage& image)
 {
   if(image.size.width == 0 || image.size.height == 0)
     return false;
@@ -1124,7 +1144,7 @@ bool nvvkgltf::SceneVk::createImage(const VkCommandBuffer& cmd, nvvk::StagingUpl
   {
     imageCreateInfo.mipLevels = static_cast<uint32_t>(image.mipData.size());
   }
-  else if(canGenerateMipmaps && generateMipmaps)
+  else if(canGenerateMipmaps && m_generateMipmaps)
   {
     // Compute the number of mipmaps levels
     imageCreateInfo.mipLevels = nvvk::mipLevels(imgSize);
@@ -1142,7 +1162,7 @@ bool nvvkgltf::SceneVk::createImage(const VkCommandBuffer& cmd, nvvk::StagingUpl
   staging.cmdUploadAppended(cmd);  // Upload the first mip level
 
   // The image require to generate the mipmaps
-  if(image.mipData.size() == 1 && (canGenerateMipmaps && generateMipmaps))
+  if(image.mipData.size() == 1 && (canGenerateMipmaps && m_generateMipmaps))
   {
     nvvk::cmdGenerateMipmaps(cmd, resultImage.image, imgSize, imageCreateInfo.mipLevels, 1, resultImage.descriptor.imageLayout);
   }

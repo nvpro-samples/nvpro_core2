@@ -88,6 +88,16 @@ public:
                                 const int32_t              minValue = std::numeric_limits<int32_t>::min(),
                                 const int32_t              maxValue = std::numeric_limits<int32_t>::max());
 
+  const Parameter<int16_t>* add(const ParameterBase::Info& info,
+                                int16_t*                   destination,
+                                const int16_t              minValue = std::numeric_limits<int16_t>::min(),
+                                const int16_t              maxValue = std::numeric_limits<int16_t>::max());
+
+  const Parameter<int8_t>* add(const ParameterBase::Info& info,
+                               int8_t*                    destination,
+                               const int8_t               minValue = std::numeric_limits<int8_t>::min(),
+                               const int8_t               maxValue = std::numeric_limits<int8_t>::max());
+
   // if min/max are left nullptr defaults to min/max numeric_limits
   const ParameterBase* addArray(const ParameterBase::Info& info,
                                 uint32_t                   arrayLength,
@@ -99,6 +109,16 @@ public:
                                  uint32_t*                  destination,
                                  const uint32_t             minValue = std::numeric_limits<uint32_t>::min(),
                                  const uint32_t             maxValue = std::numeric_limits<uint32_t>::max());
+
+  const Parameter<uint16_t>* add(const ParameterBase::Info& info,
+                                 uint16_t*                  destination,
+                                 const uint16_t             minValue = std::numeric_limits<uint16_t>::min(),
+                                 const uint16_t             maxValue = std::numeric_limits<uint16_t>::max());
+
+  const Parameter<uint8_t>* add(const ParameterBase::Info& info,
+                                uint8_t*                   destination,
+                                const uint8_t              minValue = std::numeric_limits<uint8_t>::min(),
+                                const uint8_t              maxValue = std::numeric_limits<uint8_t>::max());
 
   // if min/max are left nullptr defaults to min/max numeric_limits
   const ParameterBase* addArray(const ParameterBase::Info& info,

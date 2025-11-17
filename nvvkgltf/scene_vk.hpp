@@ -61,7 +61,11 @@ public:
   void init(nvvk::ResourceAllocator* alloc, nvvk::SamplerPool* samplerPool);
   void deinit();
 
-  virtual void create(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn, bool generateMipmaps = true);
+  virtual void create(VkCommandBuffer        cmd,
+                      nvvk::StagingUploader& staging,
+                      const nvvkgltf::Scene& scn,
+                      bool                   generateMipmaps  = true,
+                      bool                   enableRayTracing = true);
 
   void update(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn);
   void updateRenderNodesBuffer(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn);
@@ -94,17 +98,25 @@ protected:
     std::vector<std::vector<uint8_t>> mipData{};
   };
 
+  VkBufferUsageFlags2 getBufferUsageFlags() const;
   virtual void createVertexBuffers(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn);
+  template <typename T>
+  bool         updateAttributeBuffer(VkCommandBuffer            cmd,
+                                     const std::string&         attributeName,
+                                     const tinygltf::Model&     model,
+                                     const tinygltf::Primitive& primitive,
+                                     nvvk::ResourceAllocator*   alloc,
+                                     nvvk::StagingUploader*     staging,
+                                     nvvk::Buffer&              attributeBuffer);
   virtual void createTextureImages(VkCommandBuffer              cmd,
                                    nvvk::StagingUploader&       staging,
                                    const tinygltf::Model&       model,
-                                   const std::filesystem::path& basedir,
-                                   bool                         generateMipmaps);
+                                   const std::filesystem::path& basedir);
 
   void findSrgbImages(const tinygltf::Model& model);
 
   virtual void loadImage(const std::filesystem::path& basedir, const tinygltf::Image& gltfImage, int imageID);
-  virtual bool createImage(const VkCommandBuffer& cmd, nvvk::StagingUploader& staging, SceneImage& image, bool generateMipmaps);
+  virtual bool createImage(const VkCommandBuffer& cmd, nvvk::StagingUploader& staging, SceneImage& image);
 
   //--
   VkDevice         m_device{VK_NULL_HANDLE};
@@ -125,6 +137,9 @@ protected:
   std::vector<nvvk::Image>   m_textures;  // Vector of all textures of the scene
 
   std::set<int> m_sRgbImages;  // All images that are in sRGB (typically, only the one used by baseColorTexture)
+
+  bool m_generateMipmaps   = {};
+  bool m_rayTracingEnabled = {};
 };
 
 }  // namespace nvvkgltf

@@ -96,7 +96,7 @@ manual but more customizable way.
 
 * Easy Way:
   
-    1. Copy [`FindNvproCore2.cmake`](./project_template/FindNvproCore2.cmake) to a `cmake/` subdirectory of your project.
+    1. Copy [`FindNvproCore2.cmake`](./project_template/cmake/FindNvproCore2.cmake) to a `cmake/` subdirectory of your project.
 
     2. Add the following code to your `CMakeLists.txt`. This will automatically download `nvpro_core2` if not found, add its targets, and set appropriate defaults for most samples:
 

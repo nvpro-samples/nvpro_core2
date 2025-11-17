@@ -43,7 +43,11 @@ public:
     BOOL8,
     BOOL8_TRIGGER,
     FLOAT32,
+    INT8,
+    INT16,
     INT32,
+    UINT8,
+    UINT16,
     UINT32,
     STRING,
     FILENAME,
@@ -89,12 +93,16 @@ public:
   // for all others pointers are used during parsing
   union
   {
-    bool*        b8;
-    float*       f32;
-    int32_t*     i32;
-    uint32_t*    u32;
-    void*        raw;
-    std::string* string;
+    bool*                  b8;
+    float*                 f32;
+    int8_t*                i8;
+    int16_t*               i16;
+    int32_t*               i32;
+    uint8_t*               u8;
+    uint16_t*              u16;
+    uint32_t*              u32;
+    void*                  raw;
+    std::string*           string;
     std::filesystem::path* filename;
   } destination;
 
@@ -102,7 +110,11 @@ public:
   union MinMaxData
   {
     float    f32[MAX_ARRAY_LENGTH];
+    int8_t   i8[MAX_ARRAY_LENGTH];
+    int16_t  i16[MAX_ARRAY_LENGTH];
     int32_t  i32[MAX_ARRAY_LENGTH];
+    uint8_t  u8[MAX_ARRAY_LENGTH];
+    uint16_t u16[MAX_ARRAY_LENGTH];
     uint32_t u32[MAX_ARRAY_LENGTH];
   } minMaxValues[2];
 

@@ -31,8 +31,16 @@ const char* ParameterBase::toString(Type type)
       return "bool_trigger";
     case ParameterBase::Type::FLOAT32:
       return "float";
+    case ParameterBase::Type::INT8:
+      return "int8";
+    case ParameterBase::Type::INT16:
+      return "int16";
     case ParameterBase::Type::INT32:
       return "int32";
+    case ParameterBase::Type::UINT8:
+      return "uint8";
+    case ParameterBase::Type::UINT16:
+      return "uint16";
     case ParameterBase::Type::UINT32:
       return "uint32";
     case ParameterBase::Type::STRING:
