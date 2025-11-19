@@ -27,6 +27,7 @@
 #include "scene.hpp"
 #include "nvvk/sampler_pool.hpp"
 #include "nvvk/staging.hpp"
+#include "gpu_memory_tracker.hpp"
 
 
 /*-------------------------------------------------------------------------------------------------
@@ -84,6 +85,8 @@ public:
   const std::vector<nvvk::Buffer>&  indices() const { return m_bIndices; }
   const std::vector<nvvk::Image>&   textures() const { return m_textures; }
   uint32_t                          nbTextures() const { return static_cast<uint32_t>(m_textures.size()); }
+  const GpuMemoryTracker&           getMemoryTracker() const { return m_memoryTracker; }
+  GpuMemoryTracker&                 getMemoryTracker() { return m_memoryTracker; }
 
 protected:
   struct SceneImage  // Image to be loaded and created
@@ -140,6 +143,8 @@ protected:
 
   bool m_generateMipmaps   = {};
   bool m_rayTracingEnabled = {};
+
+  GpuMemoryTracker m_memoryTracker;  // GPU memory tracking
 };
 
 }  // namespace nvvkgltf

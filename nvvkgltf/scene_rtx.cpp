@@ -30,6 +30,14 @@
 #include "scene_vk.hpp"
 #include "tinygltf_utils.hpp"
 
+// GPU memory category names for RTX resources
+namespace {
+constexpr std::string_view kMemCategoryBLAS      = "BLAS";
+constexpr std::string_view kMemCategoryTLAS      = "TLAS";
+constexpr std::string_view kMemCategoryScratch   = "Scratch";
+constexpr std::string_view kMemCategoryInstances = "Instances";
+}  // namespace
+
 // Initialize the scene for ray tracing
 void nvvkgltf::SceneRtx::init(nvvk::ResourceAllocator* alloc)
 {
@@ -38,6 +46,7 @@ void nvvkgltf::SceneRtx::init(nvvk::ResourceAllocator* alloc)
   m_device         = alloc->getDevice();
   m_physicalDevice = alloc->getPhysicalDevice();
   m_alloc          = alloc;
+  m_memoryTracker.init(alloc);
 
   // Requesting ray tracing properties
   VkPhysicalDeviceProperties2 prop2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
@@ -75,6 +84,9 @@ void nvvkgltf::SceneRtx::create(VkCommandBuffer                      cmd,
     finished = cmdBuildBottomLevelAccelerationStructure(cmd, 512'000'000);
   } while(!finished);
 
+  // Track all BLAS allocations after they're all built
+  trackBlasMemory();
+
   cmdCreateBuildTopLevelAccelerationStructure(cmd, staging, scn);
 }
 
@@ -84,16 +96,42 @@ VkAccelerationStructureKHR nvvkgltf::SceneRtx::tlas()
   return m_tlasAccel.accel;
 }
 
+// Track all BLAS allocations - call this after all BLAS are built
+void nvvkgltf::SceneRtx::trackBlasMemory()
+{
+  for(const auto& blas : m_blasAccel)
+  {
+    if(blas.accel != VK_NULL_HANDLE && blas.buffer.allocation)
+    {
+      m_memoryTracker.track(kMemCategoryBLAS, blas.buffer.allocation);
+    }
+  }
+}
+
 // Destroy the acceleration structure
 void nvvkgltf::SceneRtx::destroy()
 {
   for(auto& blas : m_blasAccel)
-    m_alloc->destroyAcceleration(blas);
+  {
+    if(blas.accel != VK_NULL_HANDLE && blas.buffer.allocation)
+    {
+      m_memoryTracker.untrack(kMemCategoryBLAS, blas.buffer.allocation);
+      m_alloc->destroyAcceleration(blas);
+    }
+  }
 
-  m_alloc->destroyBuffer(m_instancesBuffer);
+  if(m_instancesBuffer.buffer != VK_NULL_HANDLE)
+  {
+    m_memoryTracker.untrack(kMemCategoryInstances, m_instancesBuffer.allocation);
+    m_alloc->destroyBuffer(m_instancesBuffer);
+  }
   destroyScratchBuffers();
 
-  m_alloc->destroyAcceleration(m_tlasAccel);
+  if(m_tlasAccel.accel != VK_NULL_HANDLE && m_tlasAccel.buffer.allocation)
+  {
+    m_memoryTracker.untrack(kMemCategoryTLAS, m_tlasAccel.buffer.allocation);
+    m_alloc->destroyAcceleration(m_tlasAccel);
+  }
   m_blasAccel     = {};
   m_blasBuildData = {};
   m_tlasAccel     = {};
@@ -108,8 +146,16 @@ void nvvkgltf::SceneRtx::destroy()
 // Destroy the scratch buffers
 void nvvkgltf::SceneRtx::destroyScratchBuffers()
 {
-  m_alloc->destroyBuffer(m_tlasScratchBuffer);
-  m_alloc->destroyBuffer(m_blasScratchBuffer);
+  if(m_tlasScratchBuffer.buffer != VK_NULL_HANDLE)
+  {
+    m_memoryTracker.untrack(kMemCategoryScratch, m_tlasScratchBuffer.allocation);
+    m_alloc->destroyBuffer(m_tlasScratchBuffer);
+  }
+  if(m_blasScratchBuffer.buffer != VK_NULL_HANDLE)
+  {
+    m_memoryTracker.untrack(kMemCategoryScratch, m_blasScratchBuffer.allocation);
+    m_alloc->destroyBuffer(m_blasScratchBuffer);
+  }
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -215,6 +261,7 @@ bool nvvkgltf::SceneRtx::cmdBuildBottomLevelAccelerationStructure(VkCommandBuffe
                                        | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR,
                                    VMA_MEMORY_USAGE_AUTO, {}, m_blasBuilder->getScratchAlignment()));
   NVVK_DBG_NAME(m_blasScratchBuffer.buffer);
+  m_memoryTracker.track(kMemCategoryScratch, m_blasScratchBuffer.allocation);
 
   std::span<nvvk::AccelerationStructureBuildData> blasBuildData(m_blasBuildData);
   std::span<nvvk::AccelerationStructure>          blasAccel(m_blasAccel);
@@ -314,6 +361,7 @@ void nvvkgltf::SceneRtx::cmdCreateBuildTopLevelAccelerationStructure(VkCommandBu
                                    VMA_MEMORY_USAGE_AUTO, instanceAllocFlags, instanceMinAlignment));
   NVVK_CHECK(staging.appendBuffer(m_instancesBuffer, 0, std::span(m_tlasInstances)));
   NVVK_DBG_NAME(m_instancesBuffer.buffer);
+  m_memoryTracker.track(kMemCategoryInstances, m_instancesBuffer.allocation);
 
   m_tlasBuildData.asType = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
   auto geo               = m_tlasBuildData.makeInstanceGeometry(m_tlasInstances.size(), m_instancesBuffer.address);
@@ -333,10 +381,12 @@ void nvvkgltf::SceneRtx::cmdCreateBuildTopLevelAccelerationStructure(VkCommandBu
                                    VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT
                                        | VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR));
   NVVK_DBG_NAME(m_tlasScratchBuffer.buffer);
+  m_memoryTracker.track(kMemCategoryScratch, m_tlasScratchBuffer.allocation);
 
   VkAccelerationStructureCreateInfoKHR createInfo = m_tlasBuildData.makeCreateInfo();
   NVVK_CHECK(m_alloc->createAcceleration(m_tlasAccel, createInfo));
   NVVK_DBG_NAME(m_tlasAccel.accel);
+  m_memoryTracker.track(kMemCategoryTLAS, m_tlasAccel.buffer.allocation);
 
 
   // Build the TLAS
@@ -381,6 +431,7 @@ void nvvkgltf::SceneRtx::updateTopLevelAS(VkCommandBuffer cmd, nvvk::StagingUplo
     NVVK_CHECK(m_alloc->createBuffer(m_tlasScratchBuffer, m_tlasBuildData.sizeInfo.buildScratchSize,
                                      VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT));
     NVVK_DBG_NAME(m_tlasScratchBuffer.buffer);
+    m_memoryTracker.track(kMemCategoryScratch, m_tlasScratchBuffer.allocation);
   }
 
   // Building or updating the top-level acceleration structure

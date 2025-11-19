@@ -25,15 +25,6 @@
 
 NAMESPACE_SHADERIO_BEGIN()
 
-#ifdef __cplusplus
-#ifndef OUT_TYPE
-#define OUT_TYPE(T) T&
-#endif
-#else
-#define OUT_TYPE(T) out T
-#endif
-
-
 inline float square(float x)
 {
   return x * x;
@@ -80,7 +71,7 @@ inline float clampedDot(float3 x, float3 y)
 // when operating on a sphere (due to the hairy ball theorem); this has a
 // small ring-shaped discontinuity at normal.z == -0.99998796.
 //-----------------------------------------------------------------------------
-inline void orthonormalBasis(float3 normal, OUT_TYPE(float3) tangent, OUT_TYPE(float3) bitangent)
+inline void orthonormalBasis(float3 normal, NVSHADERS_OUT_TYPE(float3) tangent, NVSHADERS_OUT_TYPE(float3) bitangent)
 {
   if(normal.z < -0.99998796F)  // Handle the singularity
   {
@@ -189,8 +180,6 @@ inline float powerHeuristic(float a, float b)
   return t / (b * b + t);
 }
 
-
-#undef OUT_TYPE
 
 NAMESPACE_SHADERIO_END()
 

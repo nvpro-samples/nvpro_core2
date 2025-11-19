@@ -28,18 +28,8 @@ includes Fresnel, shadowing-masking, sheen, and thin-film functions as well.
 -------------------------------------------------------------------------------------------------*/
 
 #include "constants.h.slang"
+#include "slang_types.h"
 
-#ifdef __cplusplus
-#define OUT_TYPE(T) T&
-#define INOUT_TYPE(T) T&
-#else
-#ifndef OUT_TYPE
-#define OUT_TYPE(T) out T
-#endif
-#ifndef INOUT_TYPE
-#define INOUT_TYPE(T) inout T
-#endif
-#endif
 
 // Schlick Fresnel approximation
 float schlickFresnel(float F0, float F90, float VdotH)
@@ -158,14 +148,13 @@ float smith_shadow_or_mask(const float3 k, const float2 roughness)
 
 Note that the joint Smith shadowing-masking function may be more realistic.
 -------------------------------------------------------------------------------------------------*/
-float ggx_smith_shadow_mask(OUT_TYPE(float) G1, OUT_TYPE(float) G2, const float3 k1, const float3 k2, const float2 roughness)
+float ggx_smith_shadow_mask(NVSHADERS_OUT_TYPE(float) G1, NVSHADERS_OUT_TYPE(float) G2, const float3 k1, const float3 k2, const float2 roughness)
 {
   G1 = smith_shadow_or_mask(k1, roughness);
   G2 = smith_shadow_or_mask(k2, roughness);
 
   return G1 * G2;
 }
-
 
 // Computes the squared norm of s/p polarized Fresnel reflection coefficients and phase shifts in complex unit circle.
 //
@@ -174,8 +163,8 @@ float ggx_smith_shadow_mask(OUT_TYPE(float) G1, OUT_TYPE(float) G2, const float3
 //
 // This comes from MDL, and is a different approach than the example
 // implementation in KHR_materials_iridescence.
-float2 fresnel_conductor(OUT_TYPE(float2) phase_shift_sin,
-                         OUT_TYPE(float2) phase_shift_cos,
+float2 fresnel_conductor(NVSHADERS_OUT_TYPE(float2) phase_shift_sin,
+                         NVSHADERS_OUT_TYPE(float2) phase_shift_cos,
                          const float n_a,
                          const float n_b,
                          const float k_b,
@@ -268,14 +257,14 @@ float3 thin_film_factor(float coating_thickness, const float coating_ior, const 
   float lambda_min  = 400.0f;
   float lambda_step = ((700.0f - 400.0f) / 16.0f);
 
-  const float3 cie_xyz[16] = {{0.02986f, 0.00310f, 0.13609f}, {0.20715f, 0.02304f, 0.99584f},
-                              {0.36717f, 0.06469f, 1.89550f}, {0.28549f, 0.13661f, 1.67236f},
-                              {0.08233f, 0.26856f, 0.76653f}, {0.01723f, 0.48621f, 0.21889f},
-                              {0.14400f, 0.77341f, 0.05886f}, {0.40957f, 0.95850f, 0.01280f},
-                              {0.74201f, 0.97967f, 0.00060f}, {1.03325f, 0.84591f, 0.00000f},
-                              {1.08385f, 0.62242f, 0.00000f}, {0.79203f, 0.36749f, 0.00000f},
-                              {0.38751f, 0.16135f, 0.00000f}, {0.13401f, 0.05298f, 0.00000f},
-                              {0.03531f, 0.01375f, 0.00000f}, {0.00817f, 0.00317f, 0.00000f}};
+  const float3 cie_xyz[16] = { { 0.02986f, 0.00310f, 0.13609f }, { 0.20715f, 0.02304f, 0.99584f },
+                               { 0.36717f, 0.06469f, 1.89550f }, { 0.28549f, 0.13661f, 1.67236f },
+                               { 0.08233f, 0.26856f, 0.76653f }, { 0.01723f, 0.48621f, 0.21889f },
+                               { 0.14400f, 0.77341f, 0.05886f }, { 0.40957f, 0.95850f, 0.01280f },
+                               { 0.74201f, 0.97967f, 0.00060f }, { 1.03325f, 0.84591f, 0.00000f },
+                               { 1.08385f, 0.62242f, 0.00000f }, { 0.79203f, 0.36749f, 0.00000f },
+                               { 0.38751f, 0.16135f, 0.00000f }, { 0.13401f, 0.05298f, 0.00000f },
+                               { 0.03531f, 0.01375f, 0.00000f }, { 0.00817f, 0.00317f, 0.00000f } };
 
   float lambda = lambda_min + 0.5f * lambda_step;
 
@@ -338,11 +327,11 @@ float3 compute_half_vector(const float3 k1, const float3 k2, const float3 normal
   return normalize(h);
 }
 
-float3 refract(const float3 k,      // direction (pointing from surface)
-               const float3 n,      // normal
-               const float  b,      // (reflected side IOR) / (transmitted side IOR)
-               const float  nk,     // dot(n, k)
-               OUT_TYPE(bool) tir)  // total internal reflection
+float3 refract(const float3 k,                // direction (pointing from surface)
+               const float3 n,                // normal
+               const float  b,                // (reflected side IOR) / (transmitted side IOR)
+               const float  nk,               // dot(n, k)
+               NVSHADERS_OUT_TYPE(bool) tir)  // total internal reflection
 {
   const float refraction = b * b * (1.0f - nk * nk);
 
@@ -402,12 +391,17 @@ float vcavities_mask(const float nh,  // abs(dot(normal, half))
   return min(2.0f * nh * nk / kh, 1.0f);
 }
 
-
 /*-------------------------------------------------------------------------------------------------
 # Function `vcavities_shadow_mask`
 > Cook-Torrance style v-cavities shadowing-masking term.
 -------------------------------------------------------------------------------------------------*/
-float vcavities_shadow_mask(OUT_TYPE(float) G1, OUT_TYPE(float) G2, const float nh, const float3 k1, const float k1h, const float3 k2, const float k2h)
+float vcavities_shadow_mask(NVSHADERS_OUT_TYPE(float) G1,
+                            NVSHADERS_OUT_TYPE(float) G2,
+                            const float  nh,
+                            const float3 k1,
+                            const float  k1h,
+                            const float3 k2,
+                            const float  k2h)
 {
   G1 = vcavities_mask(nh, k1h, k1.z);  // In my renderer the z-coordinate is the normal!
   G2 = vcavities_mask(nh, k2h, k2.z);
@@ -462,5 +456,4 @@ float3 flip(const float3 h, const float3 k, float xi)
 }
 
 
-#undef OUT_TYPE
 #endif  // NVVKHL_GGX_H

@@ -19,6 +19,9 @@
 
 #ifndef RANDOM_GLSL
 #define RANDOM_GLSL 1
+#include "slang_types.h"
+
+NAMESPACE_SHADERIO_BEGIN()
 
 /*-------------------------------------------------------------------------------------------------
 Random number generation functions.
@@ -62,7 +65,7 @@ outputs a hash using `pcg_output_rxs_m_xs_32_32`, a more complex hash.
 There's a section of vk_mini_path_tracer on this random number generator
 [here](https://nvpro-samples.github.io/vk_mini_path_tracer/#antialiasingandpseudorandomnumbergeneration/pseudorandomnumbergenerationinglsl).
 -------------------------------------------------------------------------------------------------*/
-uint pcg(inout uint state)
+uint pcg(NVSHADERS_INOUT_TYPE(uint) state)
 {
   uint prev = state * 747796405u + 2891336453u;
   uint word = ((prev >> ((prev >> 28u) + 4u)) ^ prev) * 277803737u;
@@ -87,11 +90,12 @@ for(int bounce = 0; bounce < 50; bounce++)
 }
 ```
 -------------------------------------------------------------------------------------------------*/
-float rand(inout uint seed)
+float rand(NVSHADERS_INOUT_TYPE(uint) seed)
 {
   uint r = pcg(seed);
   return float(r) * (1.F / float(0xffffffffu));
 }
 
+NAMESPACE_SHADERIO_END()
 
 #endif  // RANDOM_GLSL

@@ -45,6 +45,13 @@
 #include "nvutils/parallel_work.hpp"
 #include "nvvk/helpers.hpp"
 
+// GPU memory category names for scene resources
+namespace {
+constexpr std::string_view kMemCategoryGeometry  = "Geometry";
+constexpr std::string_view kMemCategorySceneData = "SceneData";
+constexpr std::string_view kMemCategoryImages    = "Images";
+}  // namespace
+
 //--------------------------------------------------------------------------------------------------
 // Forward declaration
 std::vector<shaderio::GltfLight> getShaderLights(const std::vector<nvvkgltf::RenderLight>& rlights,
@@ -62,6 +69,7 @@ void nvvkgltf::SceneVk::init(nvvk::ResourceAllocator* alloc, nvvk::SamplerPool* 
   m_physicalDevice = alloc->getPhysicalDevice();
   m_alloc          = alloc;
   m_samplerPool    = samplerPool;
+  m_memoryTracker.init(alloc);
 }
 
 void nvvkgltf::SceneVk::deinit()
@@ -112,12 +120,13 @@ void nvvkgltf::SceneVk::create(VkCommandBuffer        cmd,
   scene_desc.renderPrimitives = (shaderio::GltfRenderPrimitive*)m_bRenderPrim.address;
   scene_desc.renderNodes      = (shaderio::GltfRenderNode*)m_bRenderNode.address;
   scene_desc.lights           = (shaderio::GltfLight*)m_bLights.address;
-  scene_desc.numLights        = static_cast<uint32_t>(scn.getRenderLights().size());
+  scene_desc.numLights        = static_cast<int>(scn.getRenderLights().size());
 
   NVVK_CHECK(m_alloc->createBuffer(m_bSceneDesc, std::span(&scene_desc, 1).size_bytes(),
                                    VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
   NVVK_CHECK(staging.appendBuffer(m_bSceneDesc, 0, std::span(&scene_desc, 1)));
   NVVK_DBG_NAME(m_bSceneDesc.buffer);
+  m_memoryTracker.track(kMemCategorySceneData, m_bSceneDesc.allocation);
 }
 
 void nvvkgltf::SceneVk::update(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn)
@@ -284,11 +293,13 @@ void nvvkgltf::SceneVk::updateMaterialBuffer(VkCommandBuffer cmd, nvvk::StagingU
                                      VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
     NVVK_CHECK(staging.appendBuffer(m_bMaterial, 0, std::span(shadeMaterials)));
     NVVK_DBG_NAME(m_bMaterial.buffer);
+    m_memoryTracker.track(kMemCategorySceneData, m_bMaterial.allocation);
 
     NVVK_CHECK(m_alloc->createBuffer(m_bTextureInfos, std::span(textureInfos).size_bytes(),
                                      VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
     NVVK_CHECK(staging.appendBuffer(m_bTextureInfos, 0, std::span(textureInfos)));
     NVVK_DBG_NAME(m_bTextureInfos.buffer);
+    m_memoryTracker.track(kMemCategorySceneData, m_bTextureInfos.allocation);
   }
   else
   {
@@ -388,6 +399,7 @@ void nvvkgltf::SceneVk::updateRenderNodesBuffer(VkCommandBuffer cmd, nvvk::Stagi
                                      VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
     NVVK_CHECK(staging.appendBuffer(m_bRenderNode, 0, std::span(instanceInfo)));
     NVVK_DBG_NAME(m_bRenderNode.buffer);
+    m_memoryTracker.track(kMemCategorySceneData, m_bRenderNode.allocation);
   }
   else
   {
@@ -413,6 +425,7 @@ void nvvkgltf::SceneVk::updateRenderLightsBuffer(VkCommandBuffer cmd, nvvk::Stag
                                      VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
     NVVK_CHECK(staging.appendBuffer(m_bLights, 0, std::span(shaderLights)));
     NVVK_DBG_NAME(m_bLights.buffer);
+    m_memoryTracker.track(kMemCategorySceneData, m_bLights.allocation);
   }
   else
   {
@@ -428,7 +441,7 @@ void nvvkgltf::SceneVk::updateRenderPrimitivesBuffer(VkCommandBuffer cmd, nvvk::
   const tinygltf::Model& model = scn.getModel();
 
   // ** Morph **
-  for(int renderPrimID : scn.getMorphPrimitives())
+  for(uint32_t renderPrimID : scn.getMorphPrimitives())
   {
     const nvvkgltf::RenderPrimitive& renderPrimitive  = scn.getRenderPrimitive(renderPrimID);
     const tinygltf::Primitive&       primitive        = *renderPrimitive.pPrimitive;
@@ -452,7 +465,7 @@ void nvvkgltf::SceneVk::updateRenderPrimitivesBuffer(VkCommandBuffer cmd, nvvk::
 
   // ** Skin **
   const std::vector<nvvkgltf::RenderNode>& renderNodes = scn.getRenderNodes();
-  for(int skinNodeID : scn.getSkinNodes())
+  for(uint32_t skinNodeID : scn.getSkinNodes())
   {
     const nvvkgltf::RenderNode& skinNode  = renderNodes[skinNodeID];
     const tinygltf::Skin&       skin      = model.skins[skinNode.skinID];
@@ -537,6 +550,7 @@ bool nvvkgltf::SceneVk::updateAttributeBuffer(VkCommandBuffer cmd,              
       VkBufferUsageFlags2 bufferUsageFlag = getBufferUsageFlags() | VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT;
       NVVK_CHECK(alloc->createBuffer(attributeBuffer, std::span(data).size_bytes(), bufferUsageFlag));
       NVVK_CHECK(staging->appendBuffer(attributeBuffer, 0, std::span(data)));
+      m_memoryTracker.track(kMemCategoryGeometry, attributeBuffer.allocation);
       return true;
     }
     else
@@ -627,6 +641,7 @@ void nvvkgltf::SceneVk::createVertexBuffers(VkCommandBuffer cmd, nvvk::StagingUp
       NVVK_CHECK(m_alloc->createBuffer(vertexBuffers.color, std::span(tempIntData).size_bytes(),
                                        getBufferUsageFlags() | VK_BUFFER_USAGE_2_VERTEX_BUFFER_BIT));
       NVVK_CHECK(staging.appendBuffer(vertexBuffers.color, 0, std::span(tempIntData)));
+      m_memoryTracker.track(kMemCategoryGeometry, vertexBuffers.color.allocation);
     }
 
     // Debug name
@@ -667,6 +682,7 @@ void nvvkgltf::SceneVk::createVertexBuffers(VkCommandBuffer cmd, nvvk::StagingUp
                                      getBufferUsageFlags() | VK_BUFFER_USAGE_2_INDEX_BUFFER_BIT));
     NVVK_CHECK(staging.appendBuffer(i_buffer, 0, std::span(indexBuffer)));
     NVVK_DBG_NAME(i_buffer.buffer);
+    m_memoryTracker.track(kMemCategoryGeometry, i_buffer.allocation);
 
     // Filling the primitive information
     renderPrim[primID].indices = (glm::uvec3*)i_buffer.address;
@@ -686,6 +702,7 @@ void nvvkgltf::SceneVk::createVertexBuffers(VkCommandBuffer cmd, nvvk::StagingUp
   NVVK_CHECK(m_alloc->createBuffer(m_bRenderPrim, std::span(renderPrim).size_bytes(), getBufferUsageFlags()));
   NVVK_CHECK(staging.appendBuffer(m_bRenderPrim, 0, std::span(renderPrim)));
   NVVK_DBG_NAME(m_bRenderPrim.buffer);
+  m_memoryTracker.track(kMemCategorySceneData, m_bRenderPrim.allocation);
 
   // Barrier to make sure the data is in the GPU
   VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
@@ -695,7 +712,8 @@ void nvvkgltf::SceneVk::createVertexBuffers(VkCommandBuffer cmd, nvvk::StagingUp
   {
     barrier.dstAccessMask |= VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
   }
-  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &barrier, 0,
+                       nullptr, 0, nullptr);
 }
 
 // This version updates all the vertex buffers
@@ -1052,7 +1070,7 @@ void nvvkgltf::SceneVk::loadImage(const std::filesystem::path& basedir, const ti
       LOGW("File was empty or could not be opened: %s\n", nvutils::utf8FromPath(uri).c_str());
       return;
     }
-    const stbi_uc* imageFileData = reinterpret_cast<const stbi_uc*>(imageFileContents.data());
+    const stbi_uc* imageFileData = (const stbi_uc*)(imageFileContents.data());
     if(imageFileContents.size() > std::numeric_limits<int>::max())
     {
       LOGW("File too large for stb_image to read: %s\n", nvutils::utf8FromPath(uri).c_str());
@@ -1074,18 +1092,18 @@ void nvvkgltf::SceneVk::loadImage(const std::filesystem::path& basedir, const ti
 
     // Load the image
     stbi_uc* data = nullptr;
-    size_t   bytes_per_pixel;
+    size_t   bytesPerPixel{0};
     int      requiredComponents = comp == 1 ? 1 : 4;
     if(is16Bit)
     {
       stbi_us* data16 = stbi_load_16_from_memory(imageFileData, imageFileSize, &w, &h, &comp, requiredComponents);
-      bytes_per_pixel = sizeof(*data16) * requiredComponents;
-      data            = reinterpret_cast<stbi_uc*>(data16);
+      bytesPerPixel   = sizeof(*data16) * requiredComponents;
+      data            = (stbi_uc*)(data16);
     }
     else
     {
-      data            = stbi_load_from_memory(imageFileData, imageFileSize, &w, &h, &comp, requiredComponents);
-      bytes_per_pixel = sizeof(*data) * requiredComponents;
+      data          = stbi_load_from_memory(imageFileData, imageFileSize, &w, &h, &comp, requiredComponents);
+      bytesPerPixel = sizeof(*data) * requiredComponents;
     }
     switch(requiredComponents)
     {
@@ -1103,9 +1121,9 @@ void nvvkgltf::SceneVk::loadImage(const std::filesystem::path& basedir, const ti
     // Make a copy of the image data to be uploaded to vulkan later
     if(data && w > 0 && h > 0 && image.format != VK_FORMAT_UNDEFINED)
     {
-      VkDeviceSize buffer_size = static_cast<VkDeviceSize>(w) * h * bytes_per_pixel;
-      image.size               = VkExtent2D{(uint32_t)w, (uint32_t)h};
-      image.mipData            = {{data, data + buffer_size}};
+      VkDeviceSize bufferSize = static_cast<VkDeviceSize>(w) * h * bytesPerPixel;
+      image.size              = VkExtent2D{(uint32_t)w, (uint32_t)h};
+      image.mipData           = {{data, data + bufferSize}};
     }
 
     stbi_image_free(data);
@@ -1155,6 +1173,9 @@ bool nvvkgltf::SceneVk::createImage(const VkCommandBuffer& cmd, nvvk::StagingUpl
   NVVK_DBG_NAME(resultImage.image);
   NVVK_DBG_NAME(resultImage.descriptor.imageView);
 
+  // Track the image allocation
+  m_memoryTracker.track(kMemCategoryImages, resultImage.allocation);
+
   // Set the initial layout to TRANSFER_DST_OPTIMAL
   resultImage.descriptor.imageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;  // Setting this, tells the appendImage that the image is in this layout (no need to transfer)
   nvvk::cmdImageMemoryBarrier(cmd, {resultImage.image, VK_IMAGE_LAYOUT_UNDEFINED, resultImage.descriptor.imageLayout});
@@ -1201,7 +1222,9 @@ bool nvvkgltf::SceneVk::createImage(const VkCommandBuffer& cmd, nvvk::StagingUpl
   }
 
   // Clear image.mipData as it is no longer needed
-  image = {resultImage, image.srgb, image.imgName};
+  // image.srgb and image.imgName are preserved
+  image.imageTexture = resultImage;
+  image.mipData.clear();
 
   return true;
 }
@@ -1251,27 +1274,79 @@ void nvvkgltf::SceneVk::destroy()
 {
   for(auto& vertexBuffer : m_vertexBuffers)
   {
-    m_alloc->destroyBuffer(vertexBuffer.position);
-    m_alloc->destroyBuffer(vertexBuffer.normal);
-    m_alloc->destroyBuffer(vertexBuffer.tangent);
-    m_alloc->destroyBuffer(vertexBuffer.texCoord0);
-    m_alloc->destroyBuffer(vertexBuffer.texCoord1);
-    m_alloc->destroyBuffer(vertexBuffer.color);
+    if(vertexBuffer.position.buffer != VK_NULL_HANDLE)
+    {
+      m_memoryTracker.untrack(kMemCategoryGeometry, vertexBuffer.position.allocation);
+      m_alloc->destroyBuffer(vertexBuffer.position);
+    }
+    if(vertexBuffer.normal.buffer != VK_NULL_HANDLE)
+    {
+      m_memoryTracker.untrack(kMemCategoryGeometry, vertexBuffer.normal.allocation);
+      m_alloc->destroyBuffer(vertexBuffer.normal);
+    }
+    if(vertexBuffer.tangent.buffer != VK_NULL_HANDLE)
+    {
+      m_memoryTracker.untrack(kMemCategoryGeometry, vertexBuffer.tangent.allocation);
+      m_alloc->destroyBuffer(vertexBuffer.tangent);
+    }
+    if(vertexBuffer.texCoord0.buffer != VK_NULL_HANDLE)
+    {
+      m_memoryTracker.untrack(kMemCategoryGeometry, vertexBuffer.texCoord0.allocation);
+      m_alloc->destroyBuffer(vertexBuffer.texCoord0);
+    }
+    if(vertexBuffer.texCoord1.buffer != VK_NULL_HANDLE)
+    {
+      m_memoryTracker.untrack(kMemCategoryGeometry, vertexBuffer.texCoord1.allocation);
+      m_alloc->destroyBuffer(vertexBuffer.texCoord1);
+    }
+    if(vertexBuffer.color.buffer != VK_NULL_HANDLE)
+    {
+      m_memoryTracker.untrack(kMemCategoryGeometry, vertexBuffer.color.allocation);
+      m_alloc->destroyBuffer(vertexBuffer.color);
+    }
   }
   m_vertexBuffers.clear();
 
   for(auto& indicesBuffer : m_bIndices)
   {
-    m_alloc->destroyBuffer(indicesBuffer);
+    if(indicesBuffer.buffer != VK_NULL_HANDLE)
+    {
+      m_memoryTracker.untrack(kMemCategoryGeometry, indicesBuffer.allocation);
+      m_alloc->destroyBuffer(indicesBuffer);
+    }
   }
   m_bIndices.clear();
 
-  m_alloc->destroyBuffer(m_bMaterial);
-  m_alloc->destroyBuffer(m_bTextureInfos);
-  m_alloc->destroyBuffer(m_bLights);
-  m_alloc->destroyBuffer(m_bRenderPrim);
-  m_alloc->destroyBuffer(m_bRenderNode);
-  m_alloc->destroyBuffer(m_bSceneDesc);
+  if(m_bMaterial.buffer != VK_NULL_HANDLE)
+  {
+    m_memoryTracker.untrack(kMemCategorySceneData, m_bMaterial.allocation);
+    m_alloc->destroyBuffer(m_bMaterial);
+  }
+  if(m_bTextureInfos.buffer != VK_NULL_HANDLE)
+  {
+    m_memoryTracker.untrack(kMemCategorySceneData, m_bTextureInfos.allocation);
+    m_alloc->destroyBuffer(m_bTextureInfos);
+  }
+  if(m_bLights.buffer != VK_NULL_HANDLE)
+  {
+    m_memoryTracker.untrack(kMemCategorySceneData, m_bLights.allocation);
+    m_alloc->destroyBuffer(m_bLights);
+  }
+  if(m_bRenderPrim.buffer != VK_NULL_HANDLE)
+  {
+    m_memoryTracker.untrack(kMemCategorySceneData, m_bRenderPrim.allocation);
+    m_alloc->destroyBuffer(m_bRenderPrim);
+  }
+  if(m_bRenderNode.buffer != VK_NULL_HANDLE)
+  {
+    m_memoryTracker.untrack(kMemCategorySceneData, m_bRenderNode.allocation);
+    m_alloc->destroyBuffer(m_bRenderNode);
+  }
+  if(m_bSceneDesc.buffer != VK_NULL_HANDLE)
+  {
+    m_memoryTracker.untrack(kMemCategorySceneData, m_bSceneDesc.allocation);
+    m_alloc->destroyBuffer(m_bSceneDesc);
+  }
 
   for(auto& texture : m_textures)
   {
@@ -1279,7 +1354,11 @@ void nvvkgltf::SceneVk::destroy()
   }
   for(auto& image : m_images)
   {
-    m_alloc->destroyImage(image.imageTexture);
+    if(image.imageTexture.image != VK_NULL_HANDLE)
+    {
+      m_memoryTracker.untrack(kMemCategoryImages, image.imageTexture.allocation);
+      m_alloc->destroyImage(image.imageTexture);
+    }
   }
   m_images.clear();
   m_textures.clear();

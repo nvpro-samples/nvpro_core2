@@ -92,6 +92,13 @@ glm::mat<N, N, ScalarType, Precision> mul(glm::mat<N, N, ScalarType, Precision> 
 
 #define SLANG_DEFAULT(x) = (x)
 
+#ifndef NVSHADERS_OUT_TYPE
+#define NVSHADERS_OUT_TYPE(T) T&
+#endif
+#ifndef NVSHADERS_INOUT_TYPE
+#define NVSHADERS_INOUT_TYPE(T) T&
+#endif
+
 NAMESPACE_SHADERIO_END()
 
 #elif defined(GL_core_profile)  // GLSL
@@ -135,6 +142,13 @@ NAMESPACE_SHADERIO_END()
 
 #define SLANG_DEFAULT(x)
 
+#ifndef NVSHADERS_OUT_TYPE
+#define NVSHADERS_OUT_TYPE(T) out T
+#endif
+
+#ifndef NVSHADERS_INOUT_TYPE
+#define NVSHADERS_INOUT_TYPE(T) inout T
+#endif
 
 vec3 mul(vec3 a, mat3 b)
 {
@@ -154,7 +168,16 @@ mat3 mul(mat3 a, mat3 b)
 #define SLANG_DEFAULT(x) = (x)
 __intrinsic_op(cmpGT) public vector<bool, N> greaterThan<T, let N : int>(vector<T, N> x, vector<T, N> y);
 
-#else
+#ifndef NVSHADERS_OUT_TYPE
+#define NVSHADERS_OUT_TYPE(T) out T
+#endif
+
+#ifndef NVSHADERS_INOUT_TYPE
+#define NVSHADERS_INOUT_TYPE(T) inout T
+#endif
+
+
+#else  // No language specified
 
 #error "Unknown language environment"
 

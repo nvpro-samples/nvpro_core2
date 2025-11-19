@@ -562,6 +562,14 @@ bool nvvkgltf::Scene::handleCameraTraversal(int nodeID, const glm::mat4& worldMa
   }
 
   nvutils::Bbox bbox = getSceneBounds();
+
+  // Validate zFar 
+  if(camera.zfar <= camera.znear)
+  {
+    camera.zfar = std::max(camera.znear * 2.0, 4.0 * bbox.radius());
+    LOGW("glTF: Camera zFar is less than zNear, max(zNear * 2, 4 * bbos.radius()\n");
+  }
+
   // From the view matrix, we extract the eye, center, and up vectors
   extractCameraVectors(worldMatrix, bbox.center(), camera.eye, camera.center, camera.up);
 

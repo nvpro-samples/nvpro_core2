@@ -23,6 +23,7 @@
 #include <nvvk/acceleration_structures.hpp>
 
 #include "scene_vk.hpp"
+#include "gpu_memory_tracker.hpp"
 /*-------------------------------------------------------------------------------------------------
 # class nvvkgltf::SceneRtx
 
@@ -68,6 +69,11 @@ public:
   void destroy();
   void destroyScratchBuffers();
 
+  // Memory tracking
+  const GpuMemoryTracker& getMemoryTracker() const { return m_memoryTracker; }
+  GpuMemoryTracker&       getMemoryTracker() { return m_memoryTracker; }
+  void                    trackBlasMemory();  // Track all BLAS allocations (call after all BLAS are built)
+
 protected:
   VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_rtProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR};
   VkPhysicalDeviceAccelerationStructurePropertiesKHR m_rtASProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR};
@@ -94,6 +100,8 @@ protected:
   nvvk::Buffer m_instancesBuffer;
 
   uint32_t m_numVisibleElement = 0;
+
+  GpuMemoryTracker m_memoryTracker;  // GPU memory tracking
 };
 
 }  // namespace nvvkgltf
