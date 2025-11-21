@@ -257,7 +257,10 @@ void nvapp::Application::deinit()
   }
 
   // This avoids ImGui to access destroyed elements (Handler for example)
-  ImGui::SaveIniSettingsToDisk(m_iniFilename.c_str());
+  if(!m_headless)
+  {
+    ImGui::SaveIniSettingsToDisk(m_iniFilename.c_str());
+  }
   ImGui::GetIO().IniFilename = nullptr;  // Don't save the ini file again
 
   // Destroy the elements
