@@ -74,7 +74,7 @@ public:
   // If no entry exists for the given `binding`, returns a `VkWriteDescriptorSet`
   // with .descriptorType set to `VK_DESCRIPTOR_TYPE_MAX_ENUM`.
   VkWriteDescriptorSet getWriteSet(uint32_t        binding,
-                                   VkDescriptorSet dstSet          = nullptr,
+                                   VkDescriptorSet dstSet          = VK_NULL_HANDLE,
                                    uint32_t        dstArrayElement = ~0,
                                    uint32_t        descriptorCount = 1) const;
 
@@ -158,7 +158,7 @@ public:
   // see `DescriptorBindings::getWriteSet` for more details
   VkWriteDescriptorSet makeWrite(uint32_t binding, uint32_t setIndex = 0, uint32_t dstArrayElement = ~0, uint32_t descriptorCount = 1) const
   {
-    return m_bindings.getWriteSet(binding, m_sets.empty() ? nullptr : m_sets[setIndex], dstArrayElement, descriptorCount);
+    return m_bindings.getWriteSet(binding, m_sets.empty() ? VK_NULL_HANDLE : m_sets[setIndex], dstArrayElement, descriptorCount);
   }
 
 private:
@@ -215,7 +215,7 @@ public:
   void append(const VkWriteDescriptorSet& writeSet, VkBuffer buffer, VkDeviceSize offset = 0, VkDeviceSize range = VK_WHOLE_SIZE);
   void append(const VkWriteDescriptorSet& writeSet, VkBufferView bufferView);
   void append(const VkWriteDescriptorSet& writeSet, const VkDescriptorBufferInfo& bufferInfo);
-  void append(const VkWriteDescriptorSet& writeSet, VkImageView imageView, VkImageLayout imageLayout, VkSampler sampler = nullptr);
+  void append(const VkWriteDescriptorSet& writeSet, VkImageView imageView, VkImageLayout imageLayout, VkSampler sampler = VK_NULL_HANDLE);
   void append(const VkWriteDescriptorSet& writeSet, const VkDescriptorImageInfo& imageInfo);
   void append(const VkWriteDescriptorSet& writeSet, VkAccelerationStructureKHR accel);
 

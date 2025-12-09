@@ -95,6 +95,21 @@ set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 find_package(VulkanExtra REQUIRED)
 
+# We might compile with Clang on Windows, but while '_WIN32' is defined by the compiler,
+# we mostly use 'WIN32', which apparently will not be defined by default under Clang
+if(WIN32 AND NOT MSVC)
+  add_compile_definitions(WIN32)
+endif()
+
+if(WIN32)
+  add_compile_definitions(_CRT_SECURE_NO_WARNINGS=1)
+endif()
+
+if((CMAKE_CXX_COMPILER_ID MATCHES "Clang") AND MSVC)
+  # VMA throws tons of warnings in the vk_mem_alloc.h header
+  add_compile_options(-Wno-nullability-completeness)
+endif()
+
 # Set up targets for all filtered packages first:
 add_subdirectory(third_party)
 

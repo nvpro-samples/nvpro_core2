@@ -260,7 +260,7 @@ size_t FileMapping::g_pageSize = 0;
 //--------------------------------------------------------------------------------------------------
 // Usage example
 //--------------------------------------------------------------------------------------------------
-static void usage_FileMapping()
+[[maybe_unused]] static void usage_FileMapping()
 {
   // use the class to memory map some input file
   nvutils::FileReadMapping readOnlyMapping;

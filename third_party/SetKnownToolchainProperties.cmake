@@ -46,10 +46,19 @@ If you want to force feature autodetection, set NVPRO2_SKIP_COMPILER_FEATURE_DET
   set(HAVE_ATTRIBUTE_VISIBILITY_INTERNAL "${UNIX}")
   set(HAVE_ATTRIBUTE_ALIGNED "${UNIX}")
   set(HAVE_BUILTIN_ASSUME_ALIGNED ON)
-  set(HAVE_BUILTIN_CTZ "${UNIX}")
-  set(HAVE_BUILTIN_CTZLL "${UNIX}")
   set(HAVE_PTRDIFF_T ON)
   set(HAVE_XSAVE_INTRIN ON)
+  if ((CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang") AND (CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64"))
+    set(HAVE_BUILTIN_CTZ ON)
+    set(HAVE_BUILTIN_CTZLL ON)
+  elseif (CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+    #zLib comes with a fallback for MSVC but that requires us to provide OFF here
+    set(HAVE_BUILTIN_CTZ OFF)
+    set(HAVE_BUILTIN_CTZLL OFF)
+  else()
+     # on other toolchains, just run the test
+  endif()
+
   # Note that these are just whether the compiler has the header files for the
   # intrinsics -- most x86_64 machines don't support AVX512. This simply allows
   # zlib-ng to compile in code paths that are taken if the runtime system

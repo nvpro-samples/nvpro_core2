@@ -123,7 +123,7 @@ void AftermathCrashTracker::initAftermath()
 // Usage example
 //--------------------------------------------------------------------------------------------------
 #ifdef AFTERMATH_DEMO_ONLY
-static void usage_AftermathCrashTracker()
+[[maybe_unused]] static void usage_AftermathCrashTracker()
 {
 
   // Initialize the AftermathCrashTracker

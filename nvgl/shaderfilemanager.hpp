@@ -108,8 +108,8 @@ public:
     Definition() {}
     Definition(uint32_t type, std::string const& prepend, std::string const& filename)
         : type(type)
-        , prepend(prepend)
         , filename(filename)
+        , prepend(prepend)
     {
     }
     Definition(uint32_t type, std::string const& filename)

@@ -109,7 +109,7 @@ void nvvk::Context::deinit()
     if(m_dbgMessenger && vkDestroyDebugUtilsMessengerEXT)
     {
       vkDestroyDebugUtilsMessengerEXT(m_instance, m_dbgMessenger, contextInfo.alloc);
-      m_dbgMessenger = nullptr;
+      m_dbgMessenger = VK_NULL_HANDLE;
     }
     vkDestroyInstance(m_instance, contextInfo.alloc);
   }
@@ -728,7 +728,7 @@ void nvvk::addSurfaceExtensions(std::vector<const char*>& instanceExtensions, st
 //--------------------------------------------------------------------------------------------------
 // Usage example
 //--------------------------------------------------------------------------------------------------
-static void usage_Context()
+[[maybe_unused]] static void usage_Context()
 {
   // Enable required features for ray tracing
   VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};

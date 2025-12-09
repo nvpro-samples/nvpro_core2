@@ -382,6 +382,7 @@ CREDITS
     Macoy Madson
     Andreas Vennstrom
     Tobias Mansfield-Williams
+    Guilherme Espirito Santo
 */
 
 #ifdef STBDS_UNIT_TESTS
@@ -548,7 +549,7 @@ extern void * stbds_shmode_func(size_t elemsize, int mode);
 #define stbds_arraddnindex(a,n)(stbds_arrmaybegrow(a,n), (n) ? (stbds_header(a)->length += (n), stbds_header(a)->length-(n)) : stbds_arrlen(a))
 #define stbds_arraddnoff       stbds_arraddnindex
 #define stbds_arrlast(a)       ((a)[stbds_header(a)->length-1])
-#define stbds_arrfree(a)       ((void) ((a) ? STBDS_FREE(NULL,stbds_header(a)) : (void)0), (a)=NULL)
+#define stbds_arrfree(a)       ((void) ((a) ? stbds_arrfreef(a) : (void)0), (a)=NULL)
 #define stbds_arrdel(a,i)      stbds_arrdeln(a,i,1)
 #define stbds_arrdeln(a,i,n)   (memmove(&(a)[i], &(a)[(i)+(n)], sizeof *(a) * (stbds_header(a)->length-(n)-(i))), stbds_header(a)->length -= (n))
 #define stbds_arrdelswap(a,i)  ((a)[i] = stbds_arrlast(a), stbds_header(a)->length -= 1)
@@ -1022,11 +1023,11 @@ size_t stbds_hash_string(char *str, size_t seed)
   // Thomas Wang 64-to-32 bit mix function, hopefully also works in 32 bits
   hash ^= seed;
   hash = (~hash) + (hash << 18);
-  hash ^= hash ^ STBDS_ROTATE_RIGHT(hash,31);
+  hash = hash ^ STBDS_ROTATE_RIGHT(hash,31);
   hash = hash * 21;
-  hash ^= hash ^ STBDS_ROTATE_RIGHT(hash,11);
-  hash += (hash << 6);
-  hash ^= STBDS_ROTATE_RIGHT(hash,22);
+  hash = hash ^ STBDS_ROTATE_RIGHT(hash,11);
+  hash = hash + (hash << 6);
+  hash = hash ^ STBDS_ROTATE_RIGHT(hash,22);
   return hash+seed;
 }
 

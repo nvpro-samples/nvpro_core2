@@ -317,13 +317,13 @@ void nvvk::GBuffer::deinitResources()
 //--------------------------------------------------------------------------------------------------
 // Usage example
 //--------------------------------------------------------------------------------------------------
-static void usage_GBuffer()
+[[maybe_unused]] static void usage_GBuffer()
 {
   nvvk::GBuffer gbuffer;
 
   nvvk::ResourceAllocator allocator;
-  VkSampler               linearSampler = nullptr;  // EX: create a linear sampler
-  VkDescriptorPool descriptorPool = nullptr;  // EX: create a descriptor pool or use the one from the app (m_app->getTextureDescriptorPool())
+  VkSampler               linearSampler = VK_NULL_HANDLE;  // EX: create a linear sampler
+  VkDescriptorPool descriptorPool = VK_NULL_HANDLE;  // EX: create a descriptor pool or use the one from the app (m_app->getTextureDescriptorPool())
 
   // Create a G-buffer with two color images and one depth image.
   gbuffer.init({.allocator      = &allocator,
@@ -333,7 +333,7 @@ static void usage_GBuffer()
                 .descriptorPool = descriptorPool});
 
   // Setting the size
-  VkCommandBuffer cmd = nullptr;  // EX: create a command buffer
+  VkCommandBuffer cmd = VK_NULL_HANDLE;  // EX: create a command buffer
   gbuffer.update(cmd, VkExtent2D{600, 480});
 
   // Get the image views

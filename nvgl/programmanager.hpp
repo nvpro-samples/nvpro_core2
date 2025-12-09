@@ -138,8 +138,8 @@ public:
   ProgramManager& operator=(ProgramManager const&) = delete;
 
   ProgramManager()
-      : m_preprocessOnly(false)
-      , m_preferCache(false)
+      : m_preferCache(false)
+      , m_preprocessOnly(false)
       , m_rawOnly(false)
   {
     m_filetype = FILETYPE_GLSL;
