@@ -142,7 +142,7 @@ void nvvk::SamplerPool::releaseSampler(VkSampler sampler)
 //--------------------------------------------------------------------------------------------------
 // Usage example
 //--------------------------------------------------------------------------------------------------
-static void usage_SamplerPool()
+[[maybe_unused]] static void usage_SamplerPool()
 {
   VkDevice          device = nullptr;  // EX: get the device from the app (m_app->getDevice())
   nvvk::SamplerPool samplerPool;

@@ -430,6 +430,69 @@ void tinygltf::utils::setDiffuseTransmission(tinygltf::Material& tmat, const KHR
   tinygltf::utils::setValue(ext, "diffuseTransmissionColorTexture", diffuseTransmission.diffuseTransmissionColorTexture);
 }
 
+//-------------------------------------------------------------------------------------------------
+//
+//
+
+bool tinygltf::utils::getMeshoptCompression(const tinygltf::BufferView& bview, EXT_meshopt_compression& mcomp)
+{
+  mcomp = {};
+  if(tinygltf::utils::hasElementName(bview.extensions, EXT_MESHOPT_COMPRESSION_EXTENSION_NAME))
+  {
+    const tinygltf::Value& ext = tinygltf::utils::getElementValue(bview.extensions, EXT_MESHOPT_COMPRESSION_EXTENSION_NAME);
+    tinygltf::utils::getValue(ext, "buffer", mcomp.buffer);
+    int64_t byteOffset{0};
+    int64_t byteLength{0};
+    int64_t byteStride{0};
+    int64_t count{0};
+    tinygltf::utils::getValue(ext, "byteOffset", byteOffset);
+    tinygltf::utils::getValue(ext, "byteLength", byteLength);
+    tinygltf::utils::getValue(ext, "byteStride", byteStride);
+    tinygltf::utils::getValue(ext, "count", count);
+    mcomp.byteOffset = size_t(byteOffset);
+    mcomp.byteLength = size_t(byteLength);
+    mcomp.byteStride = size_t(byteStride);
+    mcomp.count      = size_t(count);
+
+    std::string filter;
+    tinygltf::utils::getValue(ext, "filter", filter);
+    if(filter == "NONE")
+    {
+      mcomp.compressionFilter = EXT_meshopt_compression::MESHOPT_COMPRESSION_FILTER_NONE;
+    }
+    else if(filter == "OCTAHEDRAL")
+    {
+      mcomp.compressionFilter = EXT_meshopt_compression::MESHOPT_COMPRESSION_FILTER_OCTAHEDRAL;
+    }
+    else if(filter == "QUATERNION")
+    {
+      mcomp.compressionFilter = EXT_meshopt_compression::MESHOPT_COMPRESSION_FILTER_QUATERNION;
+    }
+    else if(filter == "EXPONENTIAL")
+    {
+      mcomp.compressionFilter = EXT_meshopt_compression::MESHOPT_COMPRESSION_FILTER_EXPONENTIAL;
+    }
+
+
+    std::string mode;
+    tinygltf::utils::getValue(ext, "mode", mode);
+    if(mode == "ATTRIBUTES")
+    {
+      mcomp.compressionMode = EXT_meshopt_compression::MESHOPT_COMPRESSION_MODE_ATTRIBUTES;
+    }
+    else if(mode == "TRIANGLES")
+    {
+      mcomp.compressionMode = EXT_meshopt_compression::MESHOPT_COMPRESSION_MODE_TRIANGLES;
+    }
+    else if(mode == "INDICES")
+    {
+      mcomp.compressionMode = EXT_meshopt_compression::MESHOPT_COMPRESSION_MODE_INDICES;
+    }
+    return true;
+  }
+  return false;
+}
+
 tinygltf::Value tinygltf::utils::convertToTinygltfValue(int numElements, const float* elements)
 {
   tinygltf::Value::Array result;

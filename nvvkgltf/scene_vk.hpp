@@ -94,11 +94,11 @@ protected:
     nvvk::Image imageTexture{};
 
     // Loading information
-    bool                              srgb{false};
-    std::string                       imgName{};
-    VkExtent2D                        size{0, 0};
-    VkFormat                          format{VK_FORMAT_UNDEFINED};
-    std::vector<std::vector<uint8_t>> mipData{};
+    bool                           srgb{false};
+    std::string                    imgName{};
+    VkExtent2D                     size{0, 0};
+    VkFormat                       format{VK_FORMAT_UNDEFINED};
+    std::vector<std::vector<char>> mipData{};
   };
 
   VkBufferUsageFlags2 getBufferUsageFlags() const;

@@ -1939,13 +1939,20 @@ ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettin
       }
 
       // Write into each subresource, possibly transcoding from the source
-      // format to this->format (for UASTC and ETC1S)
+      // format to this->format (for UASTC and ETC1S).
       size_t inflatedDataPos = 0;  // Read position in inflatedData
       for(uint32_t layer = 0; layer < header.layerCount; layer++)
       {
         for(uint32_t face = 0; face < header.faceCount; face++)
         {
           std::vector<char>& subresource_data = subresource(mip, layer, face);
+          // As a fast-path, if we have only one layer and face and no transcoding, the output is the same as the input.
+          if(header.layerCount == 1 && header.faceCount == 1 && input_supercompression == InputSupercompression::eNone)
+          {
+            subresource_data = std::move(inflatedData);
+            break;  // since layerCount == 1 this breaks out of both loops.
+          }
+          // Otherwise, prepare the output buffer.
           UNWRAP_ERROR(ResizeVectorOrError(subresource_data, finalFaceSize));
 
           if(input_supercompression == InputSupercompression::eBasisUASTC)
@@ -3202,7 +3209,7 @@ ErrorWithText KTXImage::readFromFile(const char* filename, const ReadSettings& r
 // Sample code
 
 #include <stdio.h>
-static void usage_nv_ktx()
+[[maybe_unused]] static void usage_nv_ktx()
 {
   nv_ktx::KTXImage      image;
   nv_ktx::ErrorWithText maybeError = image.readFromFile("data/image.ktx2", {});

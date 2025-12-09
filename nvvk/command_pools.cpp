@@ -300,7 +300,7 @@ static void usage_ManagedCommandPools()
       submitInfo2.pSignalSemaphoreInfos    = &semSubmitInfo;
 
       // submit to queue
-      vkQueueSubmit2(queue, 1, &submitInfo2, nullptr);
+      vkQueueSubmit2(queue, 1, &submitInfo2, VK_NULL_HANDLE);
 
       // increment timeline value for next frame
       timelineValue++;
@@ -346,7 +346,7 @@ static void usage_ManagedCommandPools()
       submitInfo2.pCommandBufferInfos    = &cmdSubmitInfo;
 
       // submit to queue
-      vkQueueSubmit2(queue, 1, &submitInfo2, nullptr);
+      vkQueueSubmit2(queue, 1, &submitInfo2, VK_NULL_HANDLE);
 
       // increment ringIndex for next cycle
       ringIndex = (ringIndex + 1) % ringSize;

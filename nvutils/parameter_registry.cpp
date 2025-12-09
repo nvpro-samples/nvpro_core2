@@ -264,7 +264,7 @@ ParameterRegistry::~ParameterRegistry()
 //--------------------------------------------------------------------------------------------------
 // Usage example
 //--------------------------------------------------------------------------------------------------
-static void usage_ParameterRegistry()
+[[maybe_unused]] static void usage_ParameterRegistry()
 {
   nvutils::ParameterRegistry registry;
 

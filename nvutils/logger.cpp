@@ -386,7 +386,7 @@ void nvutils::Logger::outputToCallback(LogLevel level, const std::string& messag
 }
 
 
-static void usage_Logger()
+[[maybe_unused]] static void usage_Logger()
 {
   // Get the logger instance
   nvutils::Logger& logger = nvutils::Logger::getInstance();

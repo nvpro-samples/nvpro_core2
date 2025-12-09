@@ -598,7 +598,7 @@ const VkWriteDescriptorSet* WriteSetContainer::data()
 //--------------------------------------------------------------------------------------------------
 // Usage example
 //--------------------------------------------------------------------------------------------------
-static void usage_DescriptorBindings()
+[[maybe_unused]] static void usage_DescriptorBindings()
 {
   VkDevice     device = nullptr;
   nvvk::Buffer myBufferA;

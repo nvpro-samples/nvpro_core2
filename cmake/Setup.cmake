@@ -18,6 +18,17 @@ else()
   add_link_options(-Wl,--gc-sections)
 endif()
 
+# We might compile with Clang on Windows, but while '_WIN32' is defined by the compiler,
+# we mostly use 'WIN32', which apparently will not be defined by default under Clang
+if(WIN32 AND NOT MSVC)
+  add_compile_definitions(WIN32)
+endif()
+
+if((CMAKE_CXX_COMPILER_ID MATCHES "Clang") AND MSVC)
+  # VMA throws tons of warnings in the vk_mem_alloc.h header
+  add_compile_options(-Wno-nullability-completeness)
+endif()
+
 # This saves some time scanning source files for imported C++ modules.
 # If your sample uses modules, you must explicitly turn on this property on your
 # sample, or set this variable to ON before including Setup.cmake.

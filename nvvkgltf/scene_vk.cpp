@@ -1015,11 +1015,11 @@ void nvvkgltf::SceneVk::loadImage(const std::filesystem::path& basedir, const ti
       return;
     }
 
-    // Add all mip-levels
+    // Add all mip-levels. We don't need the ddsImage after this so we can move instead of copy.
     for(uint32_t i = 0; i < ddsImage.getNumMips(); i++)
     {
-      const std::vector<char>& mip = ddsImage.subresource(i, 0, 0).data;
-      image.mipData.emplace_back(mip.data(), mip.data() + mip.size());
+      std::vector<char>& mip = ddsImage.subresource(i, 0, 0).data;
+      image.mipData.push_back(std::move(mip));
     }
   }
   else if(nvutils::extensionMatches(uri, ".ktx") || nvutils::extensionMatches(uri, ".ktx2"))
@@ -1054,11 +1054,11 @@ void nvvkgltf::SceneVk::loadImage(const std::filesystem::path& basedir, const ti
     }
     image.format = texture_formats::tryForceVkFormatTransferFunction(ktxImage.format, image.srgb);
 
-    // Add all mip-levels
+    // Add all mip-levels. We don't need the ktxImage after this so we can move instead of copy.
     for(uint32_t i = 0; i < ktxImage.num_mips; i++)
     {
-      const std::vector<char>& mip = ktxImage.subresource(i, 0, 0);
-      image.mipData.emplace_back(mip.data(), mip.data() + mip.size());
+      std::vector<char>& mip = ktxImage.subresource(i, 0, 0);
+      image.mipData.push_back(std::move(mip));
     }
   }
   else if(uri.has_extension())
@@ -1132,7 +1132,7 @@ void nvvkgltf::SceneVk::loadImage(const std::filesystem::path& basedir, const ti
   {  // Loaded internally using GLB
     image.size   = VkExtent2D{(uint32_t)gltfImage.width, (uint32_t)gltfImage.height};
     image.format = isSrgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
-    image.mipData.emplace_back(gltfImage.image);
+    image.mipData.emplace_back(gltfImage.image.data(), gltfImage.image.data() + gltfImage.image.size());
   }
 }
 

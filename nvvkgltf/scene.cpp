@@ -23,6 +23,7 @@
 
 #include <glm/gtx/norm.hpp>
 #include <fmt/format.h>
+#include <meshoptimizer/src/meshoptimizer.h>
 
 #include <nvutils/file_operations.hpp>
 #include <nvutils/logger.hpp>
@@ -54,6 +55,7 @@ static const std::set<std::string> supportedExtensions = {
     "MSFT_texture_dds",
     "KHR_materials_pbrSpecularGlossiness",
     "KHR_materials_diffuse_transmission",
+    "EXT_meshopt_compression",
 #ifdef USE_DRACO
     "KHR_draco_mesh_compression",
 #endif
@@ -141,6 +143,144 @@ bool nvvkgltf::Scene::load(const std::filesystem::path& filename)
     {
       LOGW("%sUsed extension unsupported : %s\n", st.indent().c_str(), extension.c_str());
     }
+  }
+
+  // Handle EXT_meshopt_compression by decompressing all buffer data at once
+  if(std::find(m_model.extensionsUsed.begin(), m_model.extensionsUsed.end(), EXT_MESHOPT_COMPRESSION_EXTENSION_NAME)
+     != m_model.extensionsUsed.end())
+  {
+    for(tinygltf::Buffer& buffer : m_model.buffers)
+    {
+      if(buffer.data.empty())
+      {
+        buffer.data.resize(buffer.byteLength);
+        buffer.extensions.erase(EXT_MESHOPT_COMPRESSION_EXTENSION_NAME);
+      }
+    }
+
+    // first used to tag buffers that can be removed after decompression
+    std::vector<int> isFullyCompressedBuffer(m_model.buffers.size(), 1);
+
+    for(auto& bufferView : m_model.bufferViews)
+    {
+      if(bufferView.buffer < 0)
+        continue;
+
+      bool warned = false;
+
+      EXT_meshopt_compression mcomp;
+      if(tinygltf::utils::getMeshoptCompression(bufferView, mcomp))
+      {
+        // this decoding logic was derived from `decompressMeshopt`
+        // in https://github.com/zeux/meshoptimizer/blob/master/gltf/parsegltf.cpp
+
+
+        const tinygltf::Buffer& sourceBuffer = m_model.buffers[mcomp.buffer];
+        const unsigned char*    source       = &sourceBuffer.data[mcomp.byteOffset];
+        assert(mcomp.byteOffset + mcomp.byteLength <= sourceBuffer.data.size());
+
+        tinygltf::Buffer& resultBuffer = m_model.buffers[bufferView.buffer];
+        unsigned char*    result       = &resultBuffer.data[bufferView.byteOffset];
+        assert(bufferView.byteOffset + bufferView.byteLength <= resultBuffer.data.size());
+
+        int  rc   = -1;
+        bool warn = false;
+
+        switch(mcomp.compressionMode)
+        {
+          case EXT_meshopt_compression::MESHOPT_COMPRESSION_MODE_ATTRIBUTES:
+            warn = meshopt_decodeVertexVersion(source, mcomp.byteLength) != 0;
+            rc   = meshopt_decodeVertexBuffer(result, mcomp.count, mcomp.byteStride, source, mcomp.byteLength);
+            break;
+
+          case EXT_meshopt_compression::MESHOPT_COMPRESSION_MODE_TRIANGLES:
+            warn = meshopt_decodeIndexVersion(source, mcomp.byteLength) != 1;
+            rc   = meshopt_decodeIndexBuffer(result, mcomp.count, mcomp.byteStride, source, mcomp.byteLength);
+            break;
+
+          case EXT_meshopt_compression::MESHOPT_COMPRESSION_MODE_INDICES:
+            warn = meshopt_decodeIndexVersion(source, mcomp.byteLength) != 1;
+            rc   = meshopt_decodeIndexSequence(result, mcomp.count, mcomp.byteStride, source, mcomp.byteLength);
+            break;
+
+          default:
+            break;
+        }
+
+        if(rc != 0)
+        {
+          LOGW("EXT_meshopt_compression decompression failed\n");
+          clearParsedData();
+          return false;
+        }
+
+        if(warn && !warned)
+        {
+          LOGW("Warning: EXT_meshopt_compression data uses versions outside of the glTF specification (vertex 0 / index 1 expected)\n");
+          warned = true;
+        }
+
+        switch(mcomp.compressionFilter)
+        {
+          case EXT_meshopt_compression::MESHOPT_COMPRESSION_FILTER_OCTAHEDRAL:
+            meshopt_decodeFilterOct(result, mcomp.count, mcomp.byteStride);
+            break;
+
+          case EXT_meshopt_compression::MESHOPT_COMPRESSION_FILTER_QUATERNION:
+            meshopt_decodeFilterQuat(result, mcomp.count, mcomp.byteStride);
+            break;
+
+          case EXT_meshopt_compression::MESHOPT_COMPRESSION_FILTER_EXPONENTIAL:
+            meshopt_decodeFilterExp(result, mcomp.count, mcomp.byteStride);
+            break;
+
+          default:
+            break;
+        }
+
+        // remove extension for saving uncompressed
+        bufferView.extensions.erase(EXT_MESHOPT_COMPRESSION_EXTENSION_NAME);
+      }
+
+      isFullyCompressedBuffer[bufferView.buffer] = 0;
+    }
+
+    // remove fully compressed buffers
+    // isFullyCompressedBuffer is repurposed as buffer index remap table
+    size_t writeIndex = 0;
+    for(size_t readIndex = 0; readIndex < m_model.buffers.size(); readIndex++)
+    {
+      if(isFullyCompressedBuffer[readIndex])
+      {
+        // buffer is removed
+        isFullyCompressedBuffer[readIndex] = -1;
+      }
+      else
+      {
+        // compacted index of buffer
+        isFullyCompressedBuffer[readIndex] = int(writeIndex);
+
+        if(readIndex != writeIndex)
+        {
+          m_model.buffers[writeIndex] = std::move(m_model.buffers[readIndex]);
+        }
+        writeIndex++;
+      }
+    }
+    m_model.buffers.resize(writeIndex);
+
+    // remap existing buffer views
+    for(auto& bufferView : m_model.bufferViews)
+    {
+      if(bufferView.buffer < 0)
+        continue;
+
+      bufferView.buffer = isFullyCompressedBuffer[bufferView.buffer];
+    }
+
+    // remove extension
+    std::erase(m_model.extensionsRequired, EXT_MESHOPT_COMPRESSION_EXTENSION_NAME);
+    std::erase(m_model.extensionsUsed, EXT_MESHOPT_COMPRESSION_EXTENSION_NAME);
   }
 
   m_currentScene   = m_model.defaultScene > -1 ? m_model.defaultScene : 0;
@@ -563,7 +703,7 @@ bool nvvkgltf::Scene::handleCameraTraversal(int nodeID, const glm::mat4& worldMa
 
   nvutils::Bbox bbox = getSceneBounds();
 
-  // Validate zFar 
+  // Validate zFar
   if(camera.zfar <= camera.znear)
   {
     camera.zfar = std::max(camera.znear * 2.0, 4.0 * bbox.radius());

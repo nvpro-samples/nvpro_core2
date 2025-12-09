@@ -104,7 +104,7 @@ bool EnumRegistry::Combo(const char* label, size_t numEnums, const Enum* enums, 
 }
 }  // namespace nvgui
 
-static void usage_EnumRegistry()
+[[maybe_unused]] static void usage_EnumRegistry()
 {
   // A - Register the text item selectors, each list associated with an enum
   enum

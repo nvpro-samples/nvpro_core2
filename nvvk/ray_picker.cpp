@@ -327,7 +327,7 @@ std::string nvvk::RayPicker::getGlsl()
 }
 
 
-static void usage_RayPicker()
+[[maybe_unused]] static void usage_RayPicker()
 {
   nvvk::RayPicker rayPicker;
   rayPicker.init(nullptr);  // Pass a valid ResourceAllocator instance

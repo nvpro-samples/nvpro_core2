@@ -452,7 +452,7 @@ VkResult BufferSubAllocator::createNewBuffer(nvvk::Buffer& buffer, VkDeviceSize 
 //--------------------------------------------------------------------------------------------------
 // Usage example
 //--------------------------------------------------------------------------------------------------
-static void usage_BufferSubAllocator()
+[[maybe_unused]] static void usage_BufferSubAllocator()
 {
   // imagine we have a scene with lots of meshes that are typically not very big
   struct Mesh

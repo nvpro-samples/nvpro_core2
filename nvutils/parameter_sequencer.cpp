@@ -136,7 +136,7 @@ bool ParameterSequencer::prepareFrame()
 //--------------------------------------------------------------------------------------------------
 // Usage example
 //--------------------------------------------------------------------------------------------------
-static void usage_ParameterSequencer()
+[[maybe_unused]] static void usage_ParameterSequencer()
 {
   // create registry & parser
   nvutils::ParameterRegistry registry;
