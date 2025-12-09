@@ -100,8 +100,8 @@ RECENT REVISION HISTORY:
  Bug & warning fixes
     Marc LeBlanc            David Woo          Guillaume George     Martins Mozeiko
     Christpher Lloyd        Jerry Jansson      Joseph Thomson       Blazej Dariusz Roszkowski
-    Phil Jordan                                Dave Moore           Roy Eltham
-    Hayaki Saito            Nathan Reed        Won Chun
+    Phil Jordan             Henner Zeller      Dave Moore           Roy Eltham
+    Hayaki Saito            Nathan Reed        Won Chun             Thomas Bernard
     Luke Graham             Johan Duparc       Nick Verigakis       the Horde3D community
     Thomas Ruf              Ronny Chevalier                         github:rlyeh
     Janez Zemva             John Bartholomew   Michal Cichon        github:romigrou
@@ -1044,7 +1044,7 @@ static int stbi__mad3sizes_valid(int a, int b, int c, int add)
 }
 
 // returns 1 if "a*b*c*d + add" has no negative terms/factors and doesn't overflow
-#if !defined(STBI_NO_LINEAR) || !defined(STBI_NO_HDR) || !defined(STBI_NO_PNM)
+#if !defined(STBI_NO_LINEAR) || !defined(STBI_NO_HDR) || !defined(STBI_NO_PNM) || !defined(STBI_NO_PNG) || !defined(STBI_NO_PSD)
 static int stbi__mad4sizes_valid(int a, int b, int c, int d, int add)
 {
    return stbi__mul2sizes_valid(a, b) && stbi__mul2sizes_valid(a*b, c) &&
@@ -1067,7 +1067,7 @@ static void *stbi__malloc_mad3(int a, int b, int c, int add)
    return stbi__malloc(a*b*c + add);
 }
 
-#if !defined(STBI_NO_LINEAR) || !defined(STBI_NO_HDR) || !defined(STBI_NO_PNM)
+#if !defined(STBI_NO_LINEAR) || !defined(STBI_NO_HDR) || !defined(STBI_NO_PNM) || !defined(STBI_NO_PNG) || !defined(STBI_NO_PSD)
 static void *stbi__malloc_mad4(int a, int b, int c, int d, int add)
 {
    if (!stbi__mad4sizes_valid(a, b, c, d, add)) return NULL;
@@ -1788,6 +1788,7 @@ static unsigned char *stbi__convert_format(unsigned char *data, int img_n, int r
    int i,j;
    unsigned char *good;
 
+   if (data == NULL) return data;
    if (req_comp == img_n) return data;
    STBI_ASSERT(req_comp >= 1 && req_comp <= 4);
 
@@ -1848,7 +1849,7 @@ static stbi__uint16 *stbi__convert_format16(stbi__uint16 *data, int img_n, int r
    if (req_comp == img_n) return data;
    STBI_ASSERT(req_comp >= 1 && req_comp <= 4);
 
-   good = (stbi__uint16 *) stbi__malloc(req_comp * x * y * 2);
+   good = (stbi__uint16 *) stbi__malloc_mad4(req_comp, x, y, 2, 0);
    if (good == NULL) {
       STBI_FREE(data);
       return (stbi__uint16 *) stbi__errpuc("outofmem", "Out of memory");
@@ -5108,9 +5109,9 @@ static void stbi__de_iphone(stbi__png *z)
 
 static int stbi__parse_png_file(stbi__png *z, int scan, int req_comp)
 {
-   stbi_uc palette[1024], pal_img_n=0;
+   stbi_uc palette[1024]={0}, pal_img_n=0;
    stbi_uc has_trans=0, tc[3]={0};
-   stbi__uint16 tc16[3];
+   stbi__uint16 tc16[3]={0};
    stbi__uint32 ioff=0, idata_limit=0, i, pal_len=0;
    int first=1,k,interlace=0, color=0, is_iphone=0;
    stbi__context *s = z->s;
@@ -5266,6 +5267,10 @@ static int stbi__parse_png_file(stbi__png *z, int scan, int req_comp)
             STBI_FREE(z->expanded); z->expanded = NULL;
             // end of PNG chunk, read and skip CRC
             stbi__get32be(s);
+            if (s->io.skip && s->img_buffer_end > s->img_buffer) {
+               // rewind the additional bytes that have been read to the buffer
+               (s->io.skip)(s->io_user_data, (int)(s->img_buffer - s->img_buffer_end));
+            }
             return 1;
          }
 
@@ -6990,7 +6995,10 @@ static void *stbi__load_gif_main_outofmem(stbi__gif *g, stbi_uc *out, int **dela
    STBI_FREE(g->background);
 
    if (out) STBI_FREE(out);
-   if (delays && *delays) STBI_FREE(*delays);
+   if (delays && *delays) {
+      STBI_FREE(*delays);
+      *delays = NULL;
+   }
    return stbi__errpuc("outofmem", "Out of memory");
 }
 
@@ -7025,20 +7033,13 @@ static void *stbi__load_gif_main(stbi__context *s, int **delays, int *x, int *y,
             stride = g.w * g.h * 4;
 
             if (out) {
-               if (stride == 0) {
-                  void *ret = stbi__load_gif_main_outofmem(&g, out, delays);
-                  return ret;
-               }
-               if (!stbi__mul2sizes_valid(layers, stride)) {
-                  void *ret = stbi__load_gif_main_outofmem(&g, out, delays);
-                  return ret;
-               }
+               if (stride == 0)
+                  return stbi__load_gif_main_outofmem(&g, out, delays);
+               if (!stbi__mul2sizes_valid(layers, stride))
+                  return stbi__load_gif_main_outofmem(&g, out, delays);
                void *tmp = (stbi_uc*) STBI_REALLOC_SIZED( out, out_size, layers * stride );
-               if (!tmp) {
-                  void *ret = stbi__load_gif_main_outofmem(&g, out, delays);
-		  if (delays && *delays) *delays = 0;
-		  return ret;
-	       }
+               if (!tmp)
+                  return stbi__load_gif_main_outofmem(&g, out, delays);
                else {
                    out = (stbi_uc*) tmp;
                    out_size = layers * stride;
@@ -7052,16 +7053,11 @@ static void *stbi__load_gif_main(stbi__context *s, int **delays, int *x, int *y,
                   delays_size = layers * sizeof(int);
                }
             } else {
-               if (!stbi__mul2sizes_valid(layers, stride)) {
-                  void *ret = stbi__load_gif_main_outofmem(&g, out, delays);
-                  return ret;
-               }
+               if (!stbi__mul2sizes_valid(layers, stride))
+                  return stbi__load_gif_main_outofmem(&g, out, delays);
                out = (stbi_uc*)stbi__malloc( layers * stride );
-               if (!out) {
-                  void *ret = stbi__load_gif_main_outofmem(&g, out, delays);
-		  if (delays && *delays) *delays = 0;
-		  return ret;
-	       }
+               if (!out)
+                  return stbi__load_gif_main_outofmem(&g, out, delays);
                out_size = layers * stride;
                if (delays) {
                   *delays = (int*) stbi__malloc( layers * sizeof(int) );

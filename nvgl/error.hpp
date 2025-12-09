@@ -87,7 +87,6 @@ public:
     size_t elements = size / sizeof(T);
     content.resize(elements);
     glGetNamedBufferSubData(buffer, offset, elements * sizeof(T), content.data());
-    elements = elements;
   }
 };
 

@@ -241,7 +241,7 @@ void ProfilerGpuTimer::resizePool(PoolContainer& container, uint32_t requiredSiz
 //--------------------------------------------------------------------------------------------------
 // Usage example
 //--------------------------------------------------------------------------------------------------
-static void usage_ProfilerGpuTimer()
+[[maybe_unused]] static void usage_ProfilerGpuTimer()
 {
   VkDevice         device{};
   VkPhysicalDevice physicalDevice{};

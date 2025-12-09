@@ -256,11 +256,15 @@ if(NOT TARGET basisu)
     BASISD_SUPPORT_PVRTC1=0
     BASISD_SUPPORT_PVRTC2=0
   )
+  #basisu is using deprecated/unsecure POSIX functions.
+  if(WIN32 AND NOT MSVC)
+    add_compile_definitions(_CRT_NONSTDC_NO_DEPRECATE _CRT_INSECURE_NO_DEPRECATE)
+  endif()
   # On x86, our minimum compilers support SSE 4.2, so Basis Universal can
   # compile with SSE intrinsics.
   if("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "(x86_64|AMD64|i[3-6]86)")
     target_compile_definitions(basisu PRIVATE BASISU_SUPPORT_SSE=1)
-    if(UNIX)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU")
       # We need to add a flag to make GCC allow SSE 4.2:
       target_compile_options(basisu PRIVATE -msse4.2)
     endif()
@@ -288,4 +292,15 @@ if (NOT TARGET nvtx3-cpp AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/NVTX/c/CMakeList
   if(TARGET nvtx3-c)
     set_property(TARGET nvtx3-c PROPERTY FOLDER "ThirdParty")
   endif()
+endif()
+
+# meshoptimizer
+if (NOT TARGET meshoptimizer)
+  set(MESHOPT_INSTALL OFF)
+  set(MESHOPT_BUILD_DEMO OFF)
+  set(MESHOPT_BUILD_SHARED_LIBS OFF)
+  set(MESHOPT_STABLE_EXPORTS OFF)
+  set(MESHOPT_WERROR OFF)
+  add_subdirectory(meshoptimizer)
+  set_property(TARGET meshoptimizer PROPERTY FOLDER "ThirdParty")
 endif()

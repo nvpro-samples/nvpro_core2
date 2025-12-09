@@ -212,7 +212,7 @@ void nvslang::SlangCompiler::createSession()
 //--------------------------------------------------------------------------------------------------
 // Usage example
 //--------------------------------------------------------------------------------------------------
-static void usage_SlangCompiler()
+[[maybe_unused]] static void usage_SlangCompiler()
 {
   nvslang::SlangCompiler slangCompiler;
   slangCompiler.defaultTarget();

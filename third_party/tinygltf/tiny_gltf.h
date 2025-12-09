@@ -50,12 +50,6 @@
 #include <utility>
 #include <vector>
 
-// Auto-detect C++14 standard version
-#if !defined(TINYGLTF_USE_CPP14) && defined(__cplusplus) && \
-    (__cplusplus >= 201402L)
-#define TINYGLTF_USE_CPP14
-#endif
-
 #ifdef __ANDROID__
 #ifdef TINYGLTF_ANDROID_LOAD_FROM_ASSETS
 #include <android/asset_manager.h>
@@ -269,7 +263,13 @@ class Value {
   explicit Value(bool b) : type_(BOOL_TYPE) { boolean_value_ = b; }
   explicit Value(int i) : type_(INT_TYPE) {
     int_value_ = i;
+    int64_value_ = i;
     real_value_ = i;
+  }
+  explicit Value(int64_t i) : type_(INT_TYPE) {
+    int_value_ = static_cast<int>(i);
+    int64_value_ = i;
+    real_value_ = static_cast<double>(i);
   }
   explicit Value(double n) : type_(REAL_TYPE) { real_value_ = n; }
   explicit Value(const std::string &s) : type_(STRING_TYPE) {
@@ -388,6 +388,7 @@ class Value {
   int type_ = NULL_TYPE;
 
   int int_value_ = 0;
+  int64_t int64_value_ = 0;
   double real_value_ = 0.0;
   std::string string_value_;
   std::vector<unsigned char> binary_value_;
@@ -412,6 +413,7 @@ class Value {
 TINYGLTF_VALUE_GET(bool, boolean_value_)
 TINYGLTF_VALUE_GET(double, real_value_)
 TINYGLTF_VALUE_GET(int, int_value_)
+TINYGLTF_VALUE_GET(int64_t, int64_value_)
 TINYGLTF_VALUE_GET(std::string, string_value_)
 TINYGLTF_VALUE_GET(std::vector<unsigned char>, binary_value_)
 TINYGLTF_VALUE_GET(Value::Array, array_value_)
@@ -834,20 +836,20 @@ struct Accessor {
       maxValues;  // optional. integer value is promoted to double
 
   struct Sparse {
-    int count;
-    bool isSparse;
+    int count{0};
+    bool isSparse{false};
     struct {
-      size_t byteOffset;
-      int bufferView;
-      int componentType;  // a TINYGLTF_COMPONENT_TYPE_ value
+      size_t byteOffset{0};
+      int bufferView{-1};
+      int componentType{-1};  // a TINYGLTF_COMPONENT_TYPE_ value
       Value extras;
       ExtensionMap extensions;
       std::string extras_json_string;
       std::string extensions_json_string;
     } indices;
     struct {
-      int bufferView;
-      size_t byteOffset;
+      int bufferView{-1};
+      size_t byteOffset{0};
       Value extras;
       ExtensionMap extensions;
       std::string extras_json_string;
@@ -898,11 +900,7 @@ struct Accessor {
     // unreachable return 0;
   }
 
-  Accessor()
-
-  {
-    sparse.isSparse = false;
-  }
+  Accessor() = default;
   DEFAULT_METHODS(Accessor)
   bool operator==(const tinygltf::Accessor &) const;
 };
@@ -1036,6 +1034,7 @@ class Node {
 
 struct Buffer {
   std::string name;
+  size_t byteLength{0};
   std::vector<unsigned char> data;
   std::string
       uri;  // considered as required here but not in the spec (need to clarify)
@@ -3706,9 +3705,15 @@ static bool ParseJsonAsValue(Value *ret, const detail::json &o) {
       break;
     case Type::kNumberType:
       if (!o.IsDouble()) {
-        int i = 0;
-        detail::GetInt(o, i);
-        val = Value(i);
+        if(o.IsInt64())
+        {
+          int64_t i = o.GetInt64();
+          val = Value(i);
+        } else {
+          int i = 0;
+          detail::GetInt(o, i);
+          val = Value(i);
+        } 
       } else {
         double d = 0.0;
         detail::GetDouble(o, d);
@@ -3750,7 +3755,7 @@ static bool ParseJsonAsValue(Value *ret, const detail::json &o) {
       break;
     case detail::json::value_t::number_integer:
     case detail::json::value_t::number_unsigned:
-      val = Value(static_cast<int>(o.get<int64_t>()));
+      val = Value(o.get<int64_t>());
       break;
     case detail::json::value_t::number_float:
       val = Value(o.get<double>());
@@ -3890,11 +3895,11 @@ static bool ParseUnsignedProperty(size_t *ret, std::string *err,
   bool isUValue;
 #ifdef TINYGLTF_USE_RAPIDJSON
   isUValue = false;
-  if (value.IsUint()) {
-    uValue = value.GetUint();
+  if(value.IsUint64()) {
+    uValue   = value.GetUint64();
     isUValue = true;
-  } else if (value.IsUint64()) {
-    uValue = value.GetUint64();
+  } else if (value.IsUint()) {
+    uValue = value.GetUint();
     isUValue = true;
   }
 #else
@@ -4362,7 +4367,7 @@ static bool ParseImage(Image *image, const int image_idx, std::string *err,
     // Just only save some information here. Loading actual image data from
     // bufferView is done after this `ParseImage` function.
     image->bufferView = bufferView;
-    image->mimeType = mime_type;
+    image->mimeType = std::move( mime_type );
     image->width = width;
     image->height = height;
 
@@ -4543,6 +4548,26 @@ static bool ParseBuffer(Buffer *buffer, std::string *err, const detail::json &o,
     return false;
   }
 
+  buffer->byteLength = byteLength;
+
+  ParseStringProperty(&buffer->name, err, o, "name", false);
+
+  ParseExtrasAndExtensions(buffer, err, o, store_original_json_for_extras_and_extensions);
+
+  if(buffer->extensions.count("EXT_meshopt_compression") != 0) {
+    auto const& ext = buffer->extensions["EXT_meshopt_compression"];
+    if (ext.Has("fallback") && ext.Get("fallback").IsBool() && ext.Get("fallback").Get<bool>()) {
+      return true;
+    }
+  }
+
+  if(buffer->extensions.count("KHR_meshopt_compression") != 0) {
+    auto const& ext = buffer->extensions["KHR_meshopt_compression"];
+    if (ext.Has("fallback") && ext.Get("fallback").IsBool() && ext.Get("fallback").Get<bool>()) {
+      return true;
+    }
+  }
+
   // In glTF 2.0, uri is not mandatory anymore
   buffer->uri.clear();
   ParseStringProperty(&buffer->uri, err, o, "uri", false, "Buffer");
@@ -4551,16 +4576,6 @@ static bool ParseBuffer(Buffer *buffer, std::string *err, const detail::json &o,
   if (!is_binary && buffer->uri.empty()) {
     if (err) {
       (*err) += "'uri' is missing from non binary glTF file buffer.\n";
-    }
-  }
-
-  detail::json_const_iterator type;
-  if (detail::FindMember(o, "type", type)) {
-    std::string typeStr;
-    if (detail::GetString(detail::GetValue(type), typeStr)) {
-      if (typeStr.compare("arraybuffer") == 0) {
-        // buffer.type = "arraybuffer";
-      }
     }
   }
 
@@ -4643,10 +4658,7 @@ static bool ParseBuffer(Buffer *buffer, std::string *err, const detail::json &o,
     }
   }
 
-  ParseStringProperty(&buffer->name, err, o, "name", false);
 
-  ParseExtrasAndExtensions(buffer, err, o,
-                           store_original_json_for_extras_and_extensions);
 
   return true;
 }
@@ -5261,7 +5273,7 @@ static bool ParseNode(Node *node, std::string *err, const detail::json &o,
   if (node->extensions.count("MSFT_lod") != 0) {
     auto const &msft_lod_ext = node->extensions["MSFT_lod"];
     if (msft_lod_ext.Has("ids")) {
-      auto idsArr = msft_lod_ext.Get("ids");
+      const auto &idsArr = msft_lod_ext.Get("ids");
       for (size_t i = 0; i < idsArr.ArrayLen(); ++i) {
         node->lods.emplace_back(idsArr.Get(i).GetNumberAsInt());
       }
@@ -5290,7 +5302,7 @@ static bool ParseScene(Scene *scene, std::string *err, const detail::json &o,
   if (scene->extensions.count("KHR_audio") != 0) {
     auto const &audio_ext = scene->extensions["KHR_audio"];
     if (audio_ext.Has("emitters")) {
-      auto emittersArr = audio_ext.Get("emitters");
+      const auto &emittersArr = audio_ext.Get("emitters");
       for (size_t i = 0; i < emittersArr.ArrayLen(); ++i) {
         scene->audioEmitters.emplace_back(emittersArr.Get(i).GetNumberAsInt());
       }
@@ -5326,7 +5338,7 @@ static bool ParsePbrMetallicRoughness(
       }
       return false;
     }
-    pbr->baseColorFactor = baseColorFactor;
+    pbr->baseColorFactor = std::move( baseColorFactor );
   }
 
   {
@@ -5478,7 +5490,7 @@ static bool ParseMaterial(Material *material, std::string *err, std::string *war
   if (material->extensions.count("MSFT_lod") != 0) {
     auto const &msft_lod_ext = material->extensions["MSFT_lod"];
     if (msft_lod_ext.Has("ids")) {
-      auto idsArr = msft_lod_ext.Get("ids");
+      const auto &idsArr = msft_lod_ext.Get("ids");
       for (size_t i = 0; i < idsArr.ArrayLen(); ++i) {
         material->lods.emplace_back(idsArr.Get(i).GetNumberAsInt());
       }

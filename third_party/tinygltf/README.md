@@ -159,9 +159,10 @@ Model model;
 TinyGLTF loader;
 std::string err;
 std::string warn;
+std::string filename = "input.gltf";
 
-bool ret = loader.LoadASCIIFromFile(&model, &err, &warn, argv[1]);
-//bool ret = loader.LoadBinaryFromFile(&model, &err, &warn, argv[1]); // for binary glTF(.glb)
+bool ret = loader.LoadASCIIFromFile(&model, &err, &warn, filename);
+//bool ret = loader.LoadBinaryFromFile(&model, &err, &warn, filename); // for binary glTF(.glb)
 
 if (!warn.empty()) {
   printf("Warn: %s\n", warn.c_str());
@@ -172,8 +173,7 @@ if (!err.empty()) {
 }
 
 if (!ret) {
-  printf("Failed to parse glTF\n");
-  return -1;
+  printf("Failed to parse glTF: %s\n", filename.c_str());
 }
 ```
 
@@ -194,7 +194,6 @@ if (!ret) {
 * `TINYGLTF_NO_INCLUDE_STB_IMAGE `: Disable including `stb_image.h` from within `tiny_gltf.h` because it has been already included before or you want to include it using custom path before including `tiny_gltf.h`.
 * `TINYGLTF_NO_INCLUDE_STB_IMAGE_WRITE `: Disable including `stb_image_write.h` from within `tiny_gltf.h` because it has been already included before or you want to include it using custom path before including `tiny_gltf.h`.
 * `TINYGLTF_USE_RAPIDJSON` : Use RapidJSON as a JSON parser/serializer. RapidJSON files are not included in TinyGLTF repo. Please set an include path to RapidJSON if you enable this feature.
-* `TINYGLTF_USE_CPP14` : Use C++14 feature(requires C++14 compiler). This may give better performance than C++11.
 
 
 ## CMake options

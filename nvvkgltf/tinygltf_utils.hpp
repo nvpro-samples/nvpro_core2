@@ -209,6 +209,32 @@ struct KHR_materials_diffuse_transmission
   tinygltf::TextureInfo diffuseTransmissionColorTexture = {};
 };
 
+// https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Vendor/EXT_meshopt_compression
+#define EXT_MESHOPT_COMPRESSION_EXTENSION_NAME "EXT_meshopt_compression"
+struct EXT_meshopt_compression
+{
+  enum EXT_meshopt_compression_mode
+  {
+    MESHOPT_COMPRESSION_MODE_INVALID,
+    MESHOPT_COMPRESSION_MODE_ATTRIBUTES,
+    MESHOPT_COMPRESSION_MODE_TRIANGLES,
+    MESHOPT_COMPRESSION_MODE_INDICES,
+  };
+  enum EXT_meshopt_compression_filter
+  {
+    MESHOPT_COMPRESSION_FILTER_NONE,
+    MESHOPT_COMPRESSION_FILTER_OCTAHEDRAL,
+    MESHOPT_COMPRESSION_FILTER_QUATERNION,
+    MESHOPT_COMPRESSION_FILTER_EXPONENTIAL,
+  };
+  int                            buffer{-1};
+  size_t                         byteOffset{0};
+  size_t                         byteLength{0};
+  size_t                         byteStride{0};
+  size_t                         count{0};
+  EXT_meshopt_compression_mode   compressionMode   = MESHOPT_COMPRESSION_MODE_INVALID;
+  EXT_meshopt_compression_filter compressionFilter = MESHOPT_COMPRESSION_FILTER_NONE;
+};
 
 namespace tinygltf {
 
@@ -1009,6 +1035,7 @@ void setPbrSpecularGlossiness(tinygltf::Material& tmat, const KHR_materials_pbrS
 KHR_materials_diffuse_transmission getDiffuseTransmission(const tinygltf::Material& tmat);
 void setDiffuseTransmission(tinygltf::Material& tmat, const KHR_materials_diffuse_transmission& diffuseTransmission);
 
+
 template <typename T>
 inline KHR_texture_transform getTextureTransform(const T& tinfo)
 {
@@ -1056,6 +1083,8 @@ Compute tangents based on the texture coordinates, using also position and norma
 -------------------------------------------------------------------------------------------------*/
 void simpleCreateTangents(tinygltf::Model& model, tinygltf::Primitive& primitive);
 
+/*------------------------------------------------------------------------------------------------*/
+bool getMeshoptCompression(const tinygltf::BufferView& bview, EXT_meshopt_compression& mcomp);
 
 }  // namespace utils
 

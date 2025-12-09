@@ -22,6 +22,7 @@ target_link_libraries(
          stb # Image loader
          tinygltf # glTF loader
          tinyobjloader # OBJ loader
+         meshoptimizer
 )
 
 target_precompile_headers(${LIB_NAME} PRIVATE

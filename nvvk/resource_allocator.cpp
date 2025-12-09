@@ -785,7 +785,7 @@ VkResult nvvk::ResourceAllocatorExport::getPool(uint32_t memoryTypeIndex, VmaPoo
 //--------------------------------------------------------------------------------------------------
 // Usage example
 //--------------------------------------------------------------------------------------------------
-static void usage_ResourceAllocator()
+[[maybe_unused]] static void usage_ResourceAllocator()
 {
   VkResult         result{};
   VkDevice         device{};

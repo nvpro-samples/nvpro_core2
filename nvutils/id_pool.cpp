@@ -336,7 +336,7 @@ void IDPool::destroyRange(const uint32_t index)
 
 }  // namespace nvutils
 
-static void usage_IDPool()
+[[maybe_unused]] static void usage_IDPool()
 {
   // let's allow up to 16-bit worth of textures
   nvutils::IDPool idGen(1 << 16);

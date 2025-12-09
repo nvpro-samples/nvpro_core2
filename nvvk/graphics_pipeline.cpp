@@ -355,7 +355,7 @@ void GraphicsPipelineCreator::buildPipelineCreateInfo(VkGraphicsPipelineCreateIn
 //--------------------------------------------------------------------------------------------------
 // Usage example
 //--------------------------------------------------------------------------------------------------
-static void usage_GraphicsPipeline()
+[[maybe_unused]] static void usage_GraphicsPipeline()
 {
   VkDevice device{};
 

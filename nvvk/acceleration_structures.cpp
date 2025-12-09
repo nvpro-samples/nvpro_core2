@@ -559,7 +559,7 @@ void AccelerationStructureHelper::deinit(void)
 {
   if(m_transientPool)
     vkDestroyCommandPool(m_alloc->getDevice(), m_transientPool, nullptr);
-  m_transientPool    = nullptr;
+  m_transientPool    = VK_NULL_HANDLE;
   m_alloc            = nullptr;
   m_queueInfo        = {};
   m_uploader         = nullptr;

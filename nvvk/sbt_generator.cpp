@@ -286,7 +286,7 @@ const SBTGenerator::Regions SBTGenerator::getSBTRegions(uint32_t rayGenIndexOffs
 //--------------------------------------------------------------------------------------------------
 // Usage of SBTGenerator
 // This is a simple example of how to use the SBTGenerator class.
-static void usage_SBTGenerator()
+[[maybe_unused]] static void usage_SBTGenerator()
 {
   VkPhysicalDevice        physicalDevice = VK_NULL_HANDLE;
   VkDevice                device         = VK_NULL_HANDLE;

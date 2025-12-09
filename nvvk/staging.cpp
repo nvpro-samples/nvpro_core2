@@ -589,7 +589,7 @@ void StagingUploader::releaseStaging(bool forceAll)
 //--------------------------------------------------------------------------------------------------
 // Usage example
 //--------------------------------------------------------------------------------------------------
-static void usage_StagingUploader()
+[[maybe_unused]] static void usage_StagingUploader()
 {
   VkDevice                device{};
   VkResult                result{};

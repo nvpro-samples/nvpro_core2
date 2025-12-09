@@ -72,7 +72,7 @@ public:
 
   inline void initFixed(VkSemaphore semaphore, uint64_t timelineValue)
   {
-    assert(m_semaphore == nullptr);
+    assert(m_semaphore == VK_NULL_HANDLE);
     assert(timelineValue && semaphore);
     m_semaphore    = semaphore;
     m_fixedValue   = timelineValue;
@@ -81,7 +81,7 @@ public:
 
   inline void initDynamic(VkSemaphore semaphore)
   {
-    assert(m_semaphore == nullptr);
+    assert(m_semaphore == VK_NULL_HANDLE);
     assert(semaphore);
     m_semaphore    = semaphore;
     m_fixedValue   = 0;

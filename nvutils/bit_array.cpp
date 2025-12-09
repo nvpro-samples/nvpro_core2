@@ -260,7 +260,7 @@ size_t BitArray::countSetBits() const
 //--------------------------------------------------------------------------------------------------
 // Usage example
 //--------------------------------------------------------------------------------------------------
-static void usage_BitArray()
+[[maybe_unused]] static void usage_BitArray()
 {
   nvutils::BitArray modifiedObjects(1024);
 

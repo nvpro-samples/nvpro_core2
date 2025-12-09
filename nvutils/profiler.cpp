@@ -704,7 +704,7 @@ void ProfilerManager::getSnapshots(std::vector<ProfilerTimeline::Snapshot>& fram
 //--------------------------------------------------------------------------------------------------
 // Usage example
 //--------------------------------------------------------------------------------------------------
-static void usage_Profiler()
+[[maybe_unused]] static void usage_Profiler()
 {
   nvutils::ProfilerManager profilerManager;
 

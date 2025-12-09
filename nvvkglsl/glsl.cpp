@@ -147,7 +147,7 @@ bool nvvkglsl::GlslCompiler::isValid(const shaderc::SpvCompilationResult& compRe
 // =================================================================================================
 // Example
 // =================================================================================================
-static void usage_GlslCompiler()
+[[maybe_unused]] static void usage_GlslCompiler()
 {
 #define PROJECT_EXE_TO_SOURCE_DIRECTORY "../myproject/shaders"
   std::filesystem::path exePath = nvutils::getExecutablePath().parent_path();

@@ -52,7 +52,7 @@
 #include <chrono>
 
 // Dummy function to prevent linker warnings
-static void usage_NVTX()
+[[maybe_unused]] static void usage_NVTX()
 {
   // This function is never called, but prevents the library from being empty
   // which could cause linker issues on some platforms

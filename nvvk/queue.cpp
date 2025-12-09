@@ -220,7 +220,7 @@ VkResult QueueTimeline::submit(SubmitInfo& submitInfo, SemaphoreState& submitSta
 //--------------------------------------------------------------------------------------------------
 // Usage example
 //--------------------------------------------------------------------------------------------------
-static void usage_QueueTimeline()
+[[maybe_unused]] static void usage_QueueTimeline()
 {
   // EX fill these somehow
   VkDevice device{};
