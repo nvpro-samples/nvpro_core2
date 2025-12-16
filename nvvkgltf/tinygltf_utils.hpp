@@ -211,6 +211,7 @@ struct KHR_materials_diffuse_transmission
 
 // https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Vendor/EXT_meshopt_compression
 #define EXT_MESHOPT_COMPRESSION_EXTENSION_NAME "EXT_meshopt_compression"
+#define KHR_MESH_QUANTIZATION_EXTENSION_NAME "KHR_mesh_quantization"
 struct EXT_meshopt_compression
 {
   enum EXT_meshopt_compression_mode

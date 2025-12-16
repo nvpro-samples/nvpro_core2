@@ -56,6 +56,7 @@ static const std::set<std::string> supportedExtensions = {
     "KHR_materials_pbrSpecularGlossiness",
     "KHR_materials_diffuse_transmission",
     "EXT_meshopt_compression",
+    "KHR_mesh_quantization",
 #ifdef USE_DRACO
     "KHR_draco_mesh_compression",
 #endif
@@ -147,7 +148,11 @@ bool nvvkgltf::Scene::load(const std::filesystem::path& filename)
 
   // Handle EXT_meshopt_compression by decompressing all buffer data at once
   if(std::find(m_model.extensionsUsed.begin(), m_model.extensionsUsed.end(), EXT_MESHOPT_COMPRESSION_EXTENSION_NAME)
-     != m_model.extensionsUsed.end())
+     != m_model.extensionsUsed.end()
+    ||
+    std::find(m_model.extensionsUsed.begin(), m_model.extensionsUsed.end(), KHR_MESH_QUANTIZATION_EXTENSION_NAME)
+     != m_model.extensionsUsed.end()
+    )
   {
     for(tinygltf::Buffer& buffer : m_model.buffers)
     {
