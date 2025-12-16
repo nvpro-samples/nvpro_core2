@@ -1158,7 +1158,6 @@ bool nvvkgltf::SceneVk::createImage(const VkCommandBuffer& cmd, nvvk::StagingUpl
   imageCreateInfo.usage             = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
   VkImageViewCreateInfo imageViewCreateInfo = DEFAULT_VkImageViewCreateInfo;
-
   if(format == VK_FORMAT_R16_UNORM || format == VK_FORMAT_R8_UNORM)
   {
     imageViewCreateInfo.components.r = VK_COMPONENT_SWIZZLE_R;     // R → R
