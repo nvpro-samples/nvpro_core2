@@ -1157,6 +1157,16 @@ bool nvvkgltf::SceneVk::createImage(const VkCommandBuffer& cmd, nvvk::StagingUpl
   imageCreateInfo.format            = format;
   imageCreateInfo.usage             = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
+  VkImageViewCreateInfo imageViewCreateInfo = DEFAULT_VkImageViewCreateInfo;
+
+  if(format == VK_FORMAT_R16_UNORM || format == VK_FORMAT_R8_UNORM)
+  {
+    imageViewCreateInfo.components.r = VK_COMPONENT_SWIZZLE_R;     // R → R
+    imageViewCreateInfo.components.g = VK_COMPONENT_SWIZZLE_R;     // R → G (copy R to green)
+    imageViewCreateInfo.components.b = VK_COMPONENT_SWIZZLE_R;     // R → B (copy R blue)
+    imageViewCreateInfo.components.a = VK_COMPONENT_SWIZZLE_ONE;   // A = 1.0
+  }
+
   // Mip-mapping images were defined (.ktx, .dds), use the number of levels defined
   if(image.mipData.size() > 1)
   {
@@ -1169,7 +1179,7 @@ bool nvvkgltf::SceneVk::createImage(const VkCommandBuffer& cmd, nvvk::StagingUpl
   }
 
   nvvk::Image resultImage;
-  NVVK_CHECK(m_alloc->createImage(resultImage, imageCreateInfo, DEFAULT_VkImageViewCreateInfo));
+  NVVK_CHECK(m_alloc->createImage(resultImage, imageCreateInfo, imageViewCreateInfo));
   NVVK_DBG_NAME(resultImage.image);
   NVVK_DBG_NAME(resultImage.descriptor.imageView);
 
