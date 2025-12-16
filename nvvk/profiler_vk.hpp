@@ -35,6 +35,9 @@ public:
   void init(nvutils::ProfilerTimeline* profilerTimeline, VkDevice device, VkPhysicalDevice physicalDevice, int queueFamilyIndex, bool useLabels);
   void deinit();
 
+  nvutils::ProfilerTimeline*       getProfilerTimeline() { return m_profilerTimeline; }
+  const nvutils::ProfilerTimeline* getProfilerTimeline() const { return m_profilerTimeline; }
+
   // not thread-safe
   nvutils::ProfilerTimeline::FrameSectionID cmdFrameBeginSection(VkCommandBuffer cmd, const std::string& name);
   void cmdFrameEndSection(VkCommandBuffer cmd, nvutils::ProfilerTimeline::FrameSectionID slot);
