@@ -47,6 +47,7 @@ static const std::set<std::string> supportedExtensions = {
     "KHR_materials_unlit",
     "KHR_materials_variants",
     "KHR_materials_volume",
+    "KHR_mesh_quantization",
     "KHR_texture_transform",
     "KHR_materials_dispersion",
     "KHR_node_visibility",
