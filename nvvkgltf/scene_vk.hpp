@@ -22,6 +22,7 @@
 #include <filesystem>
 #include <set>
 
+#include <glm/glm.hpp>
 #include <nvvk/resource_allocator.hpp>
 
 #include "scene.hpp"
@@ -40,6 +41,26 @@ It is using `nvvkgltf::Scene` to create the Vulkan buffers and images.
 -------------------------------------------------------------------------------------------------*/
 
 namespace nvvkgltf {
+
+// Reusable workspace for CPU skinning operations - avoids per-frame allocations
+// Buffers grow as needed and are released when the scene is destroyed
+struct SkinningWorkspace
+{
+  // Per-joint normal matrices: inverse-transpose of upper 3x3 (reused across primitives)
+  std::vector<glm::mat3> normalMatrices;
+
+  // Output buffers (reused across frames)
+  std::vector<glm::vec3> positions;
+  std::vector<glm::vec3> normals;
+  std::vector<glm::vec4> tangents;
+
+  // Ensure buffers are large enough, only grows (never shrinks during scene lifetime)
+  void reserve(size_t vertexCount, size_t jointCount, bool needNormals, bool needTangents);
+
+  // Release all memory
+  void clear();
+};
+
 // Create the Vulkan version of the Scene
 // Allocate the buffers, etc.
 class SceneVk
@@ -75,6 +96,10 @@ public:
   void updateMaterialBuffer(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn);
   void updateVertexBuffers(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scene);
   virtual void destroy();
+
+  // Geometry-only recreation (preserves textures) - useful after tangent generation or mesh optimization
+  void destroyGeometry();
+  void createGeometry(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn);
 
   // Getters
   const nvvk::Buffer&               material() const { return m_bMaterial; }
@@ -144,7 +169,8 @@ protected:
   bool m_generateMipmaps   = {};
   bool m_rayTracingEnabled = {};
 
-  GpuMemoryTracker m_memoryTracker;  // GPU memory tracking
+  GpuMemoryTracker  m_memoryTracker;      // GPU memory tracking
+  SkinningWorkspace m_skinningWorkspace;  // Reusable workspace for CPU skinning (avoids per-frame allocations)
 };
 
 }  // namespace nvvkgltf

@@ -43,44 +43,6 @@ bool tonemapperWidget(shaderio::TonemapperData& tonemapper)
     changed |= PE::SliderFloat("Exposure", &tonemapper.exposure, 0.1F, 200.0F, "%.3f", ImGuiSliderFlags_Logarithmic,
                                "Multiplier for input colors (0.1 = very dark, 1 = neutral, 200 = very bright)");
 
-    // The temperature/tint sliders have nonzero defaults, so we have special
-    // reset buttons for them alone.
-    const float itemSpacing = 4.F;
-    const float resetButtonWidth = ImGui::CalcTextSize(ICON_MS_RESET_WHITE_BALANCE).x + ImGui::GetStyle().FramePadding.x * 2.F;
-    const float whiteBalanceSliderWidth = ImGui::GetContentRegionAvail().x - resetButtonWidth - itemSpacing;
-    PE::entry(
-        "Temperature",
-        [&]() {
-          ImGui::SetNextItemWidth(whiteBalanceSliderWidth);
-          changed |= ImGui::SliderFloat("##Temperature", &tonemapper.temperature, 2000.0F, 15000.0F, "%.0f K");
-          ImGui::SameLine(0, itemSpacing);
-          ImGui::SetNextItemWidth(-FLT_MIN);
-          if(ImGui::Button(ICON_MS_RESET_WHITE_BALANCE))
-          {
-            tonemapper.temperature = shaderio::TonemapperData().temperature;
-            changed                = true;
-          }
-          return changed;
-        },
-        "Scene lighting temperature to correct for in degrees Kelvin "
-        "(6506K = D65 neutral, higher values make the image more orange because they're correcting for cooler lighting)");
-
-    PE::entry(
-        "Tint",
-        [&]() {
-          ImGui::SetNextItemWidth(whiteBalanceSliderWidth);
-          changed |= ImGui::SliderFloat("##Tint", &tonemapper.tint, -.03F, .03F, "%.5f");
-          ImGui::SameLine(0, itemSpacing);
-          ImGui::SetNextItemWidth(-FLT_MIN);
-          if(ImGui::Button(ICON_MS_RESET_WHITE_BALANCE))
-          {
-            tonemapper.tint = shaderio::TonemapperData().tint;
-            changed         = true;
-          }
-          return changed;
-        },
-        "Green/magenta lighting tint to correct for in ANSI C78.377-2008 Duv units "
-        "(-.03 = very green, 0 = blackbody, .00326 = D65 neutral, .03 = very magenta)");
 
     changed |= PE::SliderFloat("Contrast", &tonemapper.contrast, 0.0F, 2.0F, "%.2f", 0,
                                "Scales colors away from gray (0 = no contrast, 1 = neutral, 2 = high contrast)");
@@ -91,11 +53,81 @@ bool tonemapperWidget(shaderio::TonemapperData& tonemapper)
     changed |= PE::SliderFloat("Vignette", &tonemapper.vignette, -1.0F, 1.0F, "%.2f", 0,
                                "Darkens image edges (-1 = very bright, 0 = none, 1 = very dark)");
 
-    changed |= PE::Checkbox("Auto Exposure", reinterpret_cast<bool*>(&tonemapper.autoExposure),
-                            "Automatically adjust exposure based on scene brightness");
-    if(tonemapper.autoExposure)
+    // Advanced color grading
+    if(PE::treeNode("Advanced Color Grading", ImGuiTreeNodeFlags_None))
     {
-      ImGui::Indent();
+      changed |= PE::SliderFloat("Vibrance", &tonemapper.vibrance, -1.0F, 1.0F, "%.2f", 0,
+                                 "Selective saturation boost for desaturated colors (0 = neutral, positive values boost muted colors)");
+      changed |= PE::SliderFloat("Shadow Bias", &tonemapper.shadowBias, -1.0F, 1.0F, "%.2f", 0,
+                                 "Adjust shadow tones (-1 = darker, 0 = neutral, 1 = brighter)");
+      changed |= PE::SliderFloat("Midtone Bias", &tonemapper.midtoneBias, -1.0F, 1.0F, "%.2f", 0,
+                                 "Adjust midtone brightness (-1 = darker, 0 = neutral, 1 = brighter)");
+      changed |= PE::SliderFloat("Highlight Bias", &tonemapper.highlightBias, -1.0F, 1.0F, "%.2f", 0,
+                                 "Adjust highlight tones (-1 = darker, 0 = neutral, 1 = brighter)");
+
+      // Split toning controls
+      ImGui::Separator();
+      ImGui::Text("Split Toning");
+      changed |= PE::ColorEdit3("Cool Shadows", &tonemapper.coolColor.x, ImGuiColorEditFlags_Float,
+                                "Color tint applied to shadow regions (default: white = no tint)");
+      changed |= PE::ColorEdit3("Warm Highlights", &tonemapper.warmColor.x, ImGuiColorEditFlags_Float,
+                                "Color tint applied to highlight regions (default: white = no tint)");
+      changed |= PE::SliderFloat("Split Balance", &tonemapper.splitBalance, -0.5F, 0.5F, "%.2f", 0,
+                                 "Balance between cool and warm tones (-0.5 = more shadows cool, 0 = neutral, 0.5 = more highlights warm)");
+      PE::treePop();
+    }
+
+    if(PE::treeNode("White Balance"))
+    {
+      // The temperature/tint sliders have nonzero defaults, so we have special
+      // reset buttons for them alone.
+      const float itemSpacing = 4.F;
+      const float resetButtonWidth = ImGui::CalcTextSize(ICON_MS_RESET_WHITE_BALANCE).x + ImGui::GetStyle().FramePadding.x * 2.F;
+      const float whiteBalanceSliderWidth = ImGui::GetContentRegionAvail().x - resetButtonWidth - itemSpacing;
+      PE::entry(
+          "Temperature",
+          [&]() {
+            ImGui::SetNextItemWidth(whiteBalanceSliderWidth);
+            changed |= ImGui::SliderFloat("##Temperature", &tonemapper.temperature, 2000.0F, 15000.0F, "%.0f K");
+            ImGui::SameLine(0, itemSpacing);
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            if(ImGui::Button(ICON_MS_RESET_WHITE_BALANCE))
+            {
+              tonemapper.temperature = shaderio::TonemapperData().temperature;
+              changed                = true;
+            }
+            return changed;
+          },
+          "Scene lighting temperature to correct for in degrees Kelvin "
+          "(6506K = D65 neutral, higher values make the image more orange because they're correcting for cooler lighting)");
+
+      PE::entry(
+          "Tint",
+          [&]() {
+            ImGui::SetNextItemWidth(whiteBalanceSliderWidth);
+            changed |= ImGui::SliderFloat("##Tint", &tonemapper.tint, -.03F, .03F, "%.5f");
+            ImGui::SameLine(0, itemSpacing);
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            if(ImGui::Button(ICON_MS_RESET_WHITE_BALANCE))
+            {
+              tonemapper.tint = shaderio::TonemapperData().tint;
+              changed         = true;
+            }
+            return changed;
+          },
+          "Green/magenta lighting tint to correct for in ANSI C78.377-2008 Duv units "
+          "(-.03 = very green, 0 = blackbody, .00326 = D65 neutral, .03 = very magenta)");
+      PE::treePop();
+    }
+
+    ImGui::TableNextRow();
+    ImGui::TableNextColumn();
+    bool ae = ImGui::TreeNode("Auto Exposure");
+    ImGui::TableNextColumn();
+    ImGui::Checkbox("##Auto Exposure", reinterpret_cast<bool*>(&tonemapper.autoExposure));
+    if(ae)
+    {
+      ImGui::BeginDisabled(!tonemapper.autoExposure);
       changed |= PE::Combo("Average Mode", (int*)&tonemapper.averageMode, "Mean\0Median", 0,
                            "Method for calculating scene brightness (Mean = average, Median = value where 50% of pixels are darker and 50% of pixels are brighter)");
 
@@ -112,6 +144,8 @@ bool tonemapperWidget(shaderio::TonemapperData& tonemapper)
       changed |= PE::DragFloat("Center Metering Size", &tonemapper.centerMeteringSize, 0.01f, 0.01f, 1.0f, "%.2f", 0,
                                "Size of center area for exposure calculation (0.01 = small spot, 1.0 = full frame)");
       ImGui::EndDisabled();
+      ImGui::EndDisabled();
+      ImGui::TreePop();
     }
     changed |= PE::Checkbox("Dither", reinterpret_cast<bool*>(&tonemapper.dither));
 

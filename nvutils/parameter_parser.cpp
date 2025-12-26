@@ -114,7 +114,7 @@ void ParameterParser::printHelp() const
       flags += ", -" + parameter->info.shortName;
 
     std::stringstream sstr;
-    sstr << std::left << std::setw(maxFlagLength) << flags;
+    sstr << std::left << std::setw(maxFlagLength + 1) << flags;
 
 
     std::string help = parameter->getTypeString();
@@ -142,14 +142,7 @@ void ParameterParser::printHelp() const
       {
         Logger::getInstance().log(Logger::eINFO, "%s\n", sstr.str().c_str());
         sstr = std::stringstream();
-        if(maxFlagLength > 0)
-        {
-          sstr << std::left << std::setw(static_cast<std::streamsize>(maxFlagLength) - 1) << " ";
-        }
-        else
-        {
-          sstr << " ";
-        }
+        sstr << std::left << std::setw(maxFlagLength) << " ";
         lineWidth = 0;
       }
     }

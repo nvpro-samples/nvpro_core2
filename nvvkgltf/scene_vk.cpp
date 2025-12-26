@@ -136,6 +136,95 @@ void nvvkgltf::SceneVk::update(VkCommandBuffer cmd, nvvk::StagingUploader& stagi
   updateRenderPrimitivesBuffer(cmd, staging, scn);
 }
 
+//--------------------------------------------------------------------------------------------------
+// Destroy only geometry resources (vertex/index buffers, render primitives)
+// Preserves textures and materials - useful for geometry-only rebuilds like tangent generation
+//
+void nvvkgltf::SceneVk::destroyGeometry()
+{
+  for(auto& vertexBuffer : m_vertexBuffers)
+  {
+    if(vertexBuffer.position.buffer != VK_NULL_HANDLE)
+    {
+      m_memoryTracker.untrack(kMemCategoryGeometry, vertexBuffer.position.allocation);
+      m_alloc->destroyBuffer(vertexBuffer.position);
+    }
+    if(vertexBuffer.normal.buffer != VK_NULL_HANDLE)
+    {
+      m_memoryTracker.untrack(kMemCategoryGeometry, vertexBuffer.normal.allocation);
+      m_alloc->destroyBuffer(vertexBuffer.normal);
+    }
+    if(vertexBuffer.tangent.buffer != VK_NULL_HANDLE)
+    {
+      m_memoryTracker.untrack(kMemCategoryGeometry, vertexBuffer.tangent.allocation);
+      m_alloc->destroyBuffer(vertexBuffer.tangent);
+    }
+    if(vertexBuffer.texCoord0.buffer != VK_NULL_HANDLE)
+    {
+      m_memoryTracker.untrack(kMemCategoryGeometry, vertexBuffer.texCoord0.allocation);
+      m_alloc->destroyBuffer(vertexBuffer.texCoord0);
+    }
+    if(vertexBuffer.texCoord1.buffer != VK_NULL_HANDLE)
+    {
+      m_memoryTracker.untrack(kMemCategoryGeometry, vertexBuffer.texCoord1.allocation);
+      m_alloc->destroyBuffer(vertexBuffer.texCoord1);
+    }
+    if(vertexBuffer.color.buffer != VK_NULL_HANDLE)
+    {
+      m_memoryTracker.untrack(kMemCategoryGeometry, vertexBuffer.color.allocation);
+      m_alloc->destroyBuffer(vertexBuffer.color);
+    }
+  }
+  m_vertexBuffers.clear();
+
+  for(auto& indicesBuffer : m_bIndices)
+  {
+    if(indicesBuffer.buffer != VK_NULL_HANDLE)
+    {
+      m_memoryTracker.untrack(kMemCategoryGeometry, indicesBuffer.allocation);
+      m_alloc->destroyBuffer(indicesBuffer);
+    }
+  }
+  m_bIndices.clear();
+
+  if(m_bRenderPrim.buffer != VK_NULL_HANDLE)
+  {
+    m_memoryTracker.untrack(kMemCategorySceneData, m_bRenderPrim.allocation);
+    m_alloc->destroyBuffer(m_bRenderPrim);
+  }
+
+  if(m_bSceneDesc.buffer != VK_NULL_HANDLE)
+  {
+    m_memoryTracker.untrack(kMemCategorySceneData, m_bSceneDesc.allocation);
+    m_alloc->destroyBuffer(m_bSceneDesc);
+  }
+}
+
+//--------------------------------------------------------------------------------------------------
+// Recreate only geometry resources (vertex/index buffers, render primitives)
+// Call after destroyGeometry() - preserves existing textures
+//
+void nvvkgltf::SceneVk::createGeometry(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn)
+{
+  createVertexBuffers(cmd, staging, scn);
+  updateRenderPrimitivesBuffer(cmd, staging, scn);
+
+  // Rebuild scene descriptor with new buffer addresses
+  shaderio::GltfScene scene_desc{};
+  scene_desc.materials        = (shaderio::GltfShadeMaterial*)m_bMaterial.address;
+  scene_desc.textureInfos     = (shaderio::GltfTextureInfo*)m_bTextureInfos.address;
+  scene_desc.renderPrimitives = (shaderio::GltfRenderPrimitive*)m_bRenderPrim.address;
+  scene_desc.renderNodes      = (shaderio::GltfRenderNode*)m_bRenderNode.address;
+  scene_desc.lights           = (shaderio::GltfLight*)m_bLights.address;
+  scene_desc.numLights        = static_cast<int>(scn.getRenderLights().size());
+
+  NVVK_CHECK(m_alloc->createBuffer(m_bSceneDesc, std::span(&scene_desc, 1).size_bytes(),
+                                   VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
+  NVVK_CHECK(staging.appendBuffer(m_bSceneDesc, 0, std::span(&scene_desc, 1)));
+  NVVK_DBG_NAME(m_bSceneDesc.buffer);
+  m_memoryTracker.track(kMemCategorySceneData, m_bSceneDesc.allocation);
+}
+
 template <typename T>
 inline shaderio::GltfTextureInfo getTextureInfo(const T& tinfo)
 {
@@ -309,11 +398,11 @@ void nvvkgltf::SceneVk::updateMaterialBuffer(VkCommandBuffer cmd, nvvk::StagingU
 }
 
 // Function to blend positions of a primitive with morph targets
-std::vector<glm::vec3> getBlendedPositions(const tinygltf::Accessor&  baseAccessor,
-                                           const glm::vec3*           basePositionData,
-                                           const tinygltf::Primitive& primitive,
-                                           const tinygltf::Mesh&      mesh,
-                                           const tinygltf::Model&     model)
+static std::vector<glm::vec3> getBlendedPositions(const tinygltf::Accessor&  baseAccessor,
+                                                  const glm::vec3*           basePositionData,
+                                                  const tinygltf::Primitive& primitive,
+                                                  const tinygltf::Mesh&      mesh,
+                                                  const tinygltf::Model&     model)
 {
   // Prepare for blending positions
   std::vector<glm::vec3> blendedPositions(baseAccessor.count);
@@ -344,36 +433,86 @@ std::vector<glm::vec3> getBlendedPositions(const tinygltf::Accessor&  baseAccess
   return blendedPositions;
 }
 
-// Function to calculate skinned positions for a primitive
-std::vector<glm::vec3> getSkinnedPositions(const std::span<const glm::vec3>&  basePositionData,
-                                           const std::span<const glm::vec4>&  weights,
-                                           const std::span<const glm::ivec4>& joints,
-                                           const std::vector<glm::mat4>&      jointMatrices)
+// Unified skinning function that transforms positions, normals, and tangents in a single pass.
+//
+// Normals are transformed by the inverse-transpose of the joint matrix (correct for non-uniform scaling)
+// Tangents are transformed by the upper 3x3 of the joint matrix, preserving the w (handedness) component
+//
+// Returns spans into workspace buffers - valid until next applySkinning call with same workspace
+struct SkinningResult
 {
-  size_t vertexCount = weights.size();
+  std::span<const glm::vec3> positions;
+  std::span<const glm::vec3> normals;   // Empty if input had no normals
+  std::span<const glm::vec4> tangents;  // Empty if input had no tangents
+};
 
-  // Prepare the output skinned positions
-  std::vector<glm::vec3> skinnedPositions(vertexCount);
+static SkinningResult applySkinning(nvvkgltf::SkinningWorkspace&       workspace,
+                                    const std::span<const glm::vec3>&  basePositions,
+                                    const std::span<const glm::vec3>&  baseNormals,   // Can be empty
+                                    const std::span<const glm::vec4>&  baseTangents,  // Can be empty
+                                    const std::span<const glm::vec4>&  weights,
+                                    const std::span<const glm::ivec4>& joints,
+                                    const std::vector<glm::mat4>&      jointMatrices)
+{
+  const size_t vertexCount = weights.size();
+  const bool   hasNormals  = !baseNormals.empty();
+  const bool   hasTangents = !baseTangents.empty();
+  const size_t numJoints   = jointMatrices.size();
 
-  // Apply skinning using multi-threading
-  nvutils::parallel_batches<2048>(weights.size(), [&](uint64_t v) {
-    glm::vec3 skinnedPosition(0.0f);
+  // Reserve workspace (only allocates if current buffers are too small)
+  workspace.reserve(vertexCount, numJoints, hasNormals, hasTangents);
 
-    // Skinning: blend the position based on joint weights and transforms
+  // Pre-compute normal matrices (inverse-transpose of upper 3x3) once per joint
+  for(size_t i = 0; i < numJoints; ++i)
+  {
+    glm::mat3 upperLeft3x3      = glm::mat3(jointMatrices[i]);
+    workspace.normalMatrices[i] = glm::transpose(glm::inverse(upperLeft3x3));
+  }
+
+  // Apply skinning to all attributes in a single parallel pass
+  nvutils::parallel_batches<2048>(vertexCount, [&](uint64_t v) {
+    const glm::vec4&  w = weights[v];
+    const glm::ivec4& j = joints[v];
+
+    glm::vec3 skinnedPos(0.0f);
+    glm::vec3 skinnedNrm(0.0f);
+    glm::vec3 skinnedTan(0.0f);
+
+    // Process all 4 joint influences in one loop
     for(int i = 0; i < 4; ++i)
     {
-      const float& jointWeight = weights[v][i];
+      const float jointWeight = w[i];
       if(jointWeight > 0.0f)
       {
-        const int& jointIndex = joints[v][i];
-        skinnedPosition += jointWeight * glm::vec3(jointMatrices[jointIndex] * glm::vec4(basePositionData[v], 1.0f));
+        const int jointIndex = j[i];
+
+        // Position: transform as point (w=1)
+        skinnedPos += jointWeight * glm::vec3(jointMatrices[jointIndex] * glm::vec4(basePositions[v], 1.0f));
+
+        // Normal: transform with inverse-transpose matrix
+        if(hasNormals)
+          skinnedNrm += jointWeight * (workspace.normalMatrices[jointIndex] * baseNormals[v]);
+
+        // Tangent: transform with upper 3x3 matrix
+        if(hasTangents)
+          skinnedTan += jointWeight * (glm::mat3(jointMatrices[jointIndex]) * glm::vec3(baseTangents[v]));
       }
     }
 
-    skinnedPositions[v] = skinnedPosition;
+    // Store results (normalize direction vectors)
+    workspace.positions[v] = skinnedPos;
+    if(hasNormals)
+      workspace.normals[v] = glm::normalize(skinnedNrm);
+    if(hasTangents)
+      workspace.tangents[v] = glm::vec4(glm::normalize(skinnedTan), baseTangents[v].w);  // Preserve handedness
   });
 
-  return skinnedPositions;
+  // Return spans into workspace buffers (valid until next applySkinning call with same workspace)
+  SkinningResult result;
+  result.positions = std::span(workspace.positions.data(), vertexCount);
+  result.normals   = hasNormals ? std::span(workspace.normals.data(), vertexCount) : std::span<const glm::vec3>{};
+  result.tangents  = hasTangents ? std::span(workspace.tangents.data(), vertexCount) : std::span<const glm::vec4>{};
+  return result;
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -494,30 +633,50 @@ void nvvkgltf::SceneVk::updateRenderPrimitivesBuffer(VkCommandBuffer cmd, nvvk::
       jointMatrices[i] = invNode * nodeMatrices[jointNodeID] * inverseBindMatrices[i];  // World matrix of the joint's node
     }
 
-    // Getting the weights of all positions/joint
+    // Get skinning weights and joint indices
     std::vector<glm::vec4> tempWeightStorage;
     std::span<const glm::vec4> weights = tinygltf::utils::getAttributeData3(model, primitive, "WEIGHTS_0", &tempWeightStorage);
 
-    // Getting the joint that each position is using
     std::vector<glm::ivec4> tempJointStorage;
     std::span<const glm::ivec4> joints = tinygltf::utils::getAttributeData3(model, primitive, "JOINTS_0", &tempJointStorage);
 
-    // Original vertex positions
+    // Get base vertex attributes
     std::vector<glm::vec3>           tempPosStorage;
-    const std::span<const glm::vec3> basePositionData =
+    const std::span<const glm::vec3> basePositions =
         tinygltf::utils::getAttributeData3(model, primitive, "POSITION", &tempPosStorage);
 
-    // Get skinned positions
-    std::vector<glm::vec3> skinnedPositions = getSkinnedPositions(basePositionData, weights, joints, jointMatrices);
+    std::vector<glm::vec3> tempNrmStorage;
+    const std::span<const glm::vec3> baseNormals = tinygltf::utils::getAttributeData3(model, primitive, "NORMAL", &tempNrmStorage);
 
-    // Flush any pending buffer operations and add synchronization before updating morph/skinning buffers
+    std::vector<glm::vec4> tempTanStorage;
+    const std::span<const glm::vec4> baseTangents = tinygltf::utils::getAttributeData3(model, primitive, "TANGENT", &tempTanStorage);
+
+    // Apply skinning to all attributes in a single pass
+    SkinningResult skinned =
+        applySkinning(m_skinningWorkspace, basePositions, baseNormals, baseTangents, weights, joints, jointMatrices);
+
+    // Flush any pending buffer operations and add synchronization before updating skinning buffers
     staging.cmdUploadAppended(cmd);
     nvvk::cmdMemoryBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_2_COPY_BIT,
                            VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
 
-    // Update buffer
+    // Update GPU buffers
     VertexBuffers& vertexBuffers = m_vertexBuffers[skinNode.renderPrimID];
-    staging.appendBuffer(vertexBuffers.position, 0, std::span(skinnedPositions));
+    staging.appendBuffer(vertexBuffers.position, 0, skinned.positions);
+
+    // Sanity check: skinned results and GPU buffers should be consistent (both derive from primitive attributes)
+    assert(skinned.normals.empty() == (vertexBuffers.normal.buffer == VK_NULL_HANDLE));
+    assert(skinned.tangents.empty() == (vertexBuffers.tangent.buffer == VK_NULL_HANDLE));
+
+    if(!skinned.normals.empty() && vertexBuffers.normal.buffer != VK_NULL_HANDLE)
+    {
+      staging.appendBuffer(vertexBuffers.normal, 0, skinned.normals);
+    }
+
+    if(!skinned.tangents.empty() && vertexBuffers.tangent.buffer != VK_NULL_HANDLE)
+    {
+      staging.appendBuffer(vertexBuffers.tangent, 0, skinned.tangents);
+    }
   }
 }
 
@@ -1272,51 +1431,10 @@ std::vector<shaderio::GltfLight> getShaderLights(const std::vector<nvvkgltf::Ren
 
 void nvvkgltf::SceneVk::destroy()
 {
-  for(auto& vertexBuffer : m_vertexBuffers)
-  {
-    if(vertexBuffer.position.buffer != VK_NULL_HANDLE)
-    {
-      m_memoryTracker.untrack(kMemCategoryGeometry, vertexBuffer.position.allocation);
-      m_alloc->destroyBuffer(vertexBuffer.position);
-    }
-    if(vertexBuffer.normal.buffer != VK_NULL_HANDLE)
-    {
-      m_memoryTracker.untrack(kMemCategoryGeometry, vertexBuffer.normal.allocation);
-      m_alloc->destroyBuffer(vertexBuffer.normal);
-    }
-    if(vertexBuffer.tangent.buffer != VK_NULL_HANDLE)
-    {
-      m_memoryTracker.untrack(kMemCategoryGeometry, vertexBuffer.tangent.allocation);
-      m_alloc->destroyBuffer(vertexBuffer.tangent);
-    }
-    if(vertexBuffer.texCoord0.buffer != VK_NULL_HANDLE)
-    {
-      m_memoryTracker.untrack(kMemCategoryGeometry, vertexBuffer.texCoord0.allocation);
-      m_alloc->destroyBuffer(vertexBuffer.texCoord0);
-    }
-    if(vertexBuffer.texCoord1.buffer != VK_NULL_HANDLE)
-    {
-      m_memoryTracker.untrack(kMemCategoryGeometry, vertexBuffer.texCoord1.allocation);
-      m_alloc->destroyBuffer(vertexBuffer.texCoord1);
-    }
-    if(vertexBuffer.color.buffer != VK_NULL_HANDLE)
-    {
-      m_memoryTracker.untrack(kMemCategoryGeometry, vertexBuffer.color.allocation);
-      m_alloc->destroyBuffer(vertexBuffer.color);
-    }
-  }
-  m_vertexBuffers.clear();
+  // Destroy geometry (vertex/index buffers, render primitives, scene descriptor)
+  destroyGeometry();
 
-  for(auto& indicesBuffer : m_bIndices)
-  {
-    if(indicesBuffer.buffer != VK_NULL_HANDLE)
-    {
-      m_memoryTracker.untrack(kMemCategoryGeometry, indicesBuffer.allocation);
-      m_alloc->destroyBuffer(indicesBuffer);
-    }
-  }
-  m_bIndices.clear();
-
+  // Destroy remaining scene data buffers
   if(m_bMaterial.buffer != VK_NULL_HANDLE)
   {
     m_memoryTracker.untrack(kMemCategorySceneData, m_bMaterial.allocation);
@@ -1332,22 +1450,13 @@ void nvvkgltf::SceneVk::destroy()
     m_memoryTracker.untrack(kMemCategorySceneData, m_bLights.allocation);
     m_alloc->destroyBuffer(m_bLights);
   }
-  if(m_bRenderPrim.buffer != VK_NULL_HANDLE)
-  {
-    m_memoryTracker.untrack(kMemCategorySceneData, m_bRenderPrim.allocation);
-    m_alloc->destroyBuffer(m_bRenderPrim);
-  }
   if(m_bRenderNode.buffer != VK_NULL_HANDLE)
   {
     m_memoryTracker.untrack(kMemCategorySceneData, m_bRenderNode.allocation);
     m_alloc->destroyBuffer(m_bRenderNode);
   }
-  if(m_bSceneDesc.buffer != VK_NULL_HANDLE)
-  {
-    m_memoryTracker.untrack(kMemCategorySceneData, m_bSceneDesc.allocation);
-    m_alloc->destroyBuffer(m_bSceneDesc);
-  }
 
+  // Destroy textures and images
   for(auto& texture : m_textures)
   {
     m_samplerPool->releaseSampler(texture.descriptor.sampler);
@@ -1364,4 +1473,37 @@ void nvvkgltf::SceneVk::destroy()
   m_textures.clear();
 
   m_sRgbImages.clear();
+
+  // Release CPU skinning workspace memory
+  m_skinningWorkspace.clear();
+}
+
+//////////////////////////////////////////////////////////////////////////
+///
+/// SkinningWorkspace
+///
+//////////////////////////////////////////////////////////////////////////
+
+//--------------------------------------------------------------------------------------------------
+// Growing the workspace buffers if needed
+void nvvkgltf::SkinningWorkspace::reserve(size_t vertexCount, size_t jointCount, bool needNormals, bool needTangents)
+{
+  if(normalMatrices.size() < jointCount)
+    normalMatrices.resize(jointCount);
+  if(positions.size() < vertexCount)
+    positions.resize(vertexCount);
+  if(needNormals && normals.size() < vertexCount)
+    normals.resize(vertexCount);
+  if(needTangents && tangents.size() < vertexCount)
+    tangents.resize(vertexCount);
+}
+
+//--------------------------------------------------------------------------------------------------
+// Clearing the workspace buffers
+void nvvkgltf::SkinningWorkspace::clear()
+{
+  normalMatrices = {};
+  positions      = {};
+  normals        = {};
+  tangents       = {};
 }
