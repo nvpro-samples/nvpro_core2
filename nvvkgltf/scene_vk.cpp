@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -50,6 +50,34 @@ namespace {
 constexpr std::string_view kMemCategoryGeometry  = "Geometry";
 constexpr std::string_view kMemCategorySceneData = "SceneData";
 constexpr std::string_view kMemCategoryImages    = "Images";
+
+// Convert KTX swizzle to Vulkan component swizzle
+VkComponentSwizzle ktxSwizzleToVk(nv_ktx::KTX_SWIZZLE swizzle)
+{
+  switch(swizzle)
+  {
+    case nv_ktx::KTX_SWIZZLE::ZERO:
+      return VK_COMPONENT_SWIZZLE_ZERO;
+    case nv_ktx::KTX_SWIZZLE::ONE:
+      return VK_COMPONENT_SWIZZLE_ONE;
+    case nv_ktx::KTX_SWIZZLE::R:
+      return VK_COMPONENT_SWIZZLE_R;
+    case nv_ktx::KTX_SWIZZLE::G:
+      return VK_COMPONENT_SWIZZLE_G;
+    case nv_ktx::KTX_SWIZZLE::B:
+      return VK_COMPONENT_SWIZZLE_B;
+    case nv_ktx::KTX_SWIZZLE::A:
+      return VK_COMPONENT_SWIZZLE_A;
+    default:
+      return VK_COMPONENT_SWIZZLE_IDENTITY;
+  }
+}
+
+// Convert KTX swizzle array to VkComponentMapping
+VkComponentMapping ktxSwizzleToVkComponentMapping(const std::array<nv_ktx::KTX_SWIZZLE, 4>& swizzle)
+{
+  return {ktxSwizzleToVk(swizzle[0]), ktxSwizzleToVk(swizzle[1]), ktxSwizzleToVk(swizzle[2]), ktxSwizzleToVk(swizzle[3])};
+}
 }  // namespace
 
 //--------------------------------------------------------------------------------------------------
@@ -1211,7 +1239,8 @@ void nvvkgltf::SceneVk::loadImage(const std::filesystem::path& basedir, const ti
       LOGW("This KTX image had %u array elements, but loadImage() cannot handle array textures.\n", ktxImage.num_layers_possibly_0);
       return;
     }
-    image.format = texture_formats::tryForceVkFormatTransferFunction(ktxImage.format, image.srgb);
+    image.format           = texture_formats::tryForceVkFormatTransferFunction(ktxImage.format, image.srgb);
+    image.componentMapping = ktxSwizzleToVkComponentMapping(ktxImage.swizzle);
 
     // Add all mip-levels. We don't need the ktxImage after this so we can move instead of copy.
     for(uint32_t i = 0; i < ktxImage.num_mips; i++)
@@ -1268,6 +1297,8 @@ void nvvkgltf::SceneVk::loadImage(const std::filesystem::path& basedir, const ti
     {
       case 1:
         image.format = is16Bit ? VK_FORMAT_R16_UNORM : VK_FORMAT_R8_UNORM;
+        // For 1-component textures, expand the single channel to RGB for proper grayscale display
+        image.componentMapping = {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_ONE};
         break;
       case 4:
         image.format = is16Bit ? VK_FORMAT_R16G16B16A16_UNORM :
@@ -1327,8 +1358,12 @@ bool nvvkgltf::SceneVk::createImage(const VkCommandBuffer& cmd, nvvk::StagingUpl
     imageCreateInfo.mipLevels = nvvk::mipLevels(imgSize);
   }
 
+  // Use custom view info with component mapping (e.g. for grayscale textures)
+  VkImageViewCreateInfo imageViewCreateInfo = DEFAULT_VkImageViewCreateInfo;
+  imageViewCreateInfo.components            = image.componentMapping;
+
   nvvk::Image resultImage;
-  NVVK_CHECK(m_alloc->createImage(resultImage, imageCreateInfo, DEFAULT_VkImageViewCreateInfo));
+  NVVK_CHECK(m_alloc->createImage(resultImage, imageCreateInfo, imageViewCreateInfo));
   NVVK_DBG_NAME(resultImage.image);
   NVVK_DBG_NAME(resultImage.descriptor.imageView);
 

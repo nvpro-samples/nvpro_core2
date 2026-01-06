@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2019-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -164,7 +164,7 @@ public:
   // Getters
   const tinygltf::Model& getModel() const { return m_model; }
   tinygltf::Model&       getModel() { return m_model; }
-  bool                   valid() const { return !m_renderNodes.empty(); }
+  bool                   valid() const { return m_validSceneParsed; }
 
   // Animation Management
   void                     updateRenderNodes();  // Update the render nodes matrices and materials
@@ -299,6 +299,8 @@ private:
   int           m_sceneRootNode   = -1;  // Node index of the root
   int           m_sceneCameraNode = -1;  // Node index of the camera
   nvutils::Bbox m_sceneBounds;           // Scene bounds
+
+  bool m_validSceneParsed = false;
 };
 
 }  // namespace nvvkgltf

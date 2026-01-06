@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2019-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -89,6 +89,8 @@ bool nvvkgltf::Scene::load(const std::filesystem::path& filename)
   nvutils::ScopedTimer st(std::string(__FUNCTION__) + "\n");
   const std::string    filenameUtf8 = nvutils::utf8FromPath(filename);
   LOGI("%s%s\n", nvutils::ScopedTimer::indent().c_str(), filenameUtf8.c_str());
+
+  m_validSceneParsed = false;
 
   m_filename = filename;
   m_model    = {};
@@ -288,7 +290,9 @@ bool nvvkgltf::Scene::load(const std::filesystem::path& filename)
   m_currentVariant = 0;  // Default KHR_materials_variants
   parseScene();
 
-  return result;
+  m_validSceneParsed = !m_renderNodes.empty();
+
+  return m_validSceneParsed;
 }
 
 bool nvvkgltf::Scene::save(const std::filesystem::path& filename)
@@ -609,7 +613,8 @@ void nvvkgltf::Scene::destroy()
 {
   clearParsedData();
   m_filename.clear();
-  m_model = {};
+  m_validSceneParsed = false;
+  m_model            = {};
 }
 
 
