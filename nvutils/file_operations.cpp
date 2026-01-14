@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -78,14 +78,14 @@ std::string nvutils::loadFile(const std::filesystem::path& filePath)
   std::streamsize size = file.tellg();
   file.seekg(0, std::ios::beg);
 
-  std::vector<char> buffer(size);
+  std::string buffer(size, '\0');
   if(!file.read(buffer.data(), size))
   {
     LOGW("Error reading file: %s\n", utf8FromPath(filePath).c_str());
     return "";
   }
 
-  return std::string(buffer.begin(), buffer.end());
+  return buffer;
 }
 
 std::filesystem::path nvutils::getExecutablePath()

@@ -144,7 +144,8 @@ protected:
 
   void findSrgbImages(const tinygltf::Model& model);
 
-  virtual void loadImage(const std::filesystem::path& basedir, const tinygltf::Image& gltfImage, int imageID);
+  virtual void loadImage(const std::filesystem::path& basedir, const tinygltf::Model& model, uint64_t imageID);
+  virtual void loadImageFromMemory(uint64_t imageID, const void* data, size_t byteLength);
   virtual bool createImage(const VkCommandBuffer& cmd, nvvk::StagingUploader& staging, SceneImage& image);
 
   //--

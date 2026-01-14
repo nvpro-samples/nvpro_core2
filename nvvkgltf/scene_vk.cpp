@@ -32,6 +32,7 @@
 #include "nvimageformats/nv_dds.h"
 #include "nvimageformats/nv_ktx.h"
 #include "nvimageformats/texture_formats.h"
+#include "nvutils/file_mapping.hpp"
 #include "nvutils/file_operations.hpp"
 #include "nvutils/logger.hpp"
 #include "nvutils/timers.hpp"
@@ -78,6 +79,57 @@ VkComponentMapping ktxSwizzleToVkComponentMapping(const std::array<nv_ktx::KTX_S
 {
   return {ktxSwizzleToVk(swizzle[0]), ktxSwizzleToVk(swizzle[1]), ktxSwizzleToVk(swizzle[2]), ktxSwizzleToVk(swizzle[3])};
 }
+
+// Gets the friendly name of a TinyGLTF image for logs and UIs.
+std::string getImageName(const tinygltf::Image& img, size_t index)
+{
+  if(!img.uri.empty())
+  {
+    return img.uri;
+  }
+
+  if(!img.name.empty())
+  {
+    return img.name;
+  }
+
+  return "Embedded image " + std::to_string(index);
+}
+
+// Resolves disk path of a tinygltf::Image from its URI; returns an empty path
+// if the image is embedded instead.
+std::filesystem::path resolveImagePath(const std::filesystem::path& basedir, const tinygltf::Image& img)
+{
+  if(img.uri.empty())
+  {
+    return {};
+  }
+
+  std::string uriDecoded;  // This is UTF-8, but TinyGlTF uses `char` instead of `char8_t` for it
+  tinygltf::URIDecode(img.uri, &uriDecoded, nullptr);  // ex. whitespace may be represented as %20
+  return basedir / nvutils::pathFromUtf8(uriDecoded);
+}
+
+// Gets the size in bytes of the compressed data of a tinygltf::Image.
+size_t getImageByteSize(const tinygltf::Model& model, const tinygltf::Image& img, const std::filesystem::path& diskPath)
+{
+  // This needs to match the order of preference in loadImage, in case of ambiguity.
+  if(img.bufferView >= 0)
+  {
+    return model.bufferViews[img.bufferView].byteLength;
+  }
+
+  if(!img.image.empty())
+  {
+    return img.image.size();
+  }
+
+  std::error_code ec;
+  auto            size = std::filesystem::file_size(diskPath, ec);
+  return ec ? 0 : size;
+}
+
+
 }  // namespace
 
 //--------------------------------------------------------------------------------------------------
@@ -381,6 +433,10 @@ static void getShaderMaterial(const tinygltf::Material&                 srcMat,
   dstMat.diffuseTransmissionTexture = addTextureInfo(diffuseTransmission.diffuseTransmissionTexture, textureInfos);
   dstMat.diffuseTransmissionColor   = diffuseTransmission.diffuseTransmissionColor;
   dstMat.diffuseTransmissionColorTexture = addTextureInfo(diffuseTransmission.diffuseTransmissionColorTexture, textureInfos);
+
+  KHR_materials_volume_scatter volumeScatter = tinygltf::utils::getVolumeScatter(srcMat);
+  dstMat.multiscatterColor                   = volumeScatter.multiscatterColor;
+  dstMat.scatterAnisotropy                   = volumeScatter.scatterAnisotropy;
 
   shadeMaterial.emplace_back(dstMat);
 }
@@ -1031,21 +1087,42 @@ void nvvkgltf::SceneVk::createTextureImages(VkCommandBuffer              cmd,
     usedImages.insert(source_image);
   }
 
-  // Load images in parallel
+  // Load images in parallel, sorting by their size so larger images come first
+  // for better multi-thread utilization. While we do this we also resolve
+  // file paths and image names.
   m_images.resize(model.images.size());
-  uint32_t          num_threads = std::min((uint32_t)model.images.size(), std::thread::hardware_concurrency());
-  const std::string indent      = st.indent();
+  struct ImageLoadItem
+  {
+    std::filesystem::path diskPath{};
+    size_t                numBytes{};
+    uint64_t              imageId{};
+  };
+  std::vector<ImageLoadItem> imageLoadItems;
+  const std::string          indent = st.indent();
+  for(size_t i = 0; i < model.images.size(); i++)
+  {
+    if(usedImages.find(static_cast<int>(i)) == usedImages.end())
+      continue;  // Skip unused images
+
+    const auto& gltfImage = model.images[i];
+
+    ImageLoadItem item{.imageId = i};
+    item.diskPath       = resolveImagePath(basedir, gltfImage);
+    item.numBytes       = getImageByteSize(model, gltfImage, item.diskPath);
+    m_images[i].imgName = getImageName(gltfImage, i);
+
+    imageLoadItems.push_back(std::move(item));
+    LOGI("%s(%" PRIu64 ") %s \n", indent.c_str(), i, m_images[i].imgName.c_str());
+  }
+
+  std::sort(imageLoadItems.begin(), imageLoadItems.end(),
+            [](const ImageLoadItem& a, const ImageLoadItem& b) { return a.numBytes > b.numBytes; });
+
   nvutils::parallel_batches<1>(  // Not batching
-      model.images.size(),
-      [&](uint64_t i) {
-        if(usedImages.find(static_cast<int>(i)) == usedImages.end())
-          return;  // Skip unused images
-        const auto& image     = model.images[i];
-        const char* imageName = image.uri.empty() ? "Embedded image" : image.uri.c_str();
-        LOGI("%s(%" PRIu64 ") %s \n", indent.c_str(), i, imageName);
-        loadImage(basedir, image, static_cast<int>(i));
-      },
-      num_threads);
+      imageLoadItems.size(), [&](uint64_t i) {
+        const ImageLoadItem& item = imageLoadItems[i];
+        loadImage(item.diskPath, model, item.imageId);
+      });
 
   // Create Vulkan images
   for(size_t i = 0; i < m_images.size(); i++)
@@ -1149,29 +1226,92 @@ void nvvkgltf::SceneVk::findSrgbImages(const tinygltf::Model& model)
 }
 
 //--------------------------------------------------------------------------------------------------
-// Loading images from disk
+// Loads glTF image `imageID` into m_images[imageID].
 //
-void nvvkgltf::SceneVk::loadImage(const std::filesystem::path& basedir, const tinygltf::Image& gltfImage, int imageID)
+void nvvkgltf::SceneVk::loadImage(const std::filesystem::path& diskPath, const tinygltf::Model& model, uint64_t imageID)
 {
-  namespace fs = std::filesystem;
+  const tinygltf::Image& gltfImage = model.images[imageID];
+  SceneImage&            outImage  = m_images[imageID];
 
-  auto& image  = m_images[imageID];
-  bool  isSrgb = m_sRgbImages.find(imageID) != m_sRgbImages.end();
-
-  std::string uriDecoded;  // This is UTF-8, but TinyGlTF uses `char` instead of `char8_t` for it
-  tinygltf::URIDecode(gltfImage.uri, &uriDecoded, nullptr);  // ex. whitespace may be represented as %20
-  const fs::path uri = basedir / nvutils::pathFromUtf8(uriDecoded);
-  image.imgName      = nvutils::utf8FromPath(uri.filename());
-
-  if(nvutils::extensionMatches(uri, ".dds"))
+  // Is this an embedded image?
+  const int bufferViewIndex = gltfImage.bufferView;
+  if(bufferViewIndex >= 0)
   {
-    nv_dds::Image               ddsImage{};
-    nv_dds::ReadSettings        settings{};
-    std::ifstream               imageFile(uri, std::ios::binary);
-    const nv_dds::ErrorWithText readResult = ddsImage.readFromStream(imageFile, settings);
+    // Get the buffer data; make sure it's in range.
+    // Images use buffer views, so we can't use nvvkgltf's Accessor utilities
+    // and must load it manually.
+    if(static_cast<size_t>(bufferViewIndex) >= model.bufferViews.size())
+    {
+      LOGW("The buffer view index (%i) for image %" PRIu64 " was out of range.\n", bufferViewIndex, imageID);
+      return;
+    }
+
+    const tinygltf::BufferView& bufferView  = model.bufferViews[bufferViewIndex];
+    const int                   bufferIndex = bufferView.buffer;
+    if(bufferIndex < 0 || static_cast<size_t>(bufferIndex) >= model.buffers.size())
+    {
+      LOGW("The buffer index (%i) from the buffer view (%i) for image %" PRIu64 " was out of range.\n", bufferIndex,
+           bufferViewIndex, imageID);
+      return;
+    }
+
+    const tinygltf::Buffer& buffer = model.buffers[bufferIndex];
+    // Make sure the data's in-bounds. TinyGLTF doesn't seem to verify this (!)
+    const size_t byteOffset = bufferView.byteOffset;
+    const size_t byteLength = bufferView.byteLength;
+    if(byteOffset > buffer.data.size() || byteLength > buffer.data.size() - byteOffset)
+    {
+      LOGW("The buffer offset (%zu) and length (%zu) were out-of-range for buffer %i, which has length %zu, for image %" PRIu64 ".\n",
+           byteOffset, byteLength, bufferIndex, buffer.data.size(), imageID);
+      return;
+    }
+
+    loadImageFromMemory(imageID, &buffer.data[byteOffset], byteLength);
+  }
+  else if(!gltfImage.image.empty())
+  {
+    // Image data was stored by our callback (e.g., from a data URI)
+    loadImageFromMemory(imageID, gltfImage.image.data(), gltfImage.image.size());
+  }
+  else if(!diskPath.empty())
+  {
+    // Image from disk
+    nvutils::FileReadMapping fileMapping;
+    if(!fileMapping.open(diskPath))
+    {
+      LOGW("The file for image %" PRIu64 " (%s) could not be opened.\n", imageID, nvutils::utf8FromPath(diskPath).c_str());
+      return;
+    }
+
+    loadImageFromMemory(imageID, fileMapping.data(), fileMapping.size());
+  }
+  else
+  {
+    LOGW("Image %" PRIu64 " has no data source (no bufferView, no stored data, and no URI).\n", imageID);
+  }
+}
+
+//-------------------------------------------------------------------------------------------------
+// Loads data, extent, and swizzle for an image loaded or mapped to a range of
+// memory into m_images[imageID] without changing the other fields.
+//
+void nvvkgltf::SceneVk::loadImageFromMemory(uint64_t imageID, const void* data, size_t byteLength)
+{
+  SceneImage& image  = m_images[imageID];
+  const bool  isSrgb = m_sRgbImages.find(static_cast<int>(imageID)) != m_sRgbImages.end();
+
+  // Look at the first few bytes to determine the type of the image.
+  const char    ddsIdentifier[4] = {'D', 'D', 'S', ' '};
+  const uint8_t ktxIdentifier[5] = {0xAB, 0x4B, 0x54, 0x58, 0x20};  // Common for KTX1 + KTX2
+
+  if(byteLength >= sizeof(ddsIdentifier) && memcmp(data, ddsIdentifier, sizeof(ddsIdentifier)) == 0)
+  {
+    nv_dds::Image        ddsImage{};
+    nv_dds::ReadSettings settings{};
+    const nv_dds::ErrorWithText readResult = ddsImage.readFromMemory(reinterpret_cast<const char*>(data), byteLength, settings);
     if(readResult.has_value())
     {
-      LOGW("Failed to read %s using nv_dds: %s\n", nvutils::utf8FromPath(uri).c_str(), readResult.value().c_str());
+      LOGW("Failed to read image %" PRIu64 " using nv_dds: %s\n", imageID, readResult.value().c_str());
       return;
     }
 
@@ -1209,15 +1349,15 @@ void nvvkgltf::SceneVk::loadImage(const std::filesystem::path& basedir, const ti
       image.mipData.push_back(std::move(mip));
     }
   }
-  else if(nvutils::extensionMatches(uri, ".ktx") || nvutils::extensionMatches(uri, ".ktx2"))
+  else if(byteLength >= sizeof(ktxIdentifier) && memcmp(data, ktxIdentifier, sizeof(ktxIdentifier)) == 0)
   {
     nv_ktx::KTXImage            ktxImage;
     const nv_ktx::ReadSettings  ktxReadSettings;
-    std::ifstream               imageFile(uri, std::ios::binary);
-    const nv_ktx::ErrorWithText maybeError = ktxImage.readFromStream(imageFile, ktxReadSettings);
+    const nv_ktx::ErrorWithText maybeError =
+        ktxImage.readFromMemory(reinterpret_cast<const char*>(data), byteLength, ktxReadSettings);
     if(maybeError.has_value())
     {
-      LOGW("Failed to read %s using nv_ktx: %s\n", nvutils::utf8FromPath(uri).c_str(), maybeError->c_str());
+      LOGW("Failed to read image %" PRIu64 " using nv_ktx: %s\n", imageID, maybeError->c_str());
       return;
     }
 
@@ -1226,17 +1366,19 @@ void nvvkgltf::SceneVk::loadImage(const std::filesystem::path& basedir, const ti
     image.size.height = ktxImage.mip_0_height;
     if(ktxImage.mip_0_depth > 1)
     {
-      LOGW("This KTX image had a depth of %u, but loadImage() cannot handle volume textures.\n", ktxImage.mip_0_depth);
+      LOGW("KTX image %" PRIu64 " had a depth of %u, but loadImage() cannot handle volume textures.\n", imageID,
+           ktxImage.mip_0_depth);
       return;
     }
     if(ktxImage.num_faces > 1)
     {
-      LOGW("This KTX image had %u faces, but loadImage() cannot handle cubemaps.\n", ktxImage.num_faces);
+      LOGW("KTX image %" PRIu64 " had %u faces, but loadImage() cannot handle cubemaps.\n", imageID, ktxImage.num_faces);
       return;
     }
     if(ktxImage.num_layers_possibly_0 > 1)
     {
-      LOGW("This KTX image had %u array elements, but loadImage() cannot handle array textures.\n", ktxImage.num_layers_possibly_0);
+      LOGW("KTX image %" PRIu64 " had %u array elements, but loadImage() cannot handle array textures.\n", imageID,
+           ktxImage.num_layers_possibly_0);
       return;
     }
     image.format           = texture_formats::tryForceVkFormatTransferFunction(ktxImage.format, image.srgb);
@@ -1249,49 +1391,45 @@ void nvvkgltf::SceneVk::loadImage(const std::filesystem::path& basedir, const ti
       image.mipData.push_back(std::move(mip));
     }
   }
-  else if(uri.has_extension())
+  else
   {
-    // Read all contents to avoid text encoding issues with the filename
-    const std::string imageFileContents = nvutils::loadFile(uri);
-    if(imageFileContents.empty())
+    // Try to load the image using stb_image.
+    if(byteLength > std::numeric_limits<int>::max())
     {
-      LOGW("File was empty or could not be opened: %s\n", nvutils::utf8FromPath(uri).c_str());
+      LOGW("File for image %" PRIu64 " was too large (%zu bytes) for stb_image to read.\n", imageID, byteLength);
       return;
     }
-    const stbi_uc* imageFileData = (const stbi_uc*)(imageFileContents.data());
-    if(imageFileContents.size() > std::numeric_limits<int>::max())
-    {
-      LOGW("File too large for stb_image to read: %s\n", nvutils::utf8FromPath(uri).c_str());
-      return;
-    }
-    const int imageFileSize = static_cast<int>(imageFileContents.size());
+
+    // stb_image wants a buffer of type stbi_uc* and length of type int:
+    const stbi_uc* dataStb   = reinterpret_cast<const stbi_uc*>(data);
+    const int      lengthStb = static_cast<int>(byteLength);
 
     // Read the header once to check how many channels it has. We can't trivially use RGB/VK_FORMAT_R8G8B8_UNORM and
     // need to set requiredComponents=4 in such cases.
     int w = 0, h = 0, comp = 0;
-    if(!stbi_info_from_memory(imageFileData, imageFileSize, &w, &h, &comp))
+    if(!stbi_info_from_memory(dataStb, lengthStb, &w, &h, &comp))
     {
-      LOGW("Failed to get info for %s\n", nvutils::utf8FromPath(uri).c_str());
+      LOGW("Failed to get info using stb_image for image %" PRIu64 "\n", imageID);
       return;
     }
 
     // Read the header again to check if it has 16 bit data, e.g. for a heightmap.
-    const bool is16Bit = stbi_is_16_bit_from_memory(imageFileData, imageFileSize);
+    const bool is16Bit = stbi_is_16_bit_from_memory(dataStb, lengthStb);
 
     // Load the image
-    stbi_uc* data = nullptr;
+    stbi_uc* decompressed = nullptr;
     size_t   bytesPerPixel{0};
     int      requiredComponents = comp == 1 ? 1 : 4;
     if(is16Bit)
     {
-      stbi_us* data16 = stbi_load_16_from_memory(imageFileData, imageFileSize, &w, &h, &comp, requiredComponents);
-      bytesPerPixel   = sizeof(*data16) * requiredComponents;
-      data            = (stbi_uc*)(data16);
+      stbi_us* decompressed16 = stbi_load_16_from_memory(dataStb, lengthStb, &w, &h, &comp, requiredComponents);
+      bytesPerPixel           = sizeof(*decompressed16) * requiredComponents;
+      decompressed            = (stbi_uc*)(decompressed16);
     }
     else
     {
-      data          = stbi_load_from_memory(imageFileData, imageFileSize, &w, &h, &comp, requiredComponents);
-      bytesPerPixel = sizeof(*data) * requiredComponents;
+      decompressed  = stbi_load_from_memory(dataStb, lengthStb, &w, &h, &comp, requiredComponents);
+      bytesPerPixel = sizeof(*decompressed) * requiredComponents;
     }
     switch(requiredComponents)
     {
@@ -1308,21 +1446,15 @@ void nvvkgltf::SceneVk::loadImage(const std::filesystem::path& basedir, const ti
         break;
     }
 
-    // Make a copy of the image data to be uploaded to vulkan later
-    if(data && w > 0 && h > 0 && image.format != VK_FORMAT_UNDEFINED)
+    // Make a copy of the image data to be uploaded to Vulkan later
+    if(decompressed && w > 0 && h > 0 && image.format != VK_FORMAT_UNDEFINED)
     {
       VkDeviceSize bufferSize = static_cast<VkDeviceSize>(w) * h * bytesPerPixel;
       image.size              = VkExtent2D{(uint32_t)w, (uint32_t)h};
-      image.mipData           = {{data, data + bufferSize}};
+      image.mipData           = {{decompressed, decompressed + bufferSize}};
     }
 
-    stbi_image_free(data);
-  }
-  else if(gltfImage.width > 0 && gltfImage.height > 0 && !gltfImage.image.empty())
-  {  // Loaded internally using GLB
-    image.size   = VkExtent2D{(uint32_t)gltfImage.width, (uint32_t)gltfImage.height};
-    image.format = isSrgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
-    image.mipData.emplace_back(gltfImage.image.data(), gltfImage.image.data() + gltfImage.image.size());
+    stbi_image_free(decompressed);
   }
 }
 

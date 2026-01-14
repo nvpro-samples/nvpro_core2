@@ -26,7 +26,6 @@
 #include <map>
 #include <set>
 #include <string>
-#include <string.h>
 #include <unordered_map>
 #include <vector>
 
@@ -35,6 +34,7 @@
 #include <nvutils/bounding_box.hpp>
 
 #include "tinygltf_utils.hpp"
+#include "animation_pointer.hpp"
 
 
 namespace nvvkgltf {
@@ -93,7 +93,7 @@ struct RenderLight
 // Animation data
 struct AnimationInfo
 {
-  std::string name        = "";
+  std::string name;
   float       start       = std::numeric_limits<float>::max();
   float       end         = std::numeric_limits<float>::min();
   float       currentTime = 0.0f;
@@ -146,6 +146,8 @@ Note: The Scene class is a more advanced and light weight version of the GltfSce
 class Scene
 {
 public:
+  Scene();
+
   // Used to specify the type of pipeline to be used
   enum PipelineType
   {
@@ -172,6 +174,9 @@ public:
   int                      getNumAnimations() const { return static_cast<int>(m_animations.size()); }
   bool                     hasAnimation() const { return !m_animations.empty(); }
   nvvkgltf::AnimationInfo& getAnimationInfo(int index) { return m_animations[index].info; }
+
+  // KHR_animation_pointer - Get dirty resources (for GPU updates)
+  nvvkgltf::AnimationPointerSystem& getAnimationPointer() { return m_animationPointer; }
 
   // Resource Management
   void destroy();  // Destroy the loaded resources
@@ -227,6 +232,8 @@ private:
     PathType path         = eTranslation;
     int      node         = -1;
     uint32_t samplerIndex = 0;
+
+    std::string pointerPath;  // JSON pointer string (e.g., "/materials/0/pbrMetallicRoughness/baseColorFactor")
   };
 
   struct AnimationSampler
@@ -239,6 +246,7 @@ private:
     };
     InterpolationType               interpolation = eLinear;
     std::vector<float>              inputs;
+    std::vector<glm::vec2>          outputsVec2;
     std::vector<glm::vec3>          outputsVec3;
     std::vector<glm::vec4>          outputsVec4;
     std::vector<std::vector<float>> outputsFloat;
@@ -269,11 +277,11 @@ private:
   bool   handleLightTraversal(int nodeID, const glm::mat4& worldMatrix);
   void   updateVisibility(int nodeID, bool visible, uint32_t& renderNodeID);
   void   createMissingTangents();
-  bool processAnimationChannel(tinygltf::Node& gltfNode, AnimationSampler& sampler, const AnimationChannel& channel, float time, uint32_t animationIndex);
+  bool processAnimationChannel(tinygltf::Node* gltfNode, AnimationSampler& sampler, const AnimationChannel& channel, float time);
   float calculateInterpolationFactor(float inputStart, float inputEnd, float time);
-  void handleLinearInterpolation(tinygltf::Node& gltfNode, AnimationSampler& sampler, const AnimationChannel& channel, float t, size_t index);
-  void handleStepInterpolation(tinygltf::Node& gltfNode, AnimationSampler& sampler, const AnimationChannel& channel, size_t index);
-  void handleCubicSplineInterpolation(tinygltf::Node&         gltfNode,
+  void handleLinearInterpolation(tinygltf::Node* gltfNode, AnimationSampler& sampler, const AnimationChannel& channel, float t, size_t index);
+  void handleStepInterpolation(tinygltf::Node* gltfNode, AnimationSampler& sampler, const AnimationChannel& channel, size_t index);
+  void handleCubicSplineInterpolation(tinygltf::Node*         gltfNode,
                                       AnimationSampler&       sampler,
                                       const AnimationChannel& channel,
                                       float                   t,
@@ -292,6 +300,8 @@ private:
   std::vector<uint32_t>                  m_morphPrimitives;       // All the primitives that are animated
   std::vector<uint32_t>                  m_skinNodes;             // All the primitives that are animated
   std::vector<glm::mat4>                 m_nodesWorldMatrices;
+
+  nvvkgltf::AnimationPointerSystem m_animationPointer;  // Unified animation pointer system (direct member)
 
   int           m_numTriangles    = 0;   // Stat - Number of triangles
   int           m_currentScene    = 0;   // Scene index

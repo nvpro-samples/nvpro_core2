@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -193,7 +193,7 @@ VkResult nvvk::GBuffer::initResources(VkCommandBuffer cmd)
         .mipLevels   = 1,
         .arrayLayers = 1,
         .samples     = m_info.sampleCount,
-        .usage       = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT
                  | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
     };
     const VkImageViewCreateInfo viewInfo = {
@@ -216,10 +216,11 @@ VkResult nvvk::GBuffer::initResources(VkCommandBuffer cmd)
                                                   .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
                                                   .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL});
     }
-    const VkDependencyInfo depInfo{.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                                   .imageMemoryBarrierCount = numColor,
-                                   .pImageMemoryBarriers    = barriers.data()};
+    VkDependencyInfo depInfo{.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                             .imageMemoryBarrierCount = numColor,
+                             .pImageMemoryBarriers    = barriers.data()};
     vkCmdPipelineBarrier2(cmd, &depInfo);
+
 
     for(uint32_t c = 0; c < numColor; c++)
     {
@@ -235,6 +236,21 @@ VkResult nvvk::GBuffer::initResources(VkCommandBuffer cmd)
           {.image = m_res.gBufferColor[c].image, .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, .newLayout = layout});
       m_res.gBufferColor[c].descriptor.imageLayout = layout;
     }
+
+    if(m_info.depthFormat != VK_FORMAT_UNDEFINED)
+    {
+      // Depth buffer
+      barriers.push_back(nvvk::makeImageMemoryBarrier({
+          .image            = m_res.gBufferDepth.image,
+          .oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED,
+          .newLayout        = layout,
+          .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT, .levelCount = 1, .layerCount = 1},
+      }));
+
+      depInfo.imageMemoryBarrierCount++;
+      depInfo.pImageMemoryBarriers = barriers.data();
+    }
+
     vkCmdPipelineBarrier2(cmd, &depInfo);
   }
 
@@ -297,20 +313,23 @@ void nvvk::GBuffer::deinitResources()
     m_descLayout = VK_NULL_HANDLE;
   }
 
-  for(nvvk::Image bc : m_res.gBufferColor)
+  for(nvvk::Image& bc : m_res.gBufferColor)
   {
     m_info.allocator->destroyImage(bc);
   }
+  m_res.gBufferColor.clear();
 
   if(m_res.gBufferDepth.image != VK_NULL_HANDLE)
   {
     m_info.allocator->destroyImage(m_res.gBufferDepth);
+    m_res.gBufferDepth = {};
   }
 
   for(const VkImageView& view : m_res.uiImageViews)
   {
     vkDestroyImageView(device, view, nullptr);
   }
+  m_res.uiImageViews.clear();
 }
 
 

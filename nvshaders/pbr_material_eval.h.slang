@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -84,6 +84,16 @@ It returns true if the texture index is greater than -1, indicating that the tex
 bool isTexturePresent(uint16_t tinfo)
 {
   return tinfo > 0;
+}
+
+/*-------------------------------------------------------------------------------------------------
+* Convert multi-scatter albedo to single-scatter albedo
+* Formula from KHR_materials_volume_scatter specification
+* -------------------------------------------------------------------------------------------------*/
+float3 multiToSingleScatterAlbedo(float3 rho_ms)
+{
+  float3 t = 4.09712 + 4.20863 * rho_ms - sqrt(9.59217 + 41.6808 * rho_ms + 17.7126 * rho_ms * rho_ms);
+  return 1.0 - t * t;
 }
 
 /*-------------------------------------------------------------------------------------------------
@@ -264,6 +274,20 @@ PbrMaterial evaluateMaterial(in GltfShadeMaterial material, MeshState state, Sam
   pbrMat.attenuationColor    = material.attenuationColor;
   pbrMat.attenuationDistance = material.attenuationDistance;
   pbrMat.isThinWalled        = (material.thicknessFactor == 0.0);
+
+  // KHR_materials_volume_scatter
+  // Compute scattering coefficient from multi-scatter albedo and attenuation
+  if(any(material.multiscatterColor > float3(0.0)))
+  {
+    float3 singleScatterAlbedo = multiToSingleScatterAlbedo(material.multiscatterColor);
+    float3 attenuationCoef     = -log(max(pbrMat.attenuationColor, float3(0.001))) / max(pbrMat.attenuationDistance, 0.001);
+    pbrMat.scatterCoefficient  = attenuationCoef * singleScatterAlbedo;
+  }
+  else
+  {
+    pbrMat.scatterCoefficient = float3(0.0);
+  }
+  pbrMat.scatterAnisotropy = material.scatterAnisotropy;
 
   // KHR_materials_clearcoat
   pbrMat.clearcoat          = material.clearcoatFactor;

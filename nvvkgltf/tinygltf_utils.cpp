@@ -1,6 +1,6 @@
 
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -102,6 +102,31 @@ void tinygltf::utils::setVolume(tinygltf::Material& tmat, const KHR_materials_vo
   tinygltf::utils::setValue(ext, "thicknessTexture", volume.thicknessTexture);
   tinygltf::utils::setValue(ext, "attenuationDistance", volume.attenuationDistance);
   tinygltf::utils::setArrayValue(ext, "attenuationColor", 3, glm::value_ptr(volume.attenuationColor));
+}
+
+KHR_materials_volume_scatter tinygltf::utils::getVolumeScatter(const tinygltf::Material& tmat)
+{
+  KHR_materials_volume_scatter gmat;
+  if(tinygltf::utils::hasElementName(tmat.extensions, KHR_MATERIALS_VOLUME_SCATTER_EXTENSION_NAME))
+  {
+    const tinygltf::Value& ext = tinygltf::utils::getElementValue(tmat.extensions, KHR_MATERIALS_VOLUME_SCATTER_EXTENSION_NAME);
+    tinygltf::utils::getArrayValue(ext, "multiscatterColor", gmat.multiscatterColor);
+    tinygltf::utils::getValue(ext, "scatterAnisotropy", gmat.scatterAnisotropy);
+    gmat.scatterAnisotropy = std::clamp(gmat.scatterAnisotropy, -0.999f, 0.999f);
+  }
+  return gmat;
+}
+
+void tinygltf::utils::setVolumeScatter(tinygltf::Material& tmat, const KHR_materials_volume_scatter& scatter)
+{
+  if(!tinygltf::utils::hasElementName(tmat.extensions, KHR_MATERIALS_VOLUME_SCATTER_EXTENSION_NAME))
+  {
+    tmat.extensions[KHR_MATERIALS_VOLUME_SCATTER_EXTENSION_NAME] = tinygltf::Value(tinygltf::Value::Object());
+  }
+
+  tinygltf::Value& ext = tmat.extensions[KHR_MATERIALS_VOLUME_SCATTER_EXTENSION_NAME];
+  tinygltf::utils::setArrayValue(ext, "multiscatterColor", 3, glm::value_ptr(scatter.multiscatterColor));
+  tinygltf::utils::setValue(ext, "scatterAnisotropy", scatter.scatterAnisotropy);
 }
 
 KHR_materials_unlit tinygltf::utils::getUnlit(const tinygltf::Material& tmat)
