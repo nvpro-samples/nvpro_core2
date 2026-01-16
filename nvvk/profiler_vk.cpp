@@ -85,7 +85,8 @@ void ProfilerGpuTimer::deinit()
   }
   m_async = {};
 
-  m_device = nullptr;
+  m_device           = nullptr;
+  m_profilerTimeline = nullptr;
 }
 
 nvutils::ProfilerTimeline::FrameSectionID ProfilerGpuTimer::cmdFrameBeginSection(VkCommandBuffer cmd, const std::string& name)

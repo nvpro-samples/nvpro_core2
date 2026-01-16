@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 *
-* SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+* SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
 * SPDX-License-Identifier: Apache-2.0
 */
 
@@ -37,6 +37,8 @@ namespace nvvk {
 class StagingUploader
 {
 public:
+  static constexpr VkDeviceSize DEFAULT_LARGE_CHUNK_SIZE = 256ull * 1024 * 1024;
+
   StagingUploader()                                  = default;
   StagingUploader(const StagingUploader&)            = delete;
   StagingUploader& operator=(const StagingUploader&) = delete;
@@ -148,6 +150,41 @@ public:
                                            const SemaphoreState&    semaphoreState = {})
   {
     return appendBufferRangeMapping(bufferRange, (void*&)uploadMapping, semaphoreState);
+  }
+
+  // Large buffer support - uploads via chunked staging allocations to avoid 4GB allocation limits
+  VkResult appendLargeBuffer(const nvvk::LargeBuffer& buffer,
+                             VkDeviceSize             bufferOffset,
+                             VkDeviceSize             dataSize,
+                             const void*              data,
+                             const SemaphoreState&    semaphoreState = {},
+                             VkDeviceSize             chunkSize      = DEFAULT_LARGE_CHUNK_SIZE);
+
+  template <typename T>
+  inline VkResult appendLargeBuffer(const nvvk::LargeBuffer& buffer,
+                                    size_t                   bufferOffset,
+                                    std::span<T>             data,
+                                    const SemaphoreState&    semaphoreState = {},
+                                    VkDeviceSize             chunkSize      = DEFAULT_LARGE_CHUNK_SIZE)
+  {
+    return appendLargeBuffer(buffer, bufferOffset, data.size_bytes(), data.data(), semaphoreState, chunkSize);
+  }
+
+  // dataSize should be kept <= 1GB to be safe to acquire
+  VkResult appendLargeBufferMapping(const nvvk::LargeBuffer& buffer,
+                                    VkDeviceSize             bufferOffset,
+                                    VkDeviceSize             dataSize,
+                                    void*&                   uploadMapping,
+                                    const SemaphoreState&    semaphoreState = {});
+
+  template <typename T>
+  VkResult appendLargeBufferMapping(const nvvk::LargeBuffer& buffer,
+                                    VkDeviceSize             bufferOffset,
+                                    VkDeviceSize             dataSize,
+                                    T*&                      uploadMapping,
+                                    const SemaphoreState&    semaphoreState = {})
+  {
+    return appendLargeBufferMapping(buffer, bufferOffset, dataSize, (void*&)uploadMapping, semaphoreState);
   }
 
   // if the internal state StagingUploader's `enableLayoutBarriers` is true

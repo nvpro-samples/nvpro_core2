@@ -119,10 +119,20 @@ if(MSVC)
   add_compile_options(/W3)
 endif()
 
+# Allow projects to choose whether sublibraries are opt-out (ON) or opt-in (OFF).
+if(NOT DEFINED NVPRO2_ENABLE_DEFAULT)
+  option(NVPRO2_ENABLE_DEFAULT [=[
+Should all nvpro_core2 sublibraries be added by default?
+If this is ON, then you can remove libraries you don't need using option(NVPRO2_ENABLE_{libraryname} "" OFF).
+On the other hand, if this is OFF, then you'll need to add each library you need using option(NVPRO2_ENABLE_{libraryname} "" ON)
+]=]
+         ON)
+endif()
+
 # Then set up targets for all nvpro_core libraries.
 # These are in a specific order because of interdependencies.
 foreach(_LIBRARY IN ITEMS nvimageformats nvutils nvapp nvgui nvgpu_monitor nvvk nvgl nvshaders_host nvaftermath nvslang nvvkglsl nvvkgltf nvnsight)
-  option(NVPRO2_ENABLE_${_LIBRARY} "Enable ${_LIBRARY}" ON)
+  option(NVPRO2_ENABLE_${_LIBRARY} "Enable ${_LIBRARY}" ${NVPRO2_ENABLE_DEFAULT})
   
   if(NVPRO2_ENABLE_${_LIBRARY})
     add_subdirectory(${_LIBRARY})

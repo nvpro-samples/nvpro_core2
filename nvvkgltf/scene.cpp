@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2019-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -31,9 +31,11 @@
 #include <nvutils/timers.hpp>
 
 #include "scene.hpp"
+#include "animation_pointer.hpp"
 
 // List of supported extensions
 static const std::set<std::string> supportedExtensions = {
+    "KHR_animation_pointer",
     "KHR_lights_punctual",
     "KHR_materials_anisotropy",
     "KHR_materials_clearcoat",
@@ -47,6 +49,8 @@ static const std::set<std::string> supportedExtensions = {
     "KHR_materials_unlit",
     "KHR_materials_variants",
     "KHR_materials_volume",
+    "KHR_materials_volume_scatter",
+    "KHR_mesh_quantization",
     "KHR_texture_transform",
     "KHR_materials_dispersion",
     "KHR_node_visibility",
@@ -82,12 +86,24 @@ static glm::vec4 makeFastTangent(const glm::vec3& n)
   return glm::vec4(1.0F - n.x * n.x * a, b, -n.x, 1.0F);
 }
 
+//--------------------------------------------------------------------------------------------------
+// Constructor
+//
+nvvkgltf::Scene::Scene()
+    : m_animationPointer(m_model)
+{
+}
+
+//--------------------------------------------------------------------------------------------------
 // Loading a GLTF file and extracting all information
+//
 bool nvvkgltf::Scene::load(const std::filesystem::path& filename)
 {
   nvutils::ScopedTimer st(std::string(__FUNCTION__) + "\n");
   const std::string    filenameUtf8 = nvutils::utf8FromPath(filename);
   LOGI("%s%s\n", nvutils::ScopedTimer::indent().c_str(), filenameUtf8.c_str());
+
+  m_validSceneParsed = false;
 
   m_filename = filename;
   m_model    = {};
@@ -95,6 +111,21 @@ bool nvvkgltf::Scene::load(const std::filesystem::path& filename)
   std::string        warn;
   std::string        error;
   tcontext.SetMaxExternalFileSize(-1);  // No limit for external files (images, buffers, etc.)
+  // We want to delay image loading until SceneVk::createTextureImages, so that
+  // we can support DDS, KTX, and load images in parallel.
+  // To do this, we give TinyGLTF a load callback that stores raw bytes without decoding.
+  // This is especially important for data URIs (base64-encoded images in JSON), where
+  // TinyGLTF decodes the base64 and passes the raw image bytes to this callback.
+  tcontext.SetImageLoader(
+      [](tinygltf::Image* image, const int /* image_idx */, std::string* /* err */, std::string* /* warn */,
+         int /* req_width */, int /* req_height */, const unsigned char* bytes, int size, void* /*user_data */) {
+        if(bytes != nullptr && size > 0)
+        {
+          image->image.assign(bytes, bytes + size);
+        }
+        return true;
+      },
+      nullptr);
   const std::string ext = nvutils::utf8FromPath(filename.extension());
   bool              result{false};
   if(ext == ".gltf")
@@ -189,17 +220,17 @@ bool nvvkgltf::Scene::load(const std::filesystem::path& filename)
         switch(mcomp.compressionMode)
         {
           case EXT_meshopt_compression::MESHOPT_COMPRESSION_MODE_ATTRIBUTES:
-            warn = meshopt_decodeVertexVersion(source, mcomp.byteLength) != 0;
+            warn = meshopt_decodeVertexVersion(source, mcomp.byteLength) < 0;
             rc   = meshopt_decodeVertexBuffer(result, mcomp.count, mcomp.byteStride, source, mcomp.byteLength);
             break;
 
           case EXT_meshopt_compression::MESHOPT_COMPRESSION_MODE_TRIANGLES:
-            warn = meshopt_decodeIndexVersion(source, mcomp.byteLength) != 1;
+            warn = meshopt_decodeIndexVersion(source, mcomp.byteLength) < 0;
             rc   = meshopt_decodeIndexBuffer(result, mcomp.count, mcomp.byteStride, source, mcomp.byteLength);
             break;
 
           case EXT_meshopt_compression::MESHOPT_COMPRESSION_MODE_INDICES:
-            warn = meshopt_decodeIndexVersion(source, mcomp.byteLength) != 1;
+            warn = meshopt_decodeIndexVersion(source, mcomp.byteLength) < 0;
             rc   = meshopt_decodeIndexSequence(result, mcomp.count, mcomp.byteStride, source, mcomp.byteLength);
             break;
 
@@ -216,7 +247,7 @@ bool nvvkgltf::Scene::load(const std::filesystem::path& filename)
 
         if(warn && !warned)
         {
-          LOGW("Warning: EXT_meshopt_compression data uses versions outside of the glTF specification (vertex 0 / index 1 expected)\n");
+          LOGW("Warning: EXT_meshopt_compression data uses an unsupported or invalid encoding version\n");
           warned = true;
         }
 
@@ -285,9 +316,12 @@ bool nvvkgltf::Scene::load(const std::filesystem::path& filename)
 
   m_currentScene   = m_model.defaultScene > -1 ? m_model.defaultScene : 0;
   m_currentVariant = 0;  // Default KHR_materials_variants
+  m_animationPointer.reset();  // Clear cached state from previous model
   parseScene();
 
-  return result;
+  m_validSceneParsed = !m_renderNodes.empty();
+
+  return m_validSceneParsed;
 }
 
 bool nvvkgltf::Scene::save(const std::filesystem::path& filename)
@@ -347,6 +381,7 @@ bool nvvkgltf::Scene::save(const std::filesystem::path& filename)
 void nvvkgltf::Scene::takeModel(tinygltf::Model&& model)
 {
   m_model = std::move(model);
+  m_animationPointer.reset();  // Clear cached state from previous model
   parseScene();
 }
 
@@ -608,7 +643,9 @@ void nvvkgltf::Scene::destroy()
 {
   clearParsedData();
   m_filename.clear();
-  m_model = {};
+  m_validSceneParsed = false;
+  m_model            = {};
+  m_animationPointer.reset();  // Clear cached state when destroying the scene
 }
 
 
@@ -1035,22 +1072,17 @@ void nvvkgltf::Scene::parseAnimations()
 
         switch(accessor.type)
         {
+          case TINYGLTF_TYPE_VEC2: {
+            // copyAccessorData handles all cases: normal, sparse, and sparse-only (bufferView == -1)
+            tinygltf::utils::copyAccessorData(m_model, accessor, sampler.outputsVec2);
+            break;
+          }
           case TINYGLTF_TYPE_VEC3: {
-            if(accessor.bufferView > -1)
-            {
-              tinygltf::utils::copyAccessorData(m_model, accessor, sampler.outputsVec3);
-            }
-            else
-              sampler.outputsVec3.resize(accessor.count);
+            tinygltf::utils::copyAccessorData(m_model, accessor, sampler.outputsVec3);
             break;
           }
           case TINYGLTF_TYPE_VEC4: {
-            if(accessor.bufferView > -1)
-            {
-              tinygltf::utils::copyAccessorData(m_model, accessor, sampler.outputsVec4);
-            }
-            else
-              sampler.outputsVec4.resize(accessor.count);
+            tinygltf::utils::copyAccessorData(m_model, accessor, sampler.outputsVec4);
             break;
           }
           case TINYGLTF_TYPE_SCALAR: {
@@ -1104,6 +1136,11 @@ void nvvkgltf::Scene::parseAnimations()
       else if(source.target_path == "pointer")
       {
         channel.path = AnimationChannel::PathType::ePointer;
+
+        // Parse KHR_animation_pointer extension
+        assert(tinygltf::utils::hasElementName(source.target_extensions, KHR_ANIMATION_POINTER));
+        const tinygltf::Value& ext = tinygltf::utils::getElementValue(source.target_extensions, KHR_ANIMATION_POINTER);
+        tinygltf::utils::getValue(ext, "pointer", channel.pointerPath);
       }
       channel.samplerIndex = source.sampler;
       channel.node         = source.target_node;
@@ -1152,24 +1189,27 @@ bool nvvkgltf::Scene::updateAnimation(uint32_t animationIndex)
 
   for(auto& channel : animation.channels)
   {
-    if(channel.node < 0 || channel.node >= m_model.nodes.size())  // Invalid node
-      continue;
+    AnimationSampler& sampler = animation.samplers[channel.samplerIndex];
 
-    tinygltf::Node&   gltfNode = m_model.nodes[channel.node];
-    AnimationSampler& sampler  = animation.samplers[channel.samplerIndex];
-
+    // Handle pointer animations (KHR_animation_pointer) - no node required
     if(channel.path == AnimationChannel::PathType::ePointer)
     {
-      static std::unordered_set<int> warnedAnimations;
-      if(warnedAnimations.insert(animationIndex).second)
-      {
-        LOGE("AnimationChannel::PathType::POINTER not implemented for animation %d", animationIndex);
-      }
+      animated |= processAnimationChannel(nullptr, sampler, channel, time);
       continue;
     }
 
-    animated |= processAnimationChannel(gltfNode, sampler, channel, time, animationIndex);
+    // Standard animations require a valid node
+    if(channel.node < 0 || channel.node >= static_cast<int>(m_model.nodes.size()))
+    {
+      continue;  // Invalid node
+    }
+
+    tinygltf::Node& gltfNode = m_model.nodes[channel.node];
+    animated |= processAnimationChannel(&gltfNode, sampler, channel, time);
   }
+
+  // Sync animated properties back to tinygltf::Model (for pointer animations)
+  m_animationPointer.syncToModel();
 
   return animated;
 }
@@ -1177,16 +1217,11 @@ bool nvvkgltf::Scene::updateAnimation(uint32_t animationIndex)
 //--------------------------------------------------------------------------------------------------
 // Process the animation channel
 // - Interpolates the keyframes
-// - Updates the node transformation
+// - Updates the node transformation (if gltfNode is not nullptr)
 // - Updates the morph target weights
-bool nvvkgltf::Scene::processAnimationChannel(tinygltf::Node&         gltfNode,
-                                              AnimationSampler&       sampler,
-                                              const AnimationChannel& channel,
-                                              float                   time,
-                                              uint32_t                animationIndex)
+// - Handles pointer animations (KHR_animation_pointer) when gltfNode is nullptr
+bool nvvkgltf::Scene::processAnimationChannel(tinygltf::Node* gltfNode, AnimationSampler& sampler, const AnimationChannel& channel, float time)
 {
-  std::unordered_set<int> warnedAnimations;
-
   bool animated = false;
 
   for(size_t i = 0; i < sampler.inputs.size() - 1; i++)
@@ -1213,6 +1248,7 @@ bool nvvkgltf::Scene::processAnimationChannel(tinygltf::Node&         gltfNode,
           break;
         }
       }
+      break;  // Found the right time segment
     }
   }
 
@@ -1229,7 +1265,7 @@ float nvvkgltf::Scene::calculateInterpolationFactor(float inputStart, float inpu
 
 //--------------------------------------------------------------------------------------------------
 // Interpolates the keyframes linearly
-void nvvkgltf::Scene::handleLinearInterpolation(tinygltf::Node&         gltfNode,
+void nvvkgltf::Scene::handleLinearInterpolation(tinygltf::Node*         gltfNode,
                                                 AnimationSampler&       sampler,
                                                 const AnimationChannel& channel,
                                                 float                   t,
@@ -1241,89 +1277,128 @@ void nvvkgltf::Scene::handleLinearInterpolation(tinygltf::Node&         gltfNode
       const glm::quat q1 = glm::make_quat(glm::value_ptr(sampler.outputsVec4[index]));
       const glm::quat q2 = glm::make_quat(glm::value_ptr(sampler.outputsVec4[index + 1]));
       glm::quat       q  = glm::normalize(glm::slerp(q1, q2, t));
-      gltfNode.rotation  = {q.x, q.y, q.z, q.w};
+      if(gltfNode)
+        gltfNode->rotation = {q.x, q.y, q.z, q.w};
       break;
     }
     case AnimationChannel::PathType::eTranslation: {
-      glm::vec3 trans      = glm::mix(sampler.outputsVec3[index], sampler.outputsVec3[index + 1], t);
-      gltfNode.translation = {trans.x, trans.y, trans.z};
+      glm::vec3 trans = glm::mix(sampler.outputsVec3[index], sampler.outputsVec3[index + 1], t);
+      if(gltfNode)
+        gltfNode->translation = {trans.x, trans.y, trans.z};
       break;
     }
     case AnimationChannel::PathType::eScale: {
-      glm::vec3 s    = glm::mix(sampler.outputsVec3[index], sampler.outputsVec3[index + 1], t);
-      gltfNode.scale = {s.x, s.y, s.z};
+      glm::vec3 s = glm::mix(sampler.outputsVec3[index], sampler.outputsVec3[index + 1], t);
+      if(gltfNode)
+        gltfNode->scale = {s.x, s.y, s.z};
       break;
     }
     case AnimationChannel::PathType::eWeights: {
+      // Retrieve the mesh from the node
+      if(gltfNode && gltfNode->mesh >= 0)
       {
-        // Retrieve the mesh from the node
-        if(gltfNode.mesh >= 0)
+        tinygltf::Mesh& mesh = m_model.meshes[gltfNode->mesh];
+
+        // Make sure the weights vector is resized to match the number of morph targets
+        if(mesh.weights.size() != sampler.outputsFloat[index].size())
         {
-          tinygltf::Mesh& mesh = m_model.meshes[gltfNode.mesh];
-
-          // Make sure the weights vector is resized to match the number of morph targets
-          if(mesh.weights.size() != sampler.outputsFloat[index].size())
-          {
-            mesh.weights.resize(sampler.outputsFloat[index].size());
-          }
-
-          // Interpolating between weights for morph targets
-          for(size_t j = 0; j < mesh.weights.size(); j++)
-          {
-            float weight1   = sampler.outputsFloat[index][j];
-            float weight2   = sampler.outputsFloat[index + 1][j];
-            mesh.weights[j] = glm::mix(weight1, weight2, t);
-          }
+          mesh.weights.resize(sampler.outputsFloat[index].size());
         }
-        break;
+
+        // Interpolating between weights for morph targets
+        for(size_t j = 0; j < mesh.weights.size(); j++)
+        {
+          float weight1   = sampler.outputsFloat[index][j];
+          float weight2   = sampler.outputsFloat[index + 1][j];
+          mesh.weights[j] = glm::mix(weight1, weight2, t);
+        }
       }
+      break;
+    }
+    case AnimationChannel::PathType::ePointer: {
+      // Pointer animations (KHR_animation_pointer) - gltfNode should be nullptr
+      if(!sampler.outputsVec4.empty() && index + 1 < sampler.outputsVec4.size())
+      {
+        glm::vec4 value = glm::mix(sampler.outputsVec4[index], sampler.outputsVec4[index + 1], t);
+        m_animationPointer.applyValue(channel.pointerPath, value);
+      }
+      else if(!sampler.outputsVec3.empty() && index + 1 < sampler.outputsVec3.size())
+      {
+        glm::vec3 value = glm::mix(sampler.outputsVec3[index], sampler.outputsVec3[index + 1], t);
+        m_animationPointer.applyValue(channel.pointerPath, value);
+      }
+      else if(!sampler.outputsVec2.empty() && index + 1 < sampler.outputsVec2.size())
+      {
+        glm::vec2 value = glm::mix(sampler.outputsVec2[index], sampler.outputsVec2[index + 1], t);
+        m_animationPointer.applyValue(channel.pointerPath, value);
+      }
+      else if(!sampler.outputsFloat.empty() && index + 1 < sampler.outputsFloat.size() && !sampler.outputsFloat[index].empty())
+      {
+        float value = glm::mix(sampler.outputsFloat[index][0], sampler.outputsFloat[index + 1][0], t);
+        m_animationPointer.applyValue(channel.pointerPath, value);
+      }
+      break;
     }
   }
 }
 
 //--------------------------------------------------------------------------------------------------
 // Interpolates the keyframes with a step interpolation
-void nvvkgltf::Scene::handleStepInterpolation(tinygltf::Node& gltfNode, AnimationSampler& sampler, const AnimationChannel& channel, size_t index)
+void nvvkgltf::Scene::handleStepInterpolation(tinygltf::Node* gltfNode, AnimationSampler& sampler, const AnimationChannel& channel, size_t index)
 {
   switch(channel.path)
   {
     case AnimationChannel::PathType::eRotation: {
-      glm::quat q       = glm::quat(sampler.outputsVec4[index]);
-      gltfNode.rotation = {q.x, q.y, q.z, q.w};
+      glm::quat q = glm::quat(sampler.outputsVec4[index]);
+      if(gltfNode)
+        gltfNode->rotation = {q.x, q.y, q.z, q.w};
       break;
     }
     case AnimationChannel::PathType::eTranslation: {
-      glm::vec3 t          = glm::vec3(sampler.outputsVec3[index]);
-      gltfNode.translation = {t.x, t.y, t.z};
+      glm::vec3 trans = glm::vec3(sampler.outputsVec3[index]);
+      if(gltfNode)
+        gltfNode->translation = {trans.x, trans.y, trans.z};
       break;
     }
     case AnimationChannel::PathType::eScale: {
-      glm::vec3 s    = glm::vec3(sampler.outputsVec3[index]);
-      gltfNode.scale = {s.x, s.y, s.z};
+      glm::vec3 s = glm::vec3(sampler.outputsVec3[index]);
+      if(gltfNode)
+        gltfNode->scale = {s.x, s.y, s.z};
+      break;
+    }
+    case AnimationChannel::PathType::eWeights:
+      // Not implemented for step interpolation
+      break;
+    case AnimationChannel::PathType::ePointer: {
+      // Step interpolation for pointer animations (no blending, use exact value)
+      if(!sampler.outputsVec4.empty() && index < sampler.outputsVec4.size())
+      {
+        m_animationPointer.applyValue(channel.pointerPath, sampler.outputsVec4[index]);
+      }
+      else if(!sampler.outputsVec3.empty() && index < sampler.outputsVec3.size())
+      {
+        m_animationPointer.applyValue(channel.pointerPath, sampler.outputsVec3[index]);
+      }
+      else if(!sampler.outputsVec2.empty() && index < sampler.outputsVec2.size())
+      {
+        m_animationPointer.applyValue(channel.pointerPath, sampler.outputsVec2[index]);
+      }
+      else if(!sampler.outputsFloat.empty() && index < sampler.outputsFloat.size() && !sampler.outputsFloat[index].empty())
+      {
+        m_animationPointer.applyValue(channel.pointerPath, sampler.outputsFloat[index][0]);
+      }
       break;
     }
   }
 }
 
 //--------------------------------------------------------------------------------------------------
-// Interpolates the keyframes with a cubic spline interpolation
-void nvvkgltf::Scene::handleCubicSplineInterpolation(tinygltf::Node&         gltfNode,
-                                                     AnimationSampler&       sampler,
-                                                     const AnimationChannel& channel,
-                                                     float                   t,
-                                                     float                   keyDelta,
-                                                     size_t                  index)
+// Implements the logic in
+// https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#interpolation-cubic
+// for general vectors. For quaternions, normalize after calling this function.
+template <class T>
+static T computeCubicInterpolation(const T* values, float t, float keyDelta, size_t index)
 {
-  // Implements the logic in
-  // https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#interpolation-cubic
-  // for quaternions (first case) and other values (second case).
-
-  const size_t prevIndex = index * 3;
-  const size_t nextIndex = (index + 1) * 3;
-  const size_t A         = 0;  // Offset for the in-tangent
-  const size_t V         = 1;  // Offset for the value
-  const size_t B         = 2;  // Offset for the out-tangent
-
   const float tSq = t * t;
   const float tCb = tSq * t;
   const float tD  = keyDelta;
@@ -1334,35 +1409,87 @@ void nvvkgltf::Scene::handleCubicSplineInterpolation(tinygltf::Node&         glt
   const float cA  = tD * (tCb - tSq);          // t_d (t^3 - t^2)
   const float cB  = tD * (tCb - 2 * tSq + t);  // t_d (t^3 - 2 t^2 + t)
 
+  const size_t prevIndex = index * 3;
+  const size_t nextIndex = (index + 1) * 3;
+  const size_t A         = 0;  // Offset for the in-tangent
+  const size_t V         = 1;  // Offset for the value
+  const size_t B         = 2;  // Offset for the out-tangent
+
+  const T& v0 = values[prevIndex + V];  // v_k
+  const T& a  = values[nextIndex + A];  // a_{k+1}
+  const T& b  = values[prevIndex + B];  // b_k
+  const T& v1 = values[nextIndex + V];  // v_{k+1}
+
+  T result = v0 * cV0 + a * cA + b * cB + v1 * cV1;
+  return result;
+}
+
+//--------------------------------------------------------------------------------------------------
+// Interpolates the keyframes with a cubic spline interpolation
+void nvvkgltf::Scene::handleCubicSplineInterpolation(tinygltf::Node*         gltfNode,
+                                                     AnimationSampler&       sampler,
+                                                     const AnimationChannel& channel,
+                                                     float                   t,
+                                                     float                   keyDelta,
+                                                     size_t                  index)
+{
+  // Implements the logic in
+  // https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#interpolation-cubic
+  // for quaternions (first case) and other values (second case).
+
+  // Cubic spline data: each keyframe has 3 values (in-tangent, value, out-tangent)
+  // We need to access up to (index+1)*3+1 (the next keyframe's value)
+  const size_t maxRequiredIndex = (index + 1) * 3 + 1;
+
+  // Handle pointer animations (KHR_animation_pointer extension)
+  if(channel.path == AnimationChannel::PathType::ePointer)
+  {
+    // Pointer animations can use different vector types
+    if(!sampler.outputsVec4.empty() && sampler.outputsVec4.size() > maxRequiredIndex)
+    {
+      glm::vec4 value = computeCubicInterpolation<glm::vec4>(sampler.outputsVec4.data(), t, keyDelta, index);
+      m_animationPointer.applyValue(channel.pointerPath, value);
+    }
+    else if(!sampler.outputsVec3.empty() && sampler.outputsVec3.size() > maxRequiredIndex)
+    {
+      glm::vec3 value = computeCubicInterpolation<glm::vec3>(sampler.outputsVec3.data(), t, keyDelta, index);
+      m_animationPointer.applyValue(channel.pointerPath, value);
+    }
+    else if(!sampler.outputsVec2.empty() && sampler.outputsVec2.size() > maxRequiredIndex)
+    {
+      glm::vec2 value = computeCubicInterpolation<glm::vec2>(sampler.outputsVec2.data(), t, keyDelta, index);
+      m_animationPointer.applyValue(channel.pointerPath, value);
+    }
+    return;
+  }
+
+  // Standard node animations require a valid node
+  if(!gltfNode)
+    return;
+
+  // Handle rotation (quaternion)
   if(channel.path == AnimationChannel::PathType::eRotation)
   {
-    const glm::vec4& v0 = sampler.outputsVec4[prevIndex + V];  // v_k
-    const glm::vec4& a  = sampler.outputsVec4[nextIndex + A];  // a_{k+1}
-    const glm::vec4& b  = sampler.outputsVec4[prevIndex + B];  // b_k
-    const glm::vec4& v1 = sampler.outputsVec4[nextIndex + V];  // v_{k+1}
-
-    glm::vec4 result = cV0 * v0 + cB * b + cV1 * v1 + cA * a;
-
-    glm::quat quatResult = glm::make_quat(glm::value_ptr(result));
-    quatResult           = glm::normalize(quatResult);
-    gltfNode.rotation    = {quatResult.x, quatResult.y, quatResult.z, quatResult.w};
+    if(sampler.outputsVec4.size() > maxRequiredIndex)
+    {
+      glm::vec4 result = computeCubicInterpolation<glm::vec4>(sampler.outputsVec4.data(), t, keyDelta, index);
+      glm::quat quatResult = glm::make_quat(glm::value_ptr(result));
+      quatResult           = glm::normalize(quatResult);
+      gltfNode->rotation   = {quatResult.x, quatResult.y, quatResult.z, quatResult.w};
+    }
   }
-  else
+  // Handle translation and scale (vec3)
+  else if(sampler.outputsVec3.size() > maxRequiredIndex)
   {
-    const glm::vec3& v0 = sampler.outputsVec3[prevIndex + V];  // v_k
-    const glm::vec3& a  = sampler.outputsVec3[nextIndex + A];  // a_{k+1}
-    const glm::vec3& b  = sampler.outputsVec3[prevIndex + B];  // b_k
-    const glm::vec3& v1 = sampler.outputsVec3[nextIndex + V];  // v_{k+1}
-
-    glm::vec3 result = cV0 * v0 + cB * b + cV1 * v1 + cA * a;
+    glm::vec3 result = computeCubicInterpolation<glm::vec3>(sampler.outputsVec3.data(), t, keyDelta, index);
 
     if(channel.path == AnimationChannel::PathType::eTranslation)
     {
-      gltfNode.translation = {result.x, result.y, result.z};
+      gltfNode->translation = {result.x, result.y, result.z};
     }
     else if(channel.path == AnimationChannel::PathType::eScale)
     {
-      gltfNode.scale = {result.x, result.y, result.z};
+      gltfNode->scale = {result.x, result.y, result.z};
     }
   }
 }

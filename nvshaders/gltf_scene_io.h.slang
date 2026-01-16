@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -150,31 +150,34 @@ struct GltfShadeMaterial
   float3 diffuseTransmissionColor;   // offset 192  - 12 bytes
   float  diffuseTransmissionFactor;  // offset 204  - 4 bytes
 
-  int doubleSided;  // offset 208  - 4 bytes
+  float3 multiscatterColor;   // offset 208  - 12 bytes  // KHR_materials_volume_scatter
+  float  scatterAnisotropy;   // offset 220  - 4 bytes   // KHR_materials_volume_scatter
+
+  int doubleSided;  // offset 224  - 4 bytes
   // Texture infos (uint16_t, 2 bytes each)
-  uint16_t pbrBaseColorTexture;              // offset 212  - 2 bytes
-  uint16_t normalTexture;                    // offset 214  - 2 bytes
-  uint16_t pbrMetallicRoughnessTexture;      // offset 216  - 2 bytes
-  uint16_t emissiveTexture;                  // offset 218  - 2 bytes
-  uint16_t transmissionTexture;              // offset 220  - 2 bytes
-  uint16_t thicknessTexture;                 // offset 222  - 2 bytes
-  uint16_t clearcoatTexture;                 // offset 224  - 2 bytes
-  uint16_t clearcoatRoughnessTexture;        // offset 226  - 2 bytes
-  uint16_t clearcoatNormalTexture;           // offset 228  - 2 bytes
-  uint16_t specularTexture;                  // offset 230  - 2 bytes
-  uint16_t specularColorTexture;             // offset 232  - 2 bytes
-  uint16_t iridescenceTexture;               // offset 234  - 2 bytes
-  uint16_t iridescenceThicknessTexture;      // offset 236  - 2 bytes
-  uint16_t anisotropyTexture;                // offset 238  - 2 bytes
-  uint16_t sheenColorTexture;                // offset 240  - 2 bytes
-  uint16_t sheenRoughnessTexture;            // offset 242  - 2 bytes
-  uint16_t occlusionTexture;                 // offset 244  - 2 bytes
-  uint16_t pbrDiffuseTexture;                // offset 246  - 2 bytes
-  uint16_t pbrSpecularGlossinessTexture;     // offset 248  - 2 bytes
-  uint16_t diffuseTransmissionTexture;       // offset 250  - 2 bytes
-  uint16_t diffuseTransmissionColorTexture;  // offset 252  - 2 bytes
-  uint16_t _pad1;                            // offset 254  - 2 bytes
-  // Total size: 256 bytes
+  uint16_t pbrBaseColorTexture;              // offset 228  - 2 bytes
+  uint16_t normalTexture;                    // offset 230  - 2 bytes
+  uint16_t pbrMetallicRoughnessTexture;      // offset 232  - 2 bytes
+  uint16_t emissiveTexture;                  // offset 234  - 2 bytes
+  uint16_t transmissionTexture;              // offset 236  - 2 bytes
+  uint16_t thicknessTexture;                 // offset 238  - 2 bytes
+  uint16_t clearcoatTexture;                 // offset 240  - 2 bytes
+  uint16_t clearcoatRoughnessTexture;        // offset 242  - 2 bytes
+  uint16_t clearcoatNormalTexture;           // offset 244  - 2 bytes
+  uint16_t specularTexture;                  // offset 246  - 2 bytes
+  uint16_t specularColorTexture;             // offset 248  - 2 bytes
+  uint16_t iridescenceTexture;               // offset 250  - 2 bytes
+  uint16_t iridescenceThicknessTexture;      // offset 252  - 2 bytes
+  uint16_t anisotropyTexture;                // offset 254  - 2 bytes
+  uint16_t sheenColorTexture;                // offset 256  - 2 bytes
+  uint16_t sheenRoughnessTexture;            // offset 258  - 2 bytes
+  uint16_t occlusionTexture;                 // offset 260  - 2 bytes
+  uint16_t pbrDiffuseTexture;                // offset 262  - 2 bytes
+  uint16_t pbrSpecularGlossinessTexture;     // offset 264  - 2 bytes
+  uint16_t diffuseTransmissionTexture;       // offset 266  - 2 bytes
+  uint16_t diffuseTransmissionColorTexture;  // offset 268  - 2 bytes
+  uint16_t _pad1;                            // offset 270  - 2 bytes
+  // Total size: 272 bytes
 };
 
 inline GltfTextureInfo defaultGltfTextureInfo()
@@ -222,6 +225,8 @@ inline GltfShadeMaterial defaultGltfMaterial()
   m.pbrGlossinessFactor         = 1;
   m.diffuseTransmissionColor    = float3(1, 1, 1);
   m.diffuseTransmissionFactor   = 0;
+  m.multiscatterColor           = float3(0, 0, 0);
+  m.scatterAnisotropy           = 0;
   m.doubleSided                 = 0;
 
   m.pbrBaseColorTexture             = -1;

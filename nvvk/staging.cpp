@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 *
-* SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+* SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
 * SPDX-License-Identifier: Apache-2.0
 */
 
@@ -81,7 +81,7 @@ VkResult StagingUploader::acquireStagingSpace(BufferRange& stagingSpace, size_t 
   StagingResource stagingResource;
   stagingResource.semaphoreState = semaphoreState;
 
-  // VMA_MEMORY_USAGE_AUTO_PREFER_HOST staging memory is meant to not cost additional device memory
+  // VMA_MEMORY_USAGE_CPU_ONLY staging memory is meant to not cost additional device memory
   //
   // VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT staging memory is filled sequentially
   // VMA_ALLOCATION_CREATE_MAPPED_BIT staging memory is filled through pointer access
@@ -93,7 +93,7 @@ VkResult StagingUploader::acquireStagingSpace(BufferRange& stagingSpace, size_t 
 
   VmaAllocationCreateInfo allocInfo = {
       .flags         = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
-      .usage         = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
+      .usage         = VMA_MEMORY_USAGE_CPU_ONLY,
       .requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
   };
 
@@ -362,6 +362,92 @@ VkResult StagingUploader::appendBufferRangeMapping(const nvvk::BufferRange& buff
 
     return VK_SUCCESS;
   }
+}
+
+VkResult StagingUploader::appendLargeBuffer(const nvvk::LargeBuffer& buffer,
+                                            VkDeviceSize             bufferOffset,
+                                            VkDeviceSize             dataSize,
+                                            const void*              data,
+                                            const SemaphoreState&    semaphoreState,
+                                            VkDeviceSize             chunkSize)
+{
+  if(!data || dataSize == 0)
+    return VK_SUCCESS;
+
+  const uint8_t* srcData   = static_cast<const uint8_t*>(data);
+  VkDeviceSize   remaining = dataSize;
+  VkDeviceSize   srcOffset = 0;
+  VkDeviceSize   dstOffset = bufferOffset;
+
+  // Upload in chunks (default 256MB) to avoid staging buffer allocation issues
+  while(remaining > 0)
+  {
+    VkDeviceSize currentChunkSize = std::min(remaining, chunkSize);
+
+    nvvk::BufferRange stagingSpace;
+    NVVK_FAIL_RETURN(acquireStagingSpace(stagingSpace, currentChunkSize, srcData + srcOffset, semaphoreState));
+
+    VkBufferCopy2 copyRegionInfo{
+        .sType     = VK_STRUCTURE_TYPE_BUFFER_COPY_2,
+        .srcOffset = stagingSpace.offset,
+        .dstOffset = dstOffset,
+        .size      = currentChunkSize,
+    };
+
+    VkCopyBufferInfo2 copyBufferInfo{
+        .sType       = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+        .srcBuffer   = stagingSpace.buffer,
+        .dstBuffer   = buffer.buffer,
+        .regionCount = 1,
+        .pRegions    = nullptr,  // set when calling `cmdUploadAppended`
+    };
+
+    m_batch.stagingSize += currentChunkSize;
+    m_batch.copyBufferRegions.emplace_back(copyRegionInfo);
+    m_batch.copyBufferInfos.emplace_back(copyBufferInfo);
+
+    srcOffset += currentChunkSize;
+    dstOffset += currentChunkSize;
+    remaining -= currentChunkSize;
+  }
+
+  return VK_SUCCESS;
+}
+
+VkResult StagingUploader::appendLargeBufferMapping(const nvvk::LargeBuffer& buffer,
+                                                   VkDeviceSize             bufferOffset,
+                                                   VkDeviceSize             dataSize,
+                                                   void*&                   uploadMapping,
+                                                   const SemaphoreState&    semaphoreState)
+{
+  if(dataSize == 0)
+    return VK_SUCCESS;
+
+  nvvk::BufferRange stagingSpace;
+  NVVK_FAIL_RETURN(acquireStagingSpace(stagingSpace, dataSize, nullptr, semaphoreState));
+
+  uploadMapping = stagingSpace.mapping;
+
+  VkBufferCopy2 copyRegionInfo{
+      .sType     = VK_STRUCTURE_TYPE_BUFFER_COPY_2,
+      .srcOffset = stagingSpace.offset,
+      .dstOffset = bufferOffset,
+      .size      = dataSize,
+  };
+
+  VkCopyBufferInfo2 copyBufferInfo{
+      .sType       = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+      .srcBuffer   = stagingSpace.buffer,
+      .dstBuffer   = buffer.buffer,
+      .regionCount = 1,
+      .pRegions    = nullptr,  // set when calling `cmdUploadAppended`
+  };
+
+  m_batch.stagingSize += dataSize;
+  m_batch.copyBufferRegions.emplace_back(copyRegionInfo);
+  m_batch.copyBufferInfos.emplace_back(copyBufferInfo);
+
+  return VK_SUCCESS;
 }
 
 VkResult StagingUploader::appendImage(nvvk::Image& image, size_t dataSize, const void* data, VkImageLayout newLayout, const SemaphoreState& semaphoreState)
