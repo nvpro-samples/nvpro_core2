@@ -67,6 +67,15 @@ struct TonemapperData
   float brightness = 1.0f;
   float saturation = 1.0f;
   float vignette   = 0.0f;
+  
+  // Advanced color grading
+  float vibrance       = 0.0f;   // Boosts desaturated colors while preserving saturated ones
+  float shadowBias     = 0.0f;   // -1 to 1: Adjust shadow tones
+  float midtoneBias    = 0.0f;   // -1 to 1: Adjust midtone brightness
+  float highlightBias  = 0.0f;   // -1 to 1: Adjust highlight tones
+  float3 coolColor     = float3(1.0f, 1.0f, 1.0f);  // Tint for shadows in split toning
+  float3 warmColor     = float3(1.0f, 1.0f, 1.0f);  // Tint for highlights in split toning
+  float splitBalance   = 0.0f;   // -0.5 to 0.5: Balance between cool and warm tones
 
   // Auto-Exposure
   int      autoExposure         = 0;      // 0: off, 1: on

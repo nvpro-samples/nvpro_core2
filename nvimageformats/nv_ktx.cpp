@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2021-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -24,6 +24,7 @@
 #include <atomic>
 #include <cassert>  // Some functions produce assertion errors to assist with debugging when NDEBUG is false.
 #include <fstream>
+#include <limits>
 #include <mutex>
 #include <sstream>
 #include <string.h>  // memcpy
@@ -85,6 +86,99 @@ bool GetNumSubresources(size_t a, size_t b, size_t c, size_t& out)
 {
   return checked_math::mul3(std::max(a, size_t(1)), std::max(b, size_t(1)), std::max(c, size_t(1)), out);
 }
+
+// Supports an std::istream interface that operates on an in-memory array.
+// Same as in nv_dds.cpp.
+class MemoryStreamBuffer : public std::basic_streambuf<char>
+{
+  char*           m_data        = nullptr;
+  std::streamoff  m_nextIndex   = 0;  // Always in [0, m_sizeInBytes].
+  std::streamsize m_sizeInBytes = 0;
+
+public:
+  MemoryStreamBuffer(char* data, std::streamsize sizeInBytes)
+      : m_data(data)
+      , m_sizeInBytes(sizeInBytes)
+  {
+  }
+  pos_type seekoff(off_type off, std::ios_base::seekdir dir, std::ios_base::openmode which = std::ios_base::in | std::ios_base::out) override
+  {
+    const pos_type indicatesError = pos_type(static_cast<off_type>(-1));
+    switch(dir)
+    {
+      case std::ios_base::beg:
+        if(off < 0 || off > m_sizeInBytes)
+          return indicatesError;
+        m_nextIndex = off;
+        break;
+      case std::ios_base::cur:
+        if(((off < 0) && m_nextIndex + off < 0) || (off >= 0 && off > m_sizeInBytes - m_nextIndex))
+          return indicatesError;
+        m_nextIndex += off;
+        break;
+      case std::ios_base::end:
+        if(off > 0 || off < -m_sizeInBytes)
+          return indicatesError;
+        m_nextIndex = m_sizeInBytes + off;
+        break;
+      default:
+        return indicatesError;
+    }
+    return m_nextIndex;
+  }
+  pos_type seekpos(pos_type pos, std::ios_base::openmode which = std::ios_base::in | std::ios_base::out) override
+  {
+    return seekoff(static_cast<off_type>(pos), std::ios_base::beg, which);
+  }
+  // Gets the number of characters certainly available.
+  std::streamsize showmanyc() override { return m_sizeInBytes - m_nextIndex; }
+  // Gets the next character advancing the read pointer; EOF on error.
+  int_type uflow() override
+  {
+    if(m_nextIndex < m_sizeInBytes)
+    {
+      return traits_type::to_int_type(m_data[m_nextIndex++]);
+    }
+    return traits_type::eof();
+  }
+  // Gets the next character without advancing the read pointer; EOF on error.
+  int_type underflow() override
+  {
+    if(m_nextIndex < m_sizeInBytes)
+    {
+      return traits_type::to_int_type(m_data[m_nextIndex]);
+    }
+    return traits_type::eof();
+  }
+  // Reads a given number of characters and stores them into s' character array.
+  // Returns the number of characters successfully read.
+  std::streamsize xsgetn(char_type* s, std::streamsize count) override
+  {
+    if(count < 0 || s == nullptr || m_nextIndex >= m_sizeInBytes)
+    {
+      return 0;
+    }
+    const std::streamsize readableChars = std::min(count, m_sizeInBytes - m_nextIndex);
+    memcpy(s, m_data + m_nextIndex, readableChars);
+    m_nextIndex += readableChars;
+    return readableChars;
+  }
+};
+
+// An std::istream interface for a constant, in-memory array.
+// Note that Clang emits a Wreorder-ctor warning unless the memory buffer
+// members are listed before the istream, so we use multiple inheritance
+// here to put them in the right order.
+class MemoryStream : private MemoryStreamBuffer, public std::istream
+{
+public:
+  MemoryStream(const char* data, std::streamsize sizeInBytes)
+      : MemoryStreamBuffer(const_cast<char*>(data), sizeInBytes)
+      , std::istream(this)
+  {
+    rdbuf(this);
+  }
+};
 }  // namespace
 
 ErrorWithText KTXImage::allocate(uint32_t _num_mips, uint32_t _num_layers, uint32_t _num_faces)
@@ -2911,7 +3005,7 @@ ErrorWithText KTXImage::writeKTX2Stream(std::ostream& output, const WriteSetting
   // Fill in the KTXwriter field if it's not already assigned.
   if(key_value_data.find("KTXwriter") == key_value_data.end())
   {
-    key_value_data["KTXwriter"] = StringToCharVector("nvpro-samples' nv_ktx version 1.0.1");
+    key_value_data["KTXwriter"] = StringToCharVector("nvpro-samples' nv_ktx version 1.1.0");
   }
 
   // We now know the offset of the key/value data.
@@ -3201,6 +3295,16 @@ ErrorWithText KTXImage::readFromFile(const char* filename, const ReadSettings& r
 {
   std::ifstream input_stream(filename, std::ifstream::in | std::ifstream::binary);
   return readFromStream(input_stream, readSettings);
+}
+
+ErrorWithText KTXImage::readFromMemory(const char* buffer, size_t bufferSize, const ReadSettings& readSettings)
+{
+  if(bufferSize > static_cast<size_t>(std::numeric_limits<std::streamsize>::max()))
+  {
+    return "The `bufferSize` parameter was too large to be stored in an std::streamsize.";
+  }
+  MemoryStream stream(buffer, static_cast<std::streamsize>(bufferSize));
+  return readFromStream(stream, readSettings);
 }
 
 }  // namespace nv_ktx

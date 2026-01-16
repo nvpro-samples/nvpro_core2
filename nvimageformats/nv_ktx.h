@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2021-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,13 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 /*-----------------------------------------------------------------------------
  
-nv_ktx 1.0.1
+nv_ktx 1.1.0
 
 This is a mostly self-contained reader and writer for KTX2 files and reader
 for KTX1 files. It only relies on Vulkan (for KTX2), GL (for KTX1), and the
@@ -208,6 +208,11 @@ public:
   // Wrapper for readFromStream for a filename.
   ErrorWithText readFromFile(const char*         filename,       // The .ktx or .ktx2 file to read from.
                              const ReadSettings& readSettings);  // Settings for the reader
+
+  // Wrapper for readFromStream for a buffer in memory.
+  ErrorWithText readFromMemory(const char*         buffer,         // The buffer in memory.
+                               size_t              bufferSize,     // Its length in bytes.
+                               const ReadSettings& readSettings);  // Settings for the reader.
 
   // Writes this structure in KTX2 format to a stream.
   ErrorWithText writeKTX2Stream(std::ostream&        output,  // The output stream, at the point to start writing

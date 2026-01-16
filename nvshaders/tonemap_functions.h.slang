@@ -23,6 +23,7 @@
 
 #include "slang_types.h"
 #include "tonemap_io.h.slang"
+#include "functions.h.slang"
 
 NAMESPACE_SHADERIO_BEGIN()
 
@@ -267,6 +268,52 @@ inline float3 cie1931XyzFromCie1960UV(float2 uv)
   return float3(xy.x * rcpY, 1.f, (1.f - xy.x) * rcpY - 1.f);
 }
 
+/*-------------------------------------------------------------------------------------------------
+# Advanced Color Grading Functions
+-------------------------------------------------------------------------------------------------*/
+
+// Saturation: linearly scales colors away from the closest grayscale value.
+// sat > 1 increases saturation, sat = 1 applies no change, sat = 0 converts to grayscale.
+inline float3 adjustSaturation(float3 color, float sat)
+{
+  float lum = luminance(color);
+  return lerp(float3(lum), color, float3(sat));
+}
+
+// Vibrance: Boosts saturation of desaturated colors while preserving already-saturated colors.
+// Unlike saturation which affects all colors equally, vibrance is selective.
+inline float3 adjustVibrance(float3 color, float vibrance)
+{
+  float maxc = max(color.x, max(color.y, color.z));
+  float minc = min(color.x, min(color.y, color.z));
+  float sat  = maxc - minc;
+  return lerp(adjustSaturation(color, 1.0F + vibrance), color, float3(saturate(sat)));
+}
+
+// Shadow/Midtone/Highlight Adjustment: Selectively adjusts different tonal ranges.
+// s, m, h are bias values typically in range [-1, 1]
+inline float3 smhAdjust(float3 color, float shadowBias, float midtoneBias, float highlightBias)
+{
+  float lum = luminance(color);
+  
+  // Compute weights for each tonal range using smooth transitions
+  float shadow    = smoothstep(0.0F, 0.5F, 1.0F - lum);
+  float highlight = smoothstep(0.0F, 0.7F, lum);
+  float midtone   = 1.0F - shadow - highlight;
+  
+  // Apply weighted adjustments
+  return color * (1.0F + shadow * shadowBias + midtone * midtoneBias + highlight * highlightBias);
+}
+
+// Split Toning: Applies different color tints to shadows and highlights.
+// balance shifts the transition point between cool and warm tones.
+inline float3 splitToning(float3 color, float3 coolColor, float3 warmColor, float balance)
+{
+  float lum = luminance(color);
+  float t = smoothstep(0.0F, 1.0F, lum + balance);
+  return color * lerp(coolColor, warmColor, float3(t));
+}
+
 // Returns a matrix that corrects a light source with the given Kelvin
 // temperature and Duv tint to RGB (1,1,1), then multiplies by exposure.
 // Use it like mul(inputMatrix, color).
@@ -348,13 +395,34 @@ inline float3 applyTonemap(TonemapperData tm, float3 color, float2 pixel, float2
   }
 
   // SDR color grading.
+  
   // contrast and clamp (just in case)
   c = clamp(lerp(float3(0.5F), c, float3(tm.contrast)), float3(0.F), float3(1.F));
+  
   // brightness
   c = pow(c, float3(1.0F / tm.brightness));
+  
   // saturation
-  float3 i = float3(dot(c, float3(0.299F, 0.587F, 0.114F)));
-  c        = lerp(i, c, float3(tm.saturation));
+  c = adjustSaturation(c, tm.saturation);
+  
+  // Advanced color grading
+  // vibrance (selective saturation boost for desaturated colors)
+  if(tm.vibrance != 0.0F)
+  {
+    c = adjustVibrance(c, tm.vibrance);
+  }
+  // shadow/midtone/highlight adjustments
+  if(tm.shadowBias != 0.0F || tm.midtoneBias != 0.0F || tm.highlightBias != 0.0F)
+  {
+    c = smhAdjust(c, tm.shadowBias, tm.midtoneBias, tm.highlightBias);
+  }
+  // split toning (cool shadows, warm highlights)
+  if(tm.coolColor.x != 1.0F || tm.coolColor.y != 1.0F || tm.coolColor.z != 1.0F ||
+     tm.warmColor.x != 1.0F || tm.warmColor.y != 1.0F || tm.warmColor.z != 1.0F)
+  {
+    c = splitToning(c, tm.coolColor, tm.warmColor, tm.splitBalance);
+  }
+  
   // vignette
   float2 center_uv = (pixel / imageSize) * 2.0F - 1.0F;
   c *= 1.0F - dot(center_uv, center_uv) * tm.vignette;

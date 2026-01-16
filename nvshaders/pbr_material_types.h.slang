@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -54,6 +54,9 @@ struct PbrMaterial
   float3 attenuationColor;     // KHR_materials_volume
   float  attenuationDistance;  //
   bool   isThinWalled;         // Replace for isThinWalled?
+
+  float3 scatterCoefficient;   // KHR_materials_volume_scatter: σ_s (scattering coefficient)
+  float  scatterAnisotropy;    // KHR_materials_volume_scatter: g parameter for Henyey-Greenstein
 
   float  clearcoat;           // KHR_materials_clearcoat
   float  clearcoatRoughness;  //
@@ -99,6 +102,9 @@ PbrMaterial defaultPbrMaterial()
   mat.attenuationColor    = float3(1.0F);
   mat.attenuationDistance = 1.0F;
   mat.isThinWalled        = true;
+
+  mat.scatterCoefficient = float3(0.0F);
+  mat.scatterAnisotropy  = 0.0F;
 
   mat.clearcoat          = 0.0F;
   mat.clearcoatRoughness = 0.01F;

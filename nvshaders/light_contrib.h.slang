@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -26,9 +26,9 @@
 struct LightContrib
 {
   float3 incidentVector;  // Direction from surface to light source (normalized)
-  float  halfAngularSize; // Half angle subtended by the light source (in radians)
   float3 intensity;       // RGB intensity of the light contribution
   float  distance;        // Distance from surface to light source
+  float  pdf;             // Sampling PDF for MIS (DIRAC for punctual lights, 1/solidAngle for area)
 };
 
 /*-----------------------------------------------------------------------------------------------------------------
@@ -43,7 +43,7 @@ struct LightContrib
 
 ## Returns:
 A `LightContrib` structure containing the calculated light contribution information,
-including incident direction, light intensity, angular size, and distance.
+including incident direction, light intensity, distance, and direction PDF.
 
 ## Notes:
 For area lights, using random sampling will result in more realistic but potentially
@@ -53,20 +53,24 @@ proper attenuation and falloff calculations.
 LightContrib singleLightContribution(in GltfLight light, in float3 surfacePos, in float3 surfaceNormal, in float2 randVal)
 {
   LightContrib contrib;
-  contrib.incidentVector  = float3(0.0F);
-  contrib.halfAngularSize = 0.0F;
-  contrib.intensity       = float3(0.0F);
-  contrib.distance        = INFINITE;
-  float irradiance        = 0.0F;
+  contrib.incidentVector     = float3(0.0F);
+  contrib.intensity          = float3(0.0F);
+  contrib.distance           = INFINITE;
+  contrib.pdf                = DIRAC;  // Default to punctual light (delta distribution)
+  float irradiance           = 0.0F;
+  float oneMinusCosHalfAngle = 0.0F;
 
   if(light.type == LightType::eLightTypeDirectional)
   {
     if(dot(surfaceNormal, -light.direction) <= 0.0)
       return contrib;
 
-    contrib.incidentVector  = light.direction;
-    contrib.halfAngularSize = light.angularSizeOrInvRange * 0.5F;
-    irradiance              = light.intensity;
+    contrib.incidentVector = light.direction;
+    // Approximation to 1.F - cos(light.angularSizeOrInvRange * 0.5F),
+    // accurate to within 0.5% over [0, pi/2]
+    float temp           = light.angularSizeOrInvRange * light.angularSizeOrInvRange;
+    oneMinusCosHalfAngle = fma(-1.F / 384.F, temp, 0.125F) * temp;
+    irradiance           = light.intensity;
   }
   else if(light.type == LightType::eLightTypeSpot || light.type == LightType::eLightTypePoint)
   {
@@ -99,10 +103,12 @@ LightContrib singleLightContribution(in GltfLight light, in float3 surfacePos, i
 
     if(light.radius > 0.0F)
     {
-      contrib.halfAngularSize = atan(min(light.radius * r_distance, 1.0F));
+      // More numerically stable version of 1 - cos(atan(min(light.radius * r_distance, 1.0F)));
+      float r              = min(light.radius * r_distance, 1.0F);
+      float r2p1           = fma(r, r, 1.F);
+      oneMinusCosHalfAngle = r * r / (r2p1 + sqrt(r2p1));
 
-      // A good enough approximation for 2 * (1 - cos(halfAngularSize)), numerically more accurate for small angular sizes
-      float solidAngleOverPi = square(contrib.halfAngularSize);
+      float solidAngleOverPi = 2.f * oneMinusCosHalfAngle;
 
       float radianceTimesPi = light.intensity / square(light.radius);
 
@@ -119,25 +125,29 @@ LightContrib singleLightContribution(in GltfLight light, in float3 surfacePos, i
   contrib.intensity = irradiance * light.color;
 
 
-  if(contrib.halfAngularSize > 0.0F)
-  {  // <----- Sampling area lights
-    float angular_size = contrib.halfAngularSize;
-
-    // section 34  https://people.cs.kuleuven.be/~philip.dutre/GI/TotalCompendium.pdf
-    float3  dir;
-    float tmp      = (1.0F - randVal.y * (1.0F - cos(angular_size)));
-    float tmp2     = tmp * tmp;
-    float theta    = sqrt(1.0F - tmp2);
-    dir.x          = cos(M_TWO_PI * randVal.x) * theta;
-    dir.y          = sin(M_TWO_PI * randVal.x) * theta;
-    dir.z          = tmp;
+  if(oneMinusCosHalfAngle > 0.0F)
+  {  
+    // <----- Area lights: spherical (point/spot with radius) or directional with angular size (sun/moon)
+    // Uniform cone sampling - section 34 https://people.cs.kuleuven.be/~philip.dutre/GI/TotalCompendium.pdf
+    
+    float3 dir;
+    float tmp   = 1.0F - randVal.y * oneMinusCosHalfAngle;
+    float tmp2  = tmp * tmp;
+    float theta = sqrt(1.0F - tmp2);
+    dir.x = cos(M_TWO_PI * randVal.x) * theta;
+    dir.y = sin(M_TWO_PI * randVal.x) * theta;
+    dir.z = tmp;
+    
     float3 light_dir = -contrib.incidentVector;
     float3 tangent, binormal;
     orthonormalBasis(light_dir, tangent, binormal);
-    float3x3 tbn  = float3x3(tangent, binormal, light_dir);
-    light_dir = normalize(mul(dir, tbn));
+    float3x3 tbn = float3x3(tangent, binormal, light_dir);
+    light_dir    = normalize(mul(dir, tbn));
 
     contrib.incidentVector = -light_dir;
+    
+    // PDF for uniform cone sampling: 1 / solidAngle, where solidAngle = 2π(1 - cos(θ))
+    contrib.pdf = (1.0F / M_TWO_PI) / max(oneMinusCosHalfAngle, 1e-10F);
   }
 
   return contrib;

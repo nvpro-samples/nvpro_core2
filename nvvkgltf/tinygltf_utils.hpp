@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2024-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -41,6 +41,7 @@
 #define EXTENSION_ATTRIB_IRAY "NV_attributes_iray"
 #define MSFT_TEXTURE_DDS_NAME "MSFT_texture_dds"
 #define KHR_LIGHTS_PUNCTUAL_EXTENSION_NAME "KHR_lights_punctual"
+#define KHR_ANIMATION_POINTER "KHR_animation_pointer"
 
 // https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_materials_specular/README.md
 #define KHR_MATERIALS_SPECULAR_EXTENSION_NAME "KHR_materials_specular"
@@ -135,6 +136,14 @@ struct KHR_materials_volume
   tinygltf::TextureInfo thicknessTexture    = {};
   float                 attenuationDistance = std::numeric_limits<float>::max();
   glm::vec3             attenuationColor    = {1.0f, 1.0f, 1.0f};
+};
+
+// https://github.com/KhronosGroup/glTF/blob/e17468db6fd9ae3ce73504a9f317bd853af01a30/extensions/2.0/Khronos/KHR_materials_volume_scatter/README.md
+#define KHR_MATERIALS_VOLUME_SCATTER_EXTENSION_NAME "KHR_materials_volume_scatter"
+struct KHR_materials_volume_scatter
+{
+  glm::vec3 multiscatterColor = {0.0f, 0.0f, 0.0f};
+  float     scatterAnisotropy = 0.0f;
 };
 
 
@@ -563,6 +572,11 @@ Specifically, an accessor is simple if it:
 template <typename T>
 bool isAccessorSimple(const tinygltf::Model& tmodel, const tinygltf::Accessor& accessor)
 {
+  // Sparse-only accessors (bufferView == -1) are never simple
+  if(accessor.bufferView < 0)
+  {
+    return false;
+  }
   const auto& bufferView          = tmodel.bufferViews[accessor.bufferView];
   using ScalarType                = ScalarTypeGetter<T>::type;
   constexpr int gltfComponentType = (std::is_same_v<ScalarType, float> ? TINYGLTF_COMPONENT_TYPE_FLOAT :  //
@@ -686,10 +700,6 @@ std::span<const uint32_t> indices = getAccessorData<uint32_t>(model, indexAccess
 template <typename T>
 inline std::span<T> getAccessorData(tinygltf::Model& model, const tinygltf::Accessor& accessor, std::vector<T>* storageIfComplex)
 {
-  tinygltf::BufferView& view        = model.bufferViews[accessor.bufferView];
-  tinygltf::Buffer&     buffer      = model.buffers[view.buffer];
-  unsigned char*        bufferBytes = &buffer.data[accessor.byteOffset + view.byteOffset];
-
   // The following block of code figures out how to access T.
   using ScalarType                 = ScalarTypeGetter<T>::type;
   constexpr bool toFloat           = std::is_same_v<ScalarType, float>;
@@ -704,6 +714,28 @@ inline std::span<T> getAccessorData(tinygltf::Model& model, const tinygltf::Acce
   {
     return {};  // Invalid
   }
+
+  // Handle sparse-only accessors (bufferView == -1): per glTF spec, all elements
+  // are zero-initialized, then sparse values are applied on top.
+  if(accessor.bufferView < 0)
+  {
+    if(!storageIfComplex || !storageIfComplex->empty())
+    {
+      return {};
+    }
+    std::vector<T>& storageRef = *storageIfComplex;
+    storageRef.resize(accessor.count, T{});  // Zero-initialize all elements
+
+    // Apply sparse values on top
+    forEachSparseValue<T>(model, accessor, 0, accessor.count,
+                          [&storageRef](size_t index, const T* value) { storageRef[index] = *value; });
+
+    return std::span<T>(storageRef.data(), storageRef.size());
+  }
+
+  tinygltf::BufferView& view        = model.bufferViews[accessor.bufferView];
+  tinygltf::Buffer&     buffer      = model.buffers[view.buffer];
+  unsigned char*        bufferBytes = &buffer.data[accessor.byteOffset + view.byteOffset];
 
   // Fast path: Can we return a pointer to the data directly?
   if(isAccessorSimple<T>(model, accessor))
@@ -1022,6 +1054,8 @@ KHR_materials_ior          getIor(const tinygltf::Material& tmat);
 void                       setIor(tinygltf::Material& tmat, const KHR_materials_ior& ior);
 KHR_materials_volume       getVolume(const tinygltf::Material& tmat);
 void                       setVolume(tinygltf::Material& tmat, const KHR_materials_volume& volume);
+KHR_materials_volume_scatter getVolumeScatter(const tinygltf::Material& tmat);
+void                       setVolumeScatter(tinygltf::Material& tmat, const KHR_materials_volume_scatter& scatter);
 KHR_materials_displacement getDisplacement(const tinygltf::Material& tmat);
 void                       setDisplacement(tinygltf::Material& tmat, const KHR_materials_displacement& displacement);
 KHR_materials_emissive_strength getEmissiveStrength(const tinygltf::Material& tmat);
