@@ -46,6 +46,13 @@
 #include "nvutils/parallel_work.hpp"
 #include "nvvk/helpers.hpp"
 
+#define WITH_WUFFS 1
+
+#if WITH_WUFFS
+#define WUFFS_IMAGE_IMPLEMENTATION
+#include "wuffs_image.h"
+#endif
+
 // GPU memory category names for scene resources
 namespace {
 constexpr std::string_view kMemCategoryGeometry  = "Geometry";
@@ -1407,44 +1414,86 @@ void nvvkgltf::SceneVk::loadImageFromMemory(uint64_t imageID, const void* data, 
     // Read the header once to check how many channels it has. We can't trivially use RGB/VK_FORMAT_R8G8B8_UNORM and
     // need to set requiredComponents=4 in such cases.
     int w = 0, h = 0, comp = 0;
-    if(!stbi_info_from_memory(dataStb, lengthStb, &w, &h, &comp))
-    {
-      LOGW("Failed to get info using stb_image for image %" PRIu64 "\n", imageID);
-      return;
-    }
 
-    // Read the header again to check if it has 16 bit data, e.g. for a heightmap.
-    const bool is16Bit = stbi_is_16_bit_from_memory(dataStb, lengthStb);
+    #if WITH_WUFFS
+      if(!wuffs_info_from_memory(dataStb, lengthStb, &w, &h, &comp))
+      {
+        LOGW("Failed to get info using stb_image for image %" PRIu64 "\n", imageID);
+        return;
+      }
 
-    // Load the image
-    stbi_uc* decompressed = nullptr;
-    size_t   bytesPerPixel{0};
-    int      requiredComponents = comp == 1 ? 1 : 4;
-    if(is16Bit)
-    {
-      stbi_us* decompressed16 = stbi_load_16_from_memory(dataStb, lengthStb, &w, &h, &comp, requiredComponents);
-      bytesPerPixel           = sizeof(*decompressed16) * requiredComponents;
-      decompressed            = (stbi_uc*)(decompressed16);
-    }
-    else
-    {
-      decompressed  = stbi_load_from_memory(dataStb, lengthStb, &w, &h, &comp, requiredComponents);
-      bytesPerPixel = sizeof(*decompressed) * requiredComponents;
-    }
-    switch(requiredComponents)
-    {
-      case 1:
-        image.format = is16Bit ? VK_FORMAT_R16_UNORM : VK_FORMAT_R8_UNORM;
-        // For 1-component textures, expand the single channel to RGB for proper grayscale display
-        image.componentMapping = {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_ONE};
-        break;
-      case 4:
-        image.format = is16Bit ? VK_FORMAT_R16G16B16A16_UNORM :
-                       isSrgb  ? VK_FORMAT_R8G8B8A8_SRGB :
-                                 VK_FORMAT_R8G8B8A8_UNORM;
+      // Read the header again to check if it has 16 bit data, e.g. for a heightmap.
+      const bool is16Bit = wuffs_is_16_bit_from_memory(dataStb, lengthStb);
 
-        break;
-    }
+      // Load the image
+      stbi_uc* decompressed = nullptr;
+      size_t   bytesPerPixel{0};
+      int      requiredComponents = comp == 1 ? 1 : 4;
+      if(is16Bit)
+      {
+        stbi_us* decompressed16 = wuffs_load_16_from_memory(dataStb, lengthStb, &w, &h, &comp, requiredComponents);
+        bytesPerPixel           = sizeof(*decompressed16) * requiredComponents;
+        decompressed            = (stbi_uc*)(decompressed16);
+      }
+      else
+      {
+        decompressed  = wuffs_load_from_memory(dataStb, lengthStb, &w, &h, &comp, requiredComponents);
+        bytesPerPixel = sizeof(*decompressed) * requiredComponents;
+      }
+      switch(requiredComponents)
+      {
+        case 1:
+          image.format = is16Bit ? VK_FORMAT_R16_UNORM : VK_FORMAT_R8_UNORM;
+          // For 1-component textures, expand the single channel to RGB for proper grayscale display
+          image.componentMapping = {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_ONE};
+          break;
+        case 4:
+          image.format = is16Bit ? VK_FORMAT_R16G16B16A16_UNORM :
+                        isSrgb  ? VK_FORMAT_R8G8B8A8_SRGB :
+                                  VK_FORMAT_R8G8B8A8_UNORM;
+
+          break;
+      }
+    #else
+      if(!stbi_info_from_memory(dataStb, lengthStb, &w, &h, &comp))
+      {
+        LOGW("Failed to get info using stb_image for image %" PRIu64 "\n", imageID);
+        return;
+      }
+
+      // Read the header again to check if it has 16 bit data, e.g. for a heightmap.
+      const bool is16Bit = stbi_is_16_bit_from_memory(dataStb, lengthStb);
+
+      // Load the image
+      stbi_uc* decompressed = nullptr;
+      size_t   bytesPerPixel{0};
+      int      requiredComponents = comp == 1 ? 1 : 4;
+      if(is16Bit)
+      {
+        stbi_us* decompressed16 = stbi_load_16_from_memory(dataStb, lengthStb, &w, &h, &comp, requiredComponents);
+        bytesPerPixel           = sizeof(*decompressed16) * requiredComponents;
+        decompressed            = (stbi_uc*)(decompressed16);
+      }
+      else
+      {
+        decompressed  = stbi_load_from_memory(dataStb, lengthStb, &w, &h, &comp, requiredComponents);
+        bytesPerPixel = sizeof(*decompressed) * requiredComponents;
+      }
+      switch(requiredComponents)
+      {
+        case 1:
+          image.format = is16Bit ? VK_FORMAT_R16_UNORM : VK_FORMAT_R8_UNORM;
+          // For 1-component textures, expand the single channel to RGB for proper grayscale display
+          image.componentMapping = {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_ONE};
+          break;
+        case 4:
+          image.format = is16Bit ? VK_FORMAT_R16G16B16A16_UNORM :
+                        isSrgb  ? VK_FORMAT_R8G8B8A8_SRGB :
+                                  VK_FORMAT_R8G8B8A8_UNORM;
+
+          break;
+      }
+    #endif
 
     // Make a copy of the image data to be uploaded to Vulkan later
     if(decompressed && w > 0 && h > 0 && image.format != VK_FORMAT_UNDEFINED)
