@@ -1414,7 +1414,6 @@ void nvvkgltf::SceneVk::loadImageFromMemory(uint64_t imageID, const void* data, 
     // Read the header once to check how many channels it has. We can't trivially use RGB/VK_FORMAT_R8G8B8_UNORM and
     // need to set requiredComponents=4 in such cases.
     int w = 0, h = 0, comp = 0;
-
     if(!stbi_info_from_memory(dataStb, lengthStb, &w, &h, &comp))
     {
       LOGW("Failed to get info using stb_image for image %" PRIu64 "\n", imageID);
@@ -1448,8 +1447,8 @@ void nvvkgltf::SceneVk::loadImageFromMemory(uint64_t imageID, const void* data, 
         break;
       case 4:
         image.format = is16Bit ? VK_FORMAT_R16G16B16A16_UNORM :
-                      isSrgb  ? VK_FORMAT_R8G8B8A8_SRGB :
-                                VK_FORMAT_R8G8B8A8_UNORM;
+                       isSrgb  ? VK_FORMAT_R8G8B8A8_SRGB :
+                                 VK_FORMAT_R8G8B8A8_UNORM;
 
         break;
     }
