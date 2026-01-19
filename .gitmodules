@@ -1,3 +1,3 @@
-[submodule "third_party/wuffs-replacement-stb"]
-	path = third_party/wuffs-replacement-stb
-	url = https://github.com/tigrazone/wuffs-replacement-stb
+[submodule "third_party/wuffs-mirror-release-c"]
+	path = third_party/wuffs-mirror-release-c
+	url = https://github.com/google/wuffs-mirror-release-c/
