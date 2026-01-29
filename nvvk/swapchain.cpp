@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -26,13 +26,15 @@
 #include "debug_util.hpp"
 #include "swapchain.hpp"
 
+
 VkResult nvvk::Swapchain::init(const InitInfo& info)
 {
-  m_physicalDevice = info.physicalDevice;
-  m_device         = info.device;
-  m_queue          = info.queue;
-  m_surface        = info.surface;
-  m_cmdPool        = info.cmdPool;
+  m_physicalDevice  = info.physicalDevice;
+  m_device          = info.device;
+  m_queue           = info.queue;
+  m_surface         = info.surface;
+  m_cmdPool         = info.cmdPool;
+  m_preferredFormat = info.preferredFormat;
   if(info.preferredVsyncOffMode != VK_PRESENT_MODE_MAX_ENUM_KHR)
     m_preferredVsyncOffMode = info.preferredVsyncOffMode;
   if(info.preferredVsyncOnMode != VK_PRESENT_MODE_MAX_ENUM_KHR)
@@ -67,10 +69,11 @@ VkResult nvvk::Swapchain::initResources(VkExtent2D& outWindowSize, bool vSync)
   VkSurfaceCapabilities2KHR             capabilities2{.sType = VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_2_KHR};
   NVVK_FAIL_RETURN(vkGetPhysicalDeviceSurfaceCapabilities2KHR(m_physicalDevice, &surfaceInfo2, &capabilities2));
 
-  uint32_t formatCount;
-  NVVK_FAIL_RETURN(vkGetPhysicalDeviceSurfaceFormats2KHR(m_physicalDevice, &surfaceInfo2, &formatCount, nullptr));
-  std::vector<VkSurfaceFormat2KHR> formats(formatCount, {.sType = VK_STRUCTURE_TYPE_SURFACE_FORMAT_2_KHR});
-  NVVK_FAIL_RETURN(vkGetPhysicalDeviceSurfaceFormats2KHR(m_physicalDevice, &surfaceInfo2, &formatCount, formats.data()));
+  m_availableFormats = getAvailableFormats(m_physicalDevice, m_surface);
+  if(m_availableFormats.empty())
+  {
+    return VK_ERROR_INITIALIZATION_FAILED;
+  }
 
   uint32_t presentModeCount;
   NVVK_FAIL_RETURN(vkGetPhysicalDeviceSurfacePresentModesKHR(m_physicalDevice, m_surface, &presentModeCount, nullptr));
@@ -78,9 +81,10 @@ VkResult nvvk::Swapchain::initResources(VkExtent2D& outWindowSize, bool vSync)
   NVVK_FAIL_RETURN(
       vkGetPhysicalDeviceSurfacePresentModesKHR(m_physicalDevice, m_surface, &presentModeCount, presentModes.data()));
 
-  // Choose the best available surface format and present mode
-  const VkSurfaceFormat2KHR surfaceFormat2 = selectSwapSurfaceFormat(formats);
-  const VkPresentModeKHR    presentMode    = selectSwapPresentMode(presentModes, vSync);
+  // Choose the best available surface format and present mode ans store it
+  m_surfaceFormat = selectSwapSurfaceFormat(m_availableFormats);
+
+  const VkPresentModeKHR presentMode = selectSwapPresentMode(presentModes, vSync);
   // Set the window size according to the surface's current extent
   outWindowSize = capabilities2.surfaceCapabilities.currentExtent;
   // Set the number of images in flight, respecting the GPU's maxImageCount limit.
@@ -90,16 +94,14 @@ VkResult nvvk::Swapchain::initResources(VkExtent2D& outWindowSize, bool vSync)
   {
     m_maxFramesInFlight = std::min(m_maxFramesInFlight, capabilities2.surfaceCapabilities.maxImageCount);
   }
-  // Store the chosen image format
-  m_imageFormat = surfaceFormat2.surfaceFormat.format;
 
   // Create the swapchain itself
   const VkSwapchainCreateInfoKHR swapchainCreateInfo{
       .sType            = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
       .surface          = m_surface,
       .minImageCount    = m_maxFramesInFlight,
-      .imageFormat      = surfaceFormat2.surfaceFormat.format,
-      .imageColorSpace  = surfaceFormat2.surfaceFormat.colorSpace,
+      .imageFormat      = m_surfaceFormat.surfaceFormat.format,
+      .imageColorSpace  = m_surfaceFormat.surfaceFormat.colorSpace,
       .imageExtent      = capabilities2.surfaceCapabilities.currentExtent,
       .imageArrayLayers = 1,
       .imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
@@ -129,7 +131,7 @@ VkResult nvvk::Swapchain::initResources(VkExtent2D& outWindowSize, bool vSync)
   VkImageViewCreateInfo imageViewCreateInfo{
       .sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
       .viewType = VK_IMAGE_VIEW_TYPE_2D,
-      .format   = m_imageFormat,
+      .format   = m_surfaceFormat.surfaceFormat.format,
       .components = {.r = VK_COMPONENT_SWIZZLE_IDENTITY, .g = VK_COMPONENT_SWIZZLE_IDENTITY, .b = VK_COMPONENT_SWIZZLE_IDENTITY, .a = VK_COMPONENT_SWIZZLE_IDENTITY},
       .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1},
   };
@@ -264,8 +266,52 @@ void nvvk::Swapchain::presentFrame(VkQueue queue)
   m_frameResourceIndex = (m_frameResourceIndex + 1) % m_maxFramesInFlight;
 }
 
+std::vector<VkSurfaceFormat2KHR> nvvk::Swapchain::getAvailableFormats(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface)
+{
+  const VkPhysicalDeviceSurfaceInfo2KHR surfaceInfo2{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SURFACE_INFO_2_KHR, .surface = surface};
+  uint32_t formatCount;
+  if(VK_SUCCESS != NVVK_FAIL_REPORT(vkGetPhysicalDeviceSurfaceFormats2KHR(physicalDevice, &surfaceInfo2, &formatCount, nullptr)))
+  {
+    return {};
+  }
+
+  std::vector<VkSurfaceFormat2KHR> availableFormats(formatCount);
+  for(auto& fmt : availableFormats)
+    fmt.sType = VK_STRUCTURE_TYPE_SURFACE_FORMAT_2_KHR;
+  if(VK_SUCCESS
+     != NVVK_FAIL_REPORT(
+         vkGetPhysicalDeviceSurfaceFormats2KHR(physicalDevice, &surfaceInfo2, &formatCount, availableFormats.data())))
+  {
+    return {};
+  }
+
+  return availableFormats;
+}
+
+bool nvvk::Swapchain::setPreferredSwapchainFormat(const VkSurfaceFormat2KHR& preferred)
+{
+  for(const auto& fmt : m_availableFormats)
+  {
+    if(fmt.surfaceFormat.format == preferred.surfaceFormat.format
+       && fmt.surfaceFormat.colorSpace == preferred.surfaceFormat.colorSpace)
+    {
+      m_preferredFormat = preferred;
+      requestRebuild();
+      return true;
+    }
+  }
+  return false;
+}
+
 VkSurfaceFormat2KHR nvvk::Swapchain::selectSwapSurfaceFormat(const std::vector<VkSurfaceFormat2KHR>& availableFormats) const
 {
+  // If a preferred format is specified, use it.
+  // We don't check for availability assuming the preferred format had been selected from the list of available formats.
+  if(m_preferredFormat.surfaceFormat.format != VK_FORMAT_UNDEFINED)
+  {
+    return m_preferredFormat;
+  }
+
   // If there's only one available format and it's undefined, return a default format.
   if(availableFormats.size() == 1 && availableFormats[0].surfaceFormat.format == VK_FORMAT_UNDEFINED)
   {

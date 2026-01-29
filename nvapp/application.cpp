@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2014-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -44,9 +44,6 @@
 #include <nvgui/style.hpp>
 
 #include "application.hpp"
-
-// Default values
-constexpr int32_t k_imageQuality = 90;
 
 // GLFW Callback for file drop
 static void dropCb(GLFWwindow* window, int count, const char** paths)
@@ -177,15 +174,14 @@ void nvapp::Application::init(ApplicationCreateInfo& info)
   // Create the swapchain
   if(!m_headless)
   {
-    nvvk::Swapchain::InitInfo swapChainInit{
-        .physicalDevice        = m_physicalDevice,
-        .device                = m_device,
-        .queue                 = m_queues[0],
-        .surface               = m_surface,
-        .cmdPool               = m_transientCmdPool,
-        .preferredVsyncOffMode = info.preferredVsyncOffMode,
-        .preferredVsyncOnMode  = info.preferredVsyncOnMode,
-    };
+    nvvk::Swapchain::InitInfo swapChainInit{.physicalDevice        = m_physicalDevice,
+                                            .device                = m_device,
+                                            .queue                 = m_queues[0],
+                                            .surface               = m_surface,
+                                            .cmdPool               = m_transientCmdPool,
+                                            .preferredVsyncOffMode = info.preferredVsyncOffMode,
+                                            .preferredVsyncOnMode  = info.preferredVsyncOnMode,
+                                            .preferredFormat       = info.preferredSurfaceFormat};
 
     // We do some custom error-handling here to provide additional information
     // about the reason creating the swapchain failed.
@@ -423,7 +419,7 @@ void nvapp::Application::run()
     // Handle Screenshot Requests
     if(m_screenShotRequested && (m_frameRingCurrent == m_screenShotFrame))
     {
-      saveScreenShot(m_screenShotFilename, k_imageQuality);
+      saveScreenShot(m_screenShotFilename, m_screenShotQuality);
       m_screenShotRequested = false;
     }
 
@@ -978,62 +974,60 @@ void nvapp::Application::setupImGuiVulkanBackend(ImGuiConfigFlags configFlags)
 }
 
 
-void nvapp::Application::saveImageToFile(VkImage srcImage, VkExtent2D imageSize, const std::filesystem::path& filename, int quality)
+void nvapp::Application::saveImageToFile(VkImage srcImage, VkExtent2D srcSize, const std::filesystem::path& filename, int quality, VkImageLayout srcLayout)
 {
   VkDevice         device         = m_device;
   VkPhysicalDevice physicalDevice = m_physicalDevice;
   VkImage          dstImage       = {};
   VkDeviceMemory   dstImageMemory = {};
-  VkCommandBuffer  cmd            = createTempCmdBuffer();
+
+  vkDeviceWaitIdle(m_device);
+
+  VkCommandBuffer cmd = createTempCmdBuffer();
 
   VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
   if(filename.extension() == ".hdr")
   {
     format = VK_FORMAT_R32G32B32A32_SFLOAT;
   }
-  nvvk::imageToLinear(cmd, device, physicalDevice, srcImage, imageSize, dstImage, dstImageMemory, format);
+  VkResult result = nvvk::imageToLinear(cmd, device, physicalDevice, srcImage, srcSize, dstImage, dstImageMemory, format, srcLayout);
   submitAndWaitTempCmdBuffer(cmd);
 
-  nvvk::saveImageToFile(device, dstImage, dstImageMemory, imageSize, filename, quality);
+  if(result == VK_SUCCESS)
+  {
+    result = nvvk::saveImageToFile(device, dstImage, dstImageMemory, srcSize, filename, quality);
+  }
 
   // Clean up resources
-  vkUnmapMemory(device, dstImageMemory);
-  vkFreeMemory(device, dstImageMemory, nullptr);
-  vkDestroyImage(device, dstImage, nullptr);
+  if(dstImage)
+  {
+    vkDestroyImage(m_device, dstImage, nullptr);
+  }
+  if(dstImageMemory)
+  {
+    vkFreeMemory(m_device, dstImageMemory, nullptr);
+  }
 }
 
 
 // Record that a screenshot is requested, and will be saved after a full
 // frame cycle loop (so that ImGui has time to clear the menu).
-void nvapp::Application::screenShot(const std::filesystem::path& filename, int quality)
+void nvapp::Application::requestScreenShot(const std::filesystem::path& filename, int quality)
 {
   m_screenShotRequested = true;
   m_screenShotFilename  = filename;
   // Making sure the screenshot is taken after the swapchain loop (remove the menu after click)
   m_screenShotFrame = (m_frameRingCurrent - 1 + m_swapchain.getMaxFramesInFlight()) % m_swapchain.getMaxFramesInFlight();
+  m_screenShotQuality = quality;
 }
 
 // Save the current swapchain image to a file
 void nvapp::Application::saveScreenShot(const std::filesystem::path& filename, int quality)
 {
-  VkExtent2D     size     = m_windowSize;
-  VkImage        srcImage = m_swapchain.getImage();
-  VkImage        dstImage;
-  VkDeviceMemory dstImageMemory;
+  VkExtent2D size     = m_windowSize;
+  VkImage    srcImage = m_swapchain.getImage();
 
-  vkDeviceWaitIdle(m_device);
-  VkCommandBuffer cmd = createTempCmdBuffer();
-  nvvk::cmdImageMemoryBarrier(cmd, {srcImage, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_GENERAL});
-  nvvk::imageToLinear(cmd, m_device, m_physicalDevice, srcImage, size, dstImage, dstImageMemory, VK_FORMAT_R8G8B8A8_UNORM);
-  nvvk::cmdImageMemoryBarrier(cmd, {srcImage, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR});
-  submitAndWaitTempCmdBuffer(cmd);
-
-  nvvk::saveImageToFile(m_device, dstImage, dstImageMemory, size, filename, quality);
-
-  // Clean up resources
-  vkUnmapMemory(m_device, dstImageMemory);
-  vkFreeMemory(m_device, dstImageMemory, nullptr);
-  vkDestroyImage(m_device, dstImage, nullptr);
+  saveImageToFile(srcImage, size, filename, quality, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 }
 
 

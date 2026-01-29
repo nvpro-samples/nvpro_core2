@@ -1,5 +1,7 @@
-# This function compiles GLSL shaders into C++ headers using glslangValidator
+# This function compiles GLSL shaders into C++ headers and .spv files using glslangValidator.
 
+# Usage:
+#
 #   # List of shaders
 #   set(SHADER_FILES
 #     ${CMAKE_SOURCE_DIR}/shaders/shader1.glsl
@@ -17,7 +19,8 @@
 # ...
 #     # Optional arguments
 #     TARGET_ENV "vulkan1.1"
-#     EXTRA_FLAGS "-I<dir>"
+#     EXTRA_FLAGS "-I<dir>" "-Dfoo=1"
+#     NAME_SUFFIX ".combination_1"
 #   )
 #   
 #   # Use the generated headers as needed (example: link them to a target)
@@ -28,7 +31,7 @@
 function(compile_glsl SHADER_FILES OUTPUT_DIR SHADER_HEADERS_VAR)
   # Optional arguments for flexibility
   set(options )
-  set(oneValueArgs TARGET_ENV)
+  set(oneValueArgs TARGET_ENV NAME_SUFFIX)
   set(multiValueArgs EXTRA_FLAGS)
   cmake_parse_arguments(COMPILE_SHADER "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
@@ -38,6 +41,7 @@ function(compile_glsl SHADER_FILES OUTPUT_DIR SHADER_HEADERS_VAR)
     set(TARGET_ENV "vulkan1.3")
   endif()
   set(EXTRA_FLAGS ${COMPILE_SHADER_EXTRA_FLAGS})
+  set(NAME_SUFFIX ${COMPILE_SHADER_NAME_SUFFIX})
 
   # Ensure the output directory exists
   file(MAKE_DIRECTORY ${OUTPUT_DIR})
@@ -49,6 +53,7 @@ function(compile_glsl SHADER_FILES OUTPUT_DIR SHADER_HEADERS_VAR)
   # Iterate over shader files
   foreach(SHADER ${SHADER_FILES})
     get_filename_component(SHADER_NAME ${SHADER} NAME)
+    string(APPEND SHADER_NAME ${NAME_SUFFIX})
     string(REPLACE "." "_" VN_SHADER_NAME ${SHADER_NAME})
     set(OUTPUT_HEADER "${OUTPUT_DIR}/${SHADER_NAME}.h")
     set(OUTPUT_SPV "${OUTPUT_DIR}/${SHADER_NAME}.spv")
@@ -80,6 +85,7 @@ function(compile_glsl SHADER_FILES OUTPUT_DIR SHADER_HEADERS_VAR)
       OUTPUT ${OUTPUT_HEADER} ${OUTPUT_SPV}
       COMMAND echo ${COMMAND_HEADER}
       COMMAND ${COMMAND_HEADER}
+	  COMMAND echo ${COMMAND_SPV}
       COMMAND ${COMMAND_SPV}
       MAIN_DEPENDENCY ${SHADER}
     )

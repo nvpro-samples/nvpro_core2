@@ -224,11 +224,11 @@ endif()
 
 # zstd
 if(NOT TARGET zstd)
-  set(ZSTD_BUILD_PROGRAMS OFF)
-  set(ZSTD_BUILD_SHARED OFF)
-  set(ZSTD_BUILD_STATIC ON)
-  set(ZSTD_BUILD_TESTS OFF)
-  set(ZSTD_USE_STATIC_RUNTIME ON)
+  option(ZSTD_BUILD_PROGRAMS "Build command-line programs" OFF)
+  option(ZSTD_BUILD_SHARED "BUIlD SHARED LIBRARIES" OFF)
+  option(ZSTD_BUILD_STATIC "BUILD STATIC LIBRARIES" ON)
+  option(ZSTD_BUILD_TESTS "Build test suite" OFF)
+  option(ZSTD_USE_STATIC_RUNTIME "Link to static runtime libraries" ON)
   set(_ZSTD_DIR ${CMAKE_CURRENT_LIST_DIR}/zstd)
   # The EXCLUDE_FROM_ALL here removes Zstd from the INSTALL target
   add_subdirectory(${_ZSTD_DIR}/build/cmake ${CMAKE_BINARY_DIR}/zstd EXCLUDE_FROM_ALL)

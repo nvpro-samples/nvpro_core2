@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -49,13 +49,14 @@ public:
   bool        needRebuilding() const { return m_needRebuild; }
   VkImage     getImage() const { return m_images[m_frameImageIndex].image; }
   VkImageView getImageView() const { return m_images[m_frameImageIndex].imageView; }
-  VkFormat    getImageFormat() const { return m_imageFormat; }
+  VkFormat    getImageFormat() const { return m_surfaceFormat.surfaceFormat.format; }
   uint32_t    getMaxFramesInFlight() const { return m_maxFramesInFlight; }
   VkSemaphore getImageAvailableSemaphore() const
   {
     return m_frameResources[m_frameResourceIndex].imageAvailableSemaphore;
   }
   VkSemaphore getRenderFinishedSemaphore() const { return m_frameResources[m_frameImageIndex].renderFinishedSemaphore; }
+  VkSurfaceFormat2KHR getSurfaceFormat() const { return m_surfaceFormat; }
 
   struct InitInfo
   {
@@ -66,6 +67,9 @@ public:
     VkCommandPool    cmdPool{};
     VkPresentModeKHR preferredVsyncOffMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
     VkPresentModeKHR preferredVsyncOnMode  = VK_PRESENT_MODE_FIFO_KHR;
+    // If provided , use this surface format. Make sure to select one of the formats returned by getAvailableFormats().
+    VkSurfaceFormat2KHR preferredFormat = {.sType         = VK_STRUCTURE_TYPE_SURFACE_FORMAT_2_KHR,
+                                           .surfaceFormat = {VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR}};
   };
 
   // Initialize the swapchain with the provided context and surface, then we can create and re-create it
@@ -107,6 +111,25 @@ public:
   void presentFrame(VkQueue queue);
 
 
+  /*--
+   * Retrieve all image formats the given surface can support.
+  -*/
+  static std::vector<VkSurfaceFormat2KHR> getAvailableFormats(VkPhysicalDevice physicalDevice, VkSurfaceKHR surface);
+
+  /*--
+   * Retrieve all image formats the swapchain's surface can support.
+  -*/
+  const std::vector<VkSurfaceFormat2KHR>& getAvailableFormats() const { return m_availableFormats; }
+
+  /*--
+   * Set a new preferred swapchain format. This will not immediately rebuild the swapchain with the new format.
+   * Instead, needRebuilding() will now return true and the next call to reinitResources() will actually
+   * rebuild the swapchain with the new format.
+   * Returns false if 'format' is not supported.
+  -*/
+  bool setPreferredSwapchainFormat(const VkSurfaceFormat2KHR& preferred);
+
+
 private:
   // Represents an image within the swapchain that can be rendered to.
   struct Image
@@ -143,13 +166,13 @@ private:
   Swapchain(Swapchain&) = delete;                    //
   Swapchain& operator=(const Swapchain&) = default;  // Allow copy only for internal use in deinit() to restore pristine state
 
-  VkPhysicalDevice m_physicalDevice{};  // The physical device (GPU)
-  VkDevice         m_device{};          // The logical device (interface to the physical device)
-  QueueInfo        m_queue{};           // The queue used to submit command buffers to the GPU
-  VkSwapchainKHR   m_swapChain{};       // The swapchain
-  VkFormat         m_imageFormat{};     // The format of the swapchain images
-  VkSurfaceKHR     m_surface{};         // The surface to present images to
-  VkCommandPool    m_cmdPool{};         // The command pool for the swapchain
+  VkPhysicalDevice    m_physicalDevice{};  // The physical device (GPU)
+  VkDevice            m_device{};          // The logical device (interface to the physical device)
+  QueueInfo           m_queue{};           // The queue used to submit command buffers to the GPU
+  VkSwapchainKHR      m_swapChain{};       // The swapchain
+  VkSurfaceFormat2KHR m_surfaceFormat;     // the surface format used by the swapchain
+  VkSurfaceKHR        m_surface{};         // The surface to present images to
+  VkCommandPool       m_cmdPool{};         // The command pool for the swapchain
 
   std::vector<Image>          m_images{};                // The swapchain images and their views
   std::vector<FrameResources> m_frameResources{};        // Synchronization primitives for each frame
@@ -157,8 +180,11 @@ private:
   uint32_t                    m_frameImageIndex    = 0;  // Index of the swapchain image we're currently rendering to
   bool                        m_needRebuild        = false;  // Flag indicating if the swapchain needs to be rebuilt
 
-  VkPresentModeKHR m_preferredVsyncOffMode = VK_PRESENT_MODE_IMMEDIATE_KHR;  // used if available
-  VkPresentModeKHR m_preferredVsyncOnMode  = VK_PRESENT_MODE_FIFO_KHR;       // used if available
+  VkPresentModeKHR                 m_preferredVsyncOffMode = VK_PRESENT_MODE_IMMEDIATE_KHR;  // used if available
+  VkPresentModeKHR                 m_preferredVsyncOnMode  = VK_PRESENT_MODE_FIFO_KHR;       // used if available
+  std::vector<VkSurfaceFormat2KHR> m_availableFormats{};  // List of formats available for this surface
+  VkSurfaceFormat2KHR              m_preferredFormat = {.sType = VK_STRUCTURE_TYPE_SURFACE_FORMAT_2_KHR,
+                                                        .surfaceFormat{VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR}};  // Optional preferred format
 
   // Triple buffering allows us to pipeline CPU and GPU work, which gives us
   // good throughput if their sum takes more than a frame.

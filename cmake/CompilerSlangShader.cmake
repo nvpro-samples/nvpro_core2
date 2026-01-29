@@ -1,5 +1,7 @@
-# This function compiles GLSL shaders into C++ headers using glslangValidator
+# This function compiles Slang shaders into C++ headers and .spv files using slangc.
 
+# Usage:
+#
 #   # List of shaders
 #   set(SHADER_FILES
 #     ${CMAKE_SOURCE_DIR}/shaders/shader1.glsl
@@ -10,14 +12,15 @@
 #   set(SHADER_OUTPUT_DIR "${CMAKE_BINARY_DIR}/_autogen")
 #   
 #   # Call the function to compile shaders
-#   compile_glsl(
+#   compile_slang(
 #     "${SHADER_FILES}"
 #     "${SHADER_OUTPUT_DIR}"
 #     GENERATED_SHADER_HEADERS
 # ...
 #     # Optional arguments
 #     TARGET_ENV "vulkan1.1"
-#     EXTRA_FLAGS "-I<dir>"
+#     EXTRA_FLAGS "-I<dir>" "-Dfoo=1"
+#     NAME_SUFFIX ".combination_1"
 #   )
 #   
 #   # Use the generated headers as needed (example: link them to a target)
@@ -28,10 +31,9 @@
 function(compile_slang SHADER_FILES OUTPUT_DIR SHADER_HEADERS_VAR)
   # Optional arguments for flexibility
   set(options )
-  set(oneValueArgs TARGET_ENV DEBUG_LEVEL OPTIMIZATION_LEVEL)
+  set(oneValueArgs TARGET_ENV DEBUG_LEVEL OPTIMIZATION_LEVEL NAME_SUFFIX)
   set(multiValueArgs EXTRA_FLAGS)
   cmake_parse_arguments(COMPILE_SHADER "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
-  cmake_parse_arguments(COMPILE_SHADER "${options}" "${oneValueArgs}" "" ${ARGN})
 
   # Set defaults for optional arguments
   set(TARGET_ENV ${COMPILE_SHADER_TARGET_ENV})
@@ -39,6 +41,7 @@ function(compile_slang SHADER_FILES OUTPUT_DIR SHADER_HEADERS_VAR)
     set(TARGET_ENV "vulkan1.4")
   endif()
   set(EXTRA_FLAGS ${COMPILE_SHADER_EXTRA_FLAGS})
+  set(NAME_SUFFIX ${COMPILE_SHADER_NAME_SUFFIX})
 
   set(DEBUG_LEVEL ${COMPILE_SHADER_DEBUG_LEVEL})
   if(NOT COMPILE_SHADER_DEBUG_LEVEL)
@@ -60,7 +63,8 @@ function(compile_slang SHADER_FILES OUTPUT_DIR SHADER_HEADERS_VAR)
 
   set(_SLANG_FLAGS
         -profile sm_6_6+spirv_1_6 # Target SM 6.6 and SPIR-V 1.6
-        -capability spvInt64Atomics+spvShaderInvocationReorderNV+spvShaderClockKHR+spvRayTracingMotionBlurNV+spvRayQueryKHR+SPV_KHR_compute_shader_derivatives # Enable all capabilities
+        # Enable default capabilities for our shaders; more can be added using EXTRA_FLAGS.
+        -capability spvInt64Atomics+spvShaderClockKHR+spvRayTracingMotionBlurNV+spvRayQueryKHR+SPV_KHR_compute_shader_derivatives
         -target spirv             # Target SPIR-V
         -emit-spirv-directly      # Emit SPIR-V directly without intermediate files
         -force-glsl-scalar-layout # Force scalar layout for Vulkan shaders
@@ -75,23 +79,17 @@ function(compile_slang SHADER_FILES OUTPUT_DIR SHADER_HEADERS_VAR)
   # Compile Slang shaders using slangc
   foreach(SHADER ${SHADER_FILES})
       get_filename_component(SHADER_NAME ${SHADER} NAME)
+      string(APPEND SHADER_NAME ${NAME_SUFFIX})
       string(REPLACE "." "_" VN_SHADER_NAME ${SHADER_NAME})
       set(OUTPUT_FILE ${OUTPUT_DIR}/${SHADER_NAME})
-      if(UNIX)
-          # Workaround: the Vulkan SDK sets LD_LIBRARY_PATH and
-          # slangc may find a libslang.so there instead of its own
-          set(_SLANGC env LD_LIBRARY_PATH= ${Slang_SLANGC_EXECUTABLE})
-      else()
-          set(_SLANGC ${Slang_SLANGC_EXECUTABLE})
-      endif()
-      set(_COMMAND_H ${_SLANGC}
+      set(_COMMAND_H ${Slang_SLANGC_EXECUTABLE}
         ${_SLANG_FLAGS} ${EXTRA_FLAGS}
         -source-embed-name ${VN_SHADER_NAME}
         -source-embed-style text
         -depfile "${OUTPUT_FILE}.dep"
         -o "${OUTPUT_FILE}.h" ${SHADER}
       )
-      set(_COMMAND_S ${_SLANGC}
+      set(_COMMAND_S ${Slang_SLANGC_EXECUTABLE}
         ${_SLANG_FLAGS} ${EXTRA_FLAGS}
         -o "${OUTPUT_FILE}.spv" ${SHADER}
       )
@@ -100,6 +98,7 @@ function(compile_slang SHADER_FILES OUTPUT_DIR SHADER_HEADERS_VAR)
         OUTPUT ${OUTPUT_FILE}.h ${OUTPUT_FILE}.spv
         COMMAND echo ${_COMMAND_H}
         COMMAND ${_COMMAND_H}
+        COMMAND echo ${_COMMAND_S}
         COMMAND ${_COMMAND_S}
         MAIN_DEPENDENCY ${SHADER}
         DEPFILE "${OUTPUT_FILE}.dep"

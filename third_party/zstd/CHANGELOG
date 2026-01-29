@@ -1,3 +1,7 @@
+v1.6.0 (Dec 2025)
+api: legacy format support is now disabled by default
+build: `ZSTD_LEGACY_SUPPORT` defaults to `0` in Makefile and CMake
+
 V1.5.7 (Feb 2025)
 fix: compression bug in 32-bit mode associated with long-lasting sessions
 api: new method `ZSTD_compressSequencesAndLiterals()` (#4217, #4232)

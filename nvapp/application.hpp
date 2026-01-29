@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2014-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -163,8 +163,10 @@ struct ApplicationCreateInfo
 
   // Swapchain
   // VK_PRESENT_MODE_MAX_ENUM_KHR means no preference
-  VkPresentModeKHR preferredVsyncOffMode = VK_PRESENT_MODE_MAX_ENUM_KHR;
-  VkPresentModeKHR preferredVsyncOnMode  = VK_PRESENT_MODE_MAX_ENUM_KHR;
+  VkPresentModeKHR    preferredVsyncOffMode  = VK_PRESENT_MODE_MAX_ENUM_KHR;
+  VkPresentModeKHR    preferredVsyncOnMode   = VK_PRESENT_MODE_MAX_ENUM_KHR;
+  VkSurfaceFormat2KHR preferredSurfaceFormat = {.sType = VK_STRUCTURE_TYPE_SURFACE_FORMAT_2_KHR,
+                                                .surfaceFormat{VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR}};
 };
 
 
@@ -224,10 +226,22 @@ public:
 
   // Record that a screenshot is requested, and will be saved after a full
   // frame cycle loop (so that ImGui has time to clear the menu).
-  void screenShot(const std::filesystem::path& filename, int quality = 100);
+  void requestScreenShot(const std::filesystem::path& filename, int quality = 90);
 
-  // Saves a VkImage to a file, blitting it to RGBA8 format along the way.
-  void saveImageToFile(VkImage srcImage, VkExtent2D imageSize, const std::filesystem::path& filename, int quality = 100);
+  // Immediately saves the current swapchain image, using a temporary command buffer
+  // submitted on the primary queue. Implicitly calls `saveImageToFile`.
+  void saveScreenShot(const std::filesystem::path& filename, int quality = 90);
+
+  // Saves a VkImage to a file, blitting it to RGBA8 (default) or RGBA32F (.hdr) format along the way.
+  // Calls vkDeviceWaitIdle prior saving the image.
+  // The `srcLayout` must be the current imageLayout when this operation is executed.
+  // The saving is done using a temporary command buffer on the primary queue and vkDeviceWaitIdle will
+  // be called in advance.
+  void saveImageToFile(VkImage                      srcImage,
+                       VkExtent2D                   srcSize,
+                       const std::filesystem::path& filename,
+                       int                          quality   = 100,
+                       VkImageLayout                srcLayout = VK_IMAGE_LAYOUT_GENERAL);
 
 
 private:
@@ -248,7 +262,6 @@ private:
   void            waitForFrameCompletion() const;
   void            beginDynamicRenderingToSwapchain(VkCommandBuffer cmd) const;
   void            endDynamicRenderingToSwapchain(VkCommandBuffer cmd);
-  void            saveScreenShot(const std::filesystem::path& filename, int quality);  // Immediately save the frame
   void            resetFreeQueue(uint32_t size);
   void            freeResourcesQueue();
   void            setupImguiDock();
@@ -310,6 +323,7 @@ private:
   uint32_t              m_headlessFrameCount{1};
   bool                  m_screenShotRequested = false;
   int                   m_screenShotFrame     = 0;
+  int                   m_screenShotQuality   = 0;
   std::filesystem::path m_screenShotFilename;
 
   // Use for persist the data

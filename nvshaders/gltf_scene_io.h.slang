@@ -229,26 +229,26 @@ inline GltfShadeMaterial defaultGltfMaterial()
   m.scatterAnisotropy           = 0;
   m.doubleSided                 = 0;
 
-  m.pbrBaseColorTexture             = -1;
-  m.normalTexture                   = -1;
-  m.pbrMetallicRoughnessTexture     = -1;
-  m.emissiveTexture                 = -1;
-  m.transmissionTexture             = -1;
-  m.thicknessTexture                = -1;
-  m.clearcoatTexture                = -1;
-  m.clearcoatRoughnessTexture       = -1;
-  m.clearcoatNormalTexture          = -1;
-  m.specularTexture                 = -1;
-  m.specularColorTexture            = -1;
-  m.iridescenceTexture              = -1;
-  m.iridescenceThicknessTexture     = -1;
-  m.anisotropyTexture               = -1;
-  m.sheenColorTexture               = -1;
-  m.sheenRoughnessTexture           = -1;
-  m.pbrDiffuseTexture               = -1;
-  m.pbrSpecularGlossinessTexture    = -1;
-  m.diffuseTransmissionTexture      = -1;
-  m.diffuseTransmissionColorTexture = -1;
+  m.pbrBaseColorTexture             = 0;
+  m.normalTexture                   = 0;
+  m.pbrMetallicRoughnessTexture     = 0;
+  m.emissiveTexture                 = 0;
+  m.transmissionTexture             = 0;
+  m.thicknessTexture                = 0;
+  m.clearcoatTexture                = 0;
+  m.clearcoatRoughnessTexture       = 0;
+  m.clearcoatNormalTexture          = 0;
+  m.specularTexture                 = 0;
+  m.specularColorTexture            = 0;
+  m.iridescenceTexture              = 0;
+  m.iridescenceThicknessTexture     = 0;
+  m.anisotropyTexture               = 0;
+  m.sheenColorTexture               = 0;
+  m.sheenRoughnessTexture           = 0;
+  m.pbrDiffuseTexture               = 0;
+  m.pbrSpecularGlossinessTexture    = 0;
+  m.diffuseTransmissionTexture      = 0;
+  m.diffuseTransmissionColorTexture = 0;
 
   return m;
 }

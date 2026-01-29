@@ -570,11 +570,37 @@ void tinygltf::utils::getNodeTRS(const tinygltf::Node& node, glm::vec3& translat
   }
 }
 
+// -------------------------------------------------------------------------------------------------
+// Set the TRS components of a node
+// If a component is equal to the default value, it is cleared from the node
 void tinygltf::utils::setNodeTRS(tinygltf::Node& node, const glm::vec3& translation, const glm::quat& rotation, const glm::vec3& scale)
 {
-  node.translation = {translation.x, translation.y, translation.z};
-  node.rotation    = {rotation.x, rotation.y, rotation.z, rotation.w};
-  node.scale       = {scale.x, scale.y, scale.z};
+  if(translation != glm::vec3(0.0f, 0.0f, 0.0f))
+  {
+    node.translation = {translation.x, translation.y, translation.z};
+  }
+  else
+  {
+    node.translation.clear();
+  }
+
+  if(rotation != glm::quat(1.0f, 0.0f, 0.0f, 0.0f))
+  {
+    node.rotation = {rotation.x, rotation.y, rotation.z, rotation.w};
+  }
+  else
+  {
+    node.rotation.clear();
+  }
+
+  if(scale != glm::vec3(1.0f, 1.0f, 1.0f))
+  {
+    node.scale = {scale.x, scale.y, scale.z};
+  }
+  else
+  {
+    node.scale.clear();
+  }
 }
 
 glm::mat4 tinygltf::utils::getNodeMatrix(const tinygltf::Node& node)

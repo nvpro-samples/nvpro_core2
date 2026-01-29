@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -37,7 +37,10 @@
 #include "helpers.hpp"
 
 
-// Convert a tiled image to RGBA8 linear
+// Convert a tiled image to a linear image through vkCmdBlitImage.
+// `srcLayout` must match the image's actual current layout when the command buffer is recorded.
+// During the blit operation we will temporarily change the layout to VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
+// and then back to the provided layout.
 VkResult nvvk::imageToLinear(VkCommandBuffer  cmd,
                              VkDevice         device,
                              VkPhysicalDevice physicalDevice,
@@ -45,7 +48,8 @@ VkResult nvvk::imageToLinear(VkCommandBuffer  cmd,
                              VkExtent2D       size,
                              VkImage&         dstImage,
                              VkDeviceMemory&  dstImageMemory,
-                             VkFormat         format)
+                             VkFormat         dstFormat,
+                             VkImageLayout    srcLayout)
 {
   // Find the memory type index for the memory
   auto getMemoryType = [&](uint32_t typeBits, const VkMemoryPropertyFlags& properties) {
@@ -63,7 +67,7 @@ VkResult nvvk::imageToLinear(VkCommandBuffer  cmd,
   // Create the linear tiled destination image to copy to and to read the memory from
   VkImageCreateInfo imageCreateCI = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
   imageCreateCI.imageType         = VK_IMAGE_TYPE_2D;
-  imageCreateCI.format            = format;
+  imageCreateCI.format            = dstFormat;
   imageCreateCI.extent.width      = size.width;
   imageCreateCI.extent.height     = size.height;
   imageCreateCI.extent.depth      = 1;
@@ -86,7 +90,7 @@ VkResult nvvk::imageToLinear(VkCommandBuffer  cmd,
   NVVK_FAIL_RETURN(vkAllocateMemory(device, &memAllocInfo, nullptr, &dstImageMemory));
   NVVK_FAIL_RETURN(vkBindImageMemory(device, dstImage, dstImageMemory, 0));
 
-  nvvk::cmdImageMemoryBarrier(cmd, {srcImage, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL});
+  nvvk::cmdImageMemoryBarrier(cmd, {srcImage, srcLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL});
   nvvk::cmdImageMemoryBarrier(cmd, {dstImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL});
 
   // Do the actual blit from the swapchain image to our host visible destination image
@@ -102,19 +106,18 @@ VkResult nvvk::imageToLinear(VkCommandBuffer  cmd,
   vkCmdBlitImage(cmd, srcImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dstImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
                  &imageBlitRegion, VK_FILTER_NEAREST);
 
-  nvvk::cmdImageMemoryBarrier(cmd, {srcImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
+  nvvk::cmdImageMemoryBarrier(cmd, {srcImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, srcLayout});
   nvvk::cmdImageMemoryBarrier(cmd, {dstImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL});
   return VK_SUCCESS;
 }
 
 // Save an image to a file
-// The image should be in Rgba8 (linear) format
-void nvvk::saveImageToFile(VkDevice                     device,
-                           VkImage                      dstImage,
-                           VkDeviceMemory               dstImageMemory,
-                           VkExtent2D                   size,
-                           const std::filesystem::path& filename,
-                           int                          quality /*= 100*/)
+VkResult nvvk::saveImageToFile(VkDevice                     device,
+                               VkImage                      dstImage,
+                               VkDeviceMemory               dstImageMemory,
+                               VkExtent2D                   size,
+                               const std::filesystem::path& filename,
+                               int                          quality /*= 100*/)
 {
   // Get layout of the image (including offset and row pitch)
   VkImageSubresource  subResource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0};
@@ -123,7 +126,7 @@ void nvvk::saveImageToFile(VkDevice                     device,
 
   // Map image memory so we can start copying from it
   const char* data = nullptr;
-  vkMapMemory(device, dstImageMemory, 0, VK_WHOLE_SIZE, 0, (void**)&data);
+  NVVK_FAIL_RETURN(vkMapMemory(device, dstImageMemory, 0, VK_WHOLE_SIZE, 0, (void**)&data));
   data += subResourceLayout.offset;
 
   std::string filenameUtf8 = nvutils::utf8FromPath(filename);
@@ -173,5 +176,8 @@ void nvvk::saveImageToFile(VkDevice                     device,
     stbi_write_png(filenameUtf8.c_str(), size.width, size.height, 4, pixels8.data(), size.width * 4);
   }
 
+  vkUnmapMemory(device, dstImageMemory);
+
   LOGI("Image saved to %s\n", filenameUtf8.c_str());
+  return VK_SUCCESS;
 }

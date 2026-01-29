@@ -184,10 +184,10 @@ henyeyGreenstein() is already normalized.
 float henyeyGreensteinPdf(float cosTheta, float g)
 {
   float pdf = henyeyGreenstein(cosTheta, g);
-  // Near |g| = 1, HG approaches a delta distribution; 
+  // Near |g| = 1, HG approaches a delta distribution;
   // catch numerical edge cases (0, NaN, inf) to avoid division by zero or NaN.
   if(pdf == 0.0f || isnan(pdf) || isinf(pdf))
-     pdf = DIRAC;
+    pdf = DIRAC;
   return pdf;
 }
 
@@ -345,7 +345,7 @@ void brdf_diffuse_eval(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data, PbrMaterial 
   // Note that the state normals have been flipped to the ray side by the caller.
   // Include edge-on (== 0.0f) as "no light" case.
   const float nk2 = dot(data.k2, mat.N);
-  if(nk2 <= 0.0f) // if (backside)
+  if(nk2 <= 0.0f)  // if (backside)
   {
     return;  // absorb
   }
@@ -405,7 +405,7 @@ void brdf_diffuse_transmission_sample(NVSHADERS_INOUT_TYPE(BsdfSampleData) data,
 
   // Ensure energy conservation by considering the diffuse transmission tint.
   data.bsdf_over_pdf = tint * mat.diffuseTransmissionColor;
-  data.event_type = BSDF_EVENT_DIFFUSE_TRANSMISSION;
+  data.event_type    = BSDF_EVENT_DIFFUSE_TRANSMISSION;
 }
 
 
@@ -657,13 +657,13 @@ void btdf_ggx_smith_eval(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data, PbrMateria
   }
 
   const float nk1 = abs(dot(data.k1, mat.N));
-  float nk2       = dot(data.k2, mat.N);
+  float       nk2 = dot(data.k2, mat.N);
 
   // BRDF or BTDF eval?
   // If the incoming light direction is on the backface.
   // Do NOT include edge-on (== 0.0f) as backside here to take the reflection path.
   const bool backside = (nk2 < 0.0f);
-  nk2 = abs(nk2);
+  nk2                 = abs(nk2);
 
   const float3 h = compute_half_vector(data.k1, data.k2, mat.N, ior, nk2, backside, isThinWalled);
 

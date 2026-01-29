@@ -79,11 +79,11 @@ static glm::vec4 makeFastTangent(const glm::vec3& n)
 {
   if(n.z < -0.99998796F)  // Handle the singularity
   {
-    return glm::vec4(0.0F, -1.0F, 0.0F, 1.0F);
+    return {0.0F, -1.0F, 0.0F, 1.0F};
   }
   const float a = 1.0F / (1.0F + n.z);
   const float b = -n.x * n.y * a;
-  return glm::vec4(1.0F - n.x * n.x * a, b, -n.x, 1.0F);
+  return {1.0F - n.x * n.x * a, b, -n.x, 1.0F};
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -130,11 +130,11 @@ bool nvvkgltf::Scene::load(const std::filesystem::path& filename)
   bool              result{false};
   if(ext == ".gltf")
   {
-    result = tcontext.LoadASCIIFromFile(&m_model, &error, &warn, filenameUtf8.c_str());
+    result = tcontext.LoadASCIIFromFile(&m_model, &error, &warn, filenameUtf8);
   }
   else if(ext == ".glb")
   {
-    result = tcontext.LoadBinaryFromFile(&m_model, &error, &warn, filenameUtf8.c_str());
+    result = tcontext.LoadBinaryFromFile(&m_model, &error, &warn, filenameUtf8);
   }
   else
   {
@@ -315,7 +315,7 @@ bool nvvkgltf::Scene::load(const std::filesystem::path& filename)
   }
 
   m_currentScene   = m_model.defaultScene > -1 ? m_model.defaultScene : 0;
-  m_currentVariant = 0;  // Default KHR_materials_variants
+  m_currentVariant = 0;        // Default KHR_materials_variants
   m_animationPointer.reset();  // Clear cached state from previous model
   parseScene();
 
@@ -403,14 +403,6 @@ void nvvkgltf::Scene::parseScene()
   clearParsedData();
   setSceneElementsDefaultNames();
 
-  // Ensure only one top node per scene, creating a new node if necessary
-  // This is done to be able to transform the entire scene as a single node
-  for(auto& scene : m_model.scenes)
-  {
-    createRootIfMultipleNodes(scene);
-  }
-  m_sceneRootNode = m_model.scenes[m_currentScene].nodes[0];  // Set the root node of the scene
-
   // There must be at least one material in the scene
   if(m_model.materials.empty())
   {
@@ -432,7 +424,7 @@ void nvvkgltf::Scene::parseScene()
   {
     tinygltf::utils::traverseSceneGraph(
         m_model, sceneNode, glm::mat4(1),
-        [&](int nodeID, glm::mat4 mat) {
+        [&](int nodeID, glm::mat4) {
           m_sceneCameraNode = nodeID;
           return true;  // Stop traversal
         },
@@ -450,44 +442,37 @@ void nvvkgltf::Scene::parseScene()
   parseAnimations();
   createMissingTangents();
 
-  // Update the visibility of the render nodes
-  uint32_t renderNodeID = 0;
-  for(const int sceneNode : m_model.scenes[m_currentScene].nodes)
-  {
-    bool visible = tinygltf::utils::getNodeVisibility(m_model.nodes[sceneNode]).visible;
-    updateVisibility(sceneNode, visible, renderNodeID);
-  }
-
   // We are updating the scene to the first state, animation, skinning, morph, ..
-  updateRenderNodes();
+  updateRenderNodesFull();
 }
 
 
 // This function recursively updates the visibility of nodes in the scene graph.
 // If a node is marked as not visible, all its children will also be marked as not visible,
 // regardless of their individual visibility flags.
-void nvvkgltf::Scene::updateVisibility(int nodeID, bool visible, uint32_t& renderNodeID)
+void nvvkgltf::Scene::updateVisibility(int nodeID)
 {
-  tinygltf::Node& node = m_model.nodes[nodeID];
+  std::function<void(int, bool)> processNode;
+  processNode = [&](int nodeID, bool visible) -> void {
+    const tinygltf::Node& node = m_model.nodes[nodeID];
+    if(visible)
+    {
+      // Changing the visibility only if the parent was visible
+      visible = tinygltf::utils::getNodeVisibility(node).visible;
+    }
 
-  if(visible)
-  {
-    // Changing the visibility only if the parent was visible
-    visible = tinygltf::utils::getNodeVisibility(node).visible;
-  }
+    for(auto renderNodeID : m_nodeToRenderNodes[nodeID])
+      m_renderNodes[renderNodeID].visible = visible;
 
-  if(node.mesh >= 0)
-  {
-    // If the node has a mesh, update the visibility of all its primitives
-    const tinygltf::Mesh& mesh = m_model.meshes[node.mesh];
-    for(size_t j = 0; j < mesh.primitives.size(); j++)
-      m_renderNodes[renderNodeID++].visible = visible;
-  }
+    for(auto& child : node.children)
+    {
+      processNode(child, visible);
+    }
+  };
 
-  for(auto& child : node.children)
-  {
-    updateVisibility(child, visible, renderNodeID);
-  }
+  const tinygltf::Node& node    = m_model.nodes[nodeID];
+  bool                  visible = tinygltf::utils::getNodeVisibility(node).visible;
+  processNode(nodeID, visible);
 }
 
 // Set the default names for the scene elements if they are empty
@@ -512,21 +497,6 @@ void nvvkgltf::Scene::setSceneElementsDefaultNames()
 }
 
 
-// Creates a new root node for the scene and assigns existing top nodes as its children.
-void nvvkgltf::Scene::createRootIfMultipleNodes(tinygltf::Scene& scene)
-{
-  // Already a single node in the scene
-  if(scene.nodes.size() == 1)
-    return;
-
-  tinygltf::Node newNode;
-  newNode.name = scene.name;
-  newNode.children.swap(scene.nodes);   // Move the scene nodes to the new node
-  m_model.nodes.emplace_back(newNode);  // Add to then to avoid invalidating any references
-  scene.nodes.clear();                  // Should be already empty, due to the swap
-  scene.nodes.push_back(int(m_model.nodes.size()) - 1);
-}
-
 // If there is no camera in the scene, we create one
 // The camera is placed at the center of the scene, looking at the scene
 void nvvkgltf::Scene::createSceneCamera()
@@ -537,8 +507,7 @@ void nvvkgltf::Scene::createSceneCamera()
   int               newNodeIndex   = static_cast<int>(m_model.nodes.size() - 1);
   tnode.name                       = "Camera";
   tnode.camera                     = newCameraIndex;
-  int rootID                       = m_model.scenes[m_currentScene].nodes[0];
-  m_model.nodes[rootID].children.push_back(newNodeIndex);  // Add the camera node to the root
+  m_model.scenes[m_currentScene].nodes.push_back(newNodeIndex);  // Add the camera node to the scene
 
   // Set the camera to look at the scene
   nvutils::Bbox bbox   = getSceneBounds();
@@ -565,62 +534,168 @@ void nvvkgltf::Scene::createSceneCamera()
   tnode.rotation    = {q.x, q.y, q.z, q.w};
 }
 
-// This function will update the matrices and the materials of the render nodes
-void nvvkgltf::Scene::updateRenderNodes()
+//--------------------------------------------------------------------------------------------
+// This function will update the world matrices of the render nodes
+//
+void nvvkgltf::Scene::updateNodeWorldMatrices(const std::unordered_set<int>& dirtyNodeIds)
 {
   const tinygltf::Scene& scene = m_model.scenes[m_currentScene];
   assert(scene.nodes.size() > 0 && "No nodes in the glTF file");
-  //assert(scene.nodes.size() == 1 && "Only one top node per scene is supported");
-  assert(m_sceneRootNode > -1 && "No root node in the scene");
 
-  m_nodesWorldMatrices.resize(m_model.nodes.size());
-
-  uint32_t renderNodeID = 0;  // Index of the render node
-  for(auto& sceneNode : scene.nodes)
+  if(dirtyNodeIds.empty())
   {
-    tinygltf::utils::traverseSceneGraph(
-        m_model, sceneNode, glm::mat4(1),  //
-        nullptr,                           // Camera fct
-        // Dealing with lights
-        [&](int nodeID, const glm::mat4& mat) {
-          tinygltf::Node& tnode             = m_model.nodes[nodeID];
-          m_lights[tnode.light].worldMatrix = mat;
-          return false;  // Continue traversal
-        },
-        // Dealing with Nodes and Variant Materials
-        [&](int nodeID, const glm::mat4& mat) {
-          tinygltf::Node&       tnode = m_model.nodes[nodeID];
-          const tinygltf::Mesh& mesh  = m_model.meshes[tnode.mesh];
-          for(size_t j = 0; j < mesh.primitives.size(); j++)
-          {
-            const tinygltf::Primitive& primitive  = mesh.primitives[j];
-            nvvkgltf::RenderNode&      renderNode = m_renderNodes[renderNodeID];
-            renderNode.worldMatrix                = mat;
-            renderNode.materialID                 = getMaterialVariantIndex(primitive, m_currentVariant);
-            renderNodeID++;
-          }
-          return false;  // Continue traversal
-        },
-        [&](int nodeID, const glm::mat4& mat) {
-          m_nodesWorldMatrices[nodeID] = mat;
-          return false;
-        });
+    // Full update
+    updateRenderNodesFull();
+    return;
   }
 
-  // Update the visibility of the render nodes
-  renderNodeID = 0;
-  for(const int sceneNode : m_model.scenes[m_currentScene].nodes)
+  // Partial update
+  for(int nodeID : dirtyNodeIds)
   {
-    KHR_node_visibility nvisible = tinygltf::utils::getNodeVisibility(m_model.nodes[sceneNode]);
-    updateVisibility(sceneNode, nvisible.visible, renderNodeID);
+    tinygltf::Node& node         = m_model.nodes[nodeID];
+    m_nodesLocalMatrices[nodeID] = tinygltf::utils::getNodeMatrix(node);
+  }
+
+  std::unordered_set<int> filteredDirtyNodes;
+  filteredDirtyNodes.reserve(dirtyNodeIds.size());
+  for(int nodeID : dirtyNodeIds)
+  {
+    bool hasParentInDirty = false;
+    int  currentParent    = m_nodeParents[nodeID];
+    while(currentParent >= 0)
+    {
+      if(dirtyNodeIds.contains(currentParent))
+      {
+        hasParentInDirty = true;
+        break;
+      }
+      currentParent = m_nodeParents[currentParent];
+    }
+
+    if(!hasParentInDirty)
+    {
+      filteredDirtyNodes.insert(nodeID);
+    }
+  }
+
+  std::function<void(int)> updateMatrix;
+  updateMatrix = [&](int nodeID) -> void {
+    tinygltf::Node& node = m_model.nodes[nodeID];
+    glm::mat4 parentMat  = m_nodeParents[nodeID] >= 0 ? m_nodesWorldMatrices[m_nodeParents[nodeID]] : glm::mat4(1.0f);
+    m_nodesWorldMatrices[nodeID] = parentMat * m_nodesLocalMatrices[nodeID];
+
+    for(auto renderNodeID : m_nodeToRenderNodes[nodeID])
+    {
+      m_renderNodes[renderNodeID].worldMatrix = m_nodesWorldMatrices[nodeID];
+    }
+
+    if(node.light >= 0)
+    {
+      m_lights[node.light].worldMatrix = m_nodesWorldMatrices[nodeID];
+    }
+
+    for(const auto& child : node.children)
+    {
+      updateMatrix(child);
+    }
+  };
+
+  for(auto nodeID : filteredDirtyNodes)
+  {
+    updateMatrix(nodeID);
   }
 }
 
-void nvvkgltf::Scene::setCurrentVariant(int variant)
+//--------------------------------------------------------------------------------------------------
+// Update all the render nodes in the scene and collecting information about
+// the node's parent,  and the render node indices for each node.
+void nvvkgltf::Scene::updateRenderNodesFull()
+{
+  const tinygltf::Scene& scene = m_model.scenes[m_currentScene];
+  m_nodesLocalMatrices.resize(m_model.nodes.size(), glm::mat4(1.0f));
+  m_nodesWorldMatrices.resize(m_model.nodes.size());
+  m_nodeParents.resize(m_model.nodes.size());
+  m_nodeParents.assign(m_model.nodes.size(), -1);
+  m_nodeToRenderNodes = {};
+  m_nodeToRenderNodes.resize(m_model.nodes.size());
+
+  int32_t renderNodeID = 0;  // Index of the render node
+
+  // Recursive lambda function to traverse the scene nodes
+  std::function<void(int, const glm::mat4&, bool)> traverseNodes;
+  traverseNodes = [&](int nodeID, const glm::mat4& parentMat, bool visible) {
+    const tinygltf::Node& node   = m_model.nodes[nodeID];
+    m_nodesLocalMatrices[nodeID] = tinygltf::utils::getNodeMatrix(node);
+    const glm::mat4 worldMat     = parentMat * m_nodesLocalMatrices[nodeID];
+    tinygltf::Node& tnode        = m_model.nodes[nodeID];
+
+    if(visible)
+    {
+      visible = tinygltf::utils::getNodeVisibility(tnode).visible;
+    }
+
+    if(tnode.light > -1)
+    {
+      m_lights[tnode.light].worldMatrix = worldMat;
+    }
+
+    if(tnode.mesh > -1)
+    {
+      const tinygltf::Mesh& mesh = m_model.meshes[tnode.mesh];
+      for(const tinygltf::Primitive& primitive : mesh.primitives)
+      {
+        nvvkgltf::RenderNode& renderNode = m_renderNodes[renderNodeID];
+        renderNode.worldMatrix           = worldMat;
+        renderNode.materialID            = getMaterialVariantIndex(primitive, m_currentVariant);
+        renderNode.visible               = visible;
+        m_nodeToRenderNodes[nodeID].push_back(renderNodeID);
+        renderNodeID++;
+      }
+    }
+
+    m_nodesWorldMatrices[nodeID] = worldMat;
+    for(const auto& child : tnode.children)
+    {
+      m_nodeParents[child] = nodeID;
+      traverseNodes(child, worldMat, visible);
+    }
+  };
+
+  // Traverse the scene nodes and collect the render node indices
+  for(auto& sceneNode : scene.nodes)
+  {
+    bool visible = tinygltf::utils::getNodeVisibility(m_model.nodes[sceneNode]).visible;
+    traverseNodes(sceneNode, glm::mat4(1), visible);
+  }
+}
+
+//-----------------------------------------------------------
+//
+void nvvkgltf::Scene::setCurrentVariant(int variant, std::unordered_set<int>& dirtyRenderNodes)
 {
   m_currentVariant = variant;
-  // Updating the render nodes with the new material variant
-  updateRenderNodes();
+  dirtyRenderNodes.clear();
+
+  for(size_t i = 0; i < m_nodeToRenderNodes.size(); i++)
+  {
+    if(m_nodeToRenderNodes[i].empty())
+      continue;
+    tinygltf::Node& tnode             = m_model.nodes[i];
+    int             firstRenderNodeID = m_nodeToRenderNodes[i][0];
+    if(tnode.mesh > -1)
+    {
+      tinygltf::Mesh& mesh = m_model.meshes[tnode.mesh];
+      for(size_t primID = 0; primID < mesh.primitives.size(); primID++)
+      {
+        int renderNodeID = firstRenderNodeID + int(primID);
+        int beforeMatID  = m_renderNodes[renderNodeID].materialID;
+        int newMatId     = getMaterialVariantIndex(mesh.primitives[primID], m_currentVariant);
+        if(beforeMatID != newMatId)
+          dirtyRenderNodes.insert(renderNodeID);
+        m_renderNodes[firstRenderNodeID + primID].materialID = newMatId;
+      }
+    }
+  }
 }
 
 
@@ -633,10 +708,12 @@ void nvvkgltf::Scene::clearParsedData()
   m_renderPrimitives.clear();
   m_uniquePrimitiveIndex.clear();
   m_variants.clear();
+  m_nodeToRenderNodes.clear();
+  m_nodeParents.clear();
+  m_nodesLocalMatrices.clear();
   m_numTriangles    = 0;
   m_sceneBounds     = {};
   m_sceneCameraNode = -1;
-  m_sceneRootNode   = -1;
 }
 
 void nvvkgltf::Scene::destroy()
@@ -706,10 +783,12 @@ const std::vector<nvvkgltf::RenderCamera>& nvvkgltf::Scene::getRenderCameras(boo
 
   if(m_cameras.empty())
   {
-    assert(m_sceneRootNode > -1 && "No root node in the scene");
-    tinygltf::utils::traverseSceneGraph(m_model, m_sceneRootNode, glm::mat4(1), [&](int nodeID, const glm::mat4& worldMatrix) {
-      return handleCameraTraversal(nodeID, worldMatrix);
-    });
+    for(auto& sceneNode : m_model.scenes[m_currentScene].nodes)
+    {
+      tinygltf::utils::traverseSceneGraph(m_model, sceneNode, glm::mat4(1), [&](int nodeID, const glm::mat4& worldMatrix) {
+        return handleCameraTraversal(nodeID, worldMatrix);
+      });
+    }
   }
   return m_cameras;
 }
@@ -928,6 +1007,21 @@ void nvvkgltf::Scene::createMissingTangents()
   });
 }
 
+//-------------------------------------------------------------------------------------------------
+// Find which render nodes use the given material variant IDs
+//
+std::unordered_set<int> nvvkgltf::Scene::getMaterialRenderNodes(const std::unordered_set<int>& materialVariantNodeIDs) const
+{
+  std::unordered_set<int> renderNodes;
+  for(size_t i = 0; i < m_renderNodes.size(); i++)
+  {
+    if(materialVariantNodeIDs.contains(m_renderNodes[i].materialID))
+    {
+      renderNodes.insert(int(i));
+    }
+  }
+  return renderNodes;
+}
 
 //-------------------------------------------------------------------------------------------------
 // Find which nodes are solid or translucent, helps for raster rendering
@@ -967,24 +1061,6 @@ std::vector<uint32_t> nvvkgltf::Scene::getShadedNodes(PipelineType type)
   return result;
 }
 
-tinygltf::Node nvvkgltf::Scene::getSceneRootNode() const
-{
-  const tinygltf::Scene& scene = m_model.scenes[m_currentScene];
-  assert(scene.nodes.size() == 1 && "There should be exactly one node under the scene.");
-  const tinygltf::Node& node = m_model.nodes[scene.nodes[0]];  // Root node
-
-  return node;
-}
-
-void nvvkgltf::Scene::setSceneRootNode(const tinygltf::Node& node)
-{
-  const tinygltf::Scene& scene = m_model.scenes[m_currentScene];
-  assert(scene.nodes.size() == 1 && "There should be exactly one node under the scene.");
-  tinygltf::Node& rootNode = m_model.nodes[scene.nodes[0]];  // Root node
-  rootNode                 = node;
-
-  updateRenderNodes();
-}
 
 void nvvkgltf::Scene::setSceneCamera(const nvvkgltf::RenderCamera& camera)
 {
@@ -1181,11 +1257,11 @@ void nvvkgltf::Scene::parseAnimations()
 // The value of the animation is updated based on the current time
 // - Node transformations are updated
 // - Morph target weights are updated
-bool nvvkgltf::Scene::updateAnimation(uint32_t animationIndex)
+std::unordered_set<int> nvvkgltf::Scene::updateAnimation(uint32_t animationIndex)
 {
-  bool       animated  = false;
-  Animation& animation = m_animations[animationIndex];
-  float      time      = animation.info.currentTime;
+  Animation&              animation = m_animations[animationIndex];
+  float                   time      = animation.info.currentTime;
+  std::unordered_set<int> dirtyNodeIds;
 
   for(auto& channel : animation.channels)
   {
@@ -1194,7 +1270,7 @@ bool nvvkgltf::Scene::updateAnimation(uint32_t animationIndex)
     // Handle pointer animations (KHR_animation_pointer) - no node required
     if(channel.path == AnimationChannel::PathType::ePointer)
     {
-      animated |= processAnimationChannel(nullptr, sampler, channel, time);
+      processAnimationChannel(nullptr, sampler, channel, time);
       continue;
     }
 
@@ -1205,13 +1281,17 @@ bool nvvkgltf::Scene::updateAnimation(uint32_t animationIndex)
     }
 
     tinygltf::Node& gltfNode = m_model.nodes[channel.node];
-    animated |= processAnimationChannel(&gltfNode, sampler, channel, time);
+    processAnimationChannel(&gltfNode, sampler, channel, time);
+    if(channel.path != AnimationChannel::PathType::eWeights)
+    {
+      dirtyNodeIds.insert(channel.node);
+    }
   }
 
   // Sync animated properties back to tinygltf::Model (for pointer animations)
   m_animationPointer.syncToModel();
 
-  return animated;
+  return dirtyNodeIds;
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -1472,7 +1552,7 @@ void nvvkgltf::Scene::handleCubicSplineInterpolation(tinygltf::Node*         glt
   {
     if(sampler.outputsVec4.size() > maxRequiredIndex)
     {
-      glm::vec4 result = computeCubicInterpolation<glm::vec4>(sampler.outputsVec4.data(), t, keyDelta, index);
+      glm::vec4 result     = computeCubicInterpolation<glm::vec4>(sampler.outputsVec4.data(), t, keyDelta, index);
       glm::quat quatResult = glm::make_quat(glm::value_ptr(result));
       quatResult           = glm::normalize(quatResult);
       gltfNode->rotation   = {quatResult.x, quatResult.y, quatResult.z, quatResult.w};
@@ -1533,4 +1613,88 @@ int nvvkgltf::Scene::getMaterialVariantIndex(const tinygltf::Primitive& primitiv
   }
 
   return std::max(0, primitive.material);
+}
+
+//--------------------------------------------------------------------------------------------------
+// Get the RenderNode index for a specific primitive within a node
+// Returns -1 if not found
+int nvvkgltf::Scene::getRenderNodeForPrimitive(int nodeId, int primitiveIndex) const
+{
+  if(nodeId < 0 || nodeId >= static_cast<int>(m_nodeToRenderNodes.size()))
+    return -1;
+
+  const auto& renderNodes = m_nodeToRenderNodes[nodeId];
+  if(primitiveIndex < 0 || primitiveIndex >= static_cast<int>(renderNodes.size()))
+    return -1;
+
+  return renderNodes[primitiveIndex];
+}
+
+//--------------------------------------------------------------------------------------------------
+// Get the primitive index within its node for a given RenderNode
+// Returns -1 if not found
+int nvvkgltf::Scene::getPrimitiveIndexForRenderNode(int renderNodeIndex) const
+{
+  if(renderNodeIndex < 0 || renderNodeIndex >= static_cast<int>(m_renderNodes.size()))
+    return -1;
+
+  const int nodeId = m_renderNodes[renderNodeIndex].refNodeID;
+  if(nodeId < 0 || nodeId >= static_cast<int>(m_nodeToRenderNodes.size()))
+    return -1;
+
+  const auto& renderNodes = m_nodeToRenderNodes[nodeId];
+  for(size_t i = 0; i < renderNodes.size(); ++i)
+  {
+    if(renderNodes[i] == renderNodeIndex)
+      return static_cast<int>(i);
+  }
+  return -1;
+}
+
+//--------------------------------------------------------------------------------------------------
+// Collect the render node indices for the given node IDs
+//
+bool nvvkgltf::Scene::collectRenderNodeIndices(const std::unordered_set<int>& nodeIds,
+                                               std::unordered_set<int>&       outRenderNodeIndices,
+                                               bool                           includeDescendants,
+                                               float                          fullUpdateRatio) const
+{
+  // Update all render nodes if no node IDs are provided
+  if(nodeIds.empty())
+  {
+    return true;
+  }
+
+  // Traverse the node graph and collect the render node indices
+  std::function<void(int)> traverseNode;
+  traverseNode = [&](int nodeId) {
+    for(int rnodeId : m_nodeToRenderNodes.at(nodeId))
+    {
+      outRenderNodeIndices.insert(rnodeId);
+    }
+
+    // If including descendants, traverse child nodes
+    if(includeDescendants)
+    {
+      const tinygltf::Node& node = m_model.nodes[nodeId];
+      for(int childId : node.children)
+      {
+        traverseNode(childId);
+      }
+    }
+  };
+
+  // Add the render node indices for the given node IDs
+  for(int nodeId : nodeIds)
+  {
+    traverseNode(nodeId);
+  }
+
+  // Check if the update is full
+  if(fullUpdateRatio > float(outRenderNodeIndices.size()) / float(m_renderNodes.size()))
+  {
+    return false;
+  }
+
+  return true;
 }

@@ -21,6 +21,7 @@
 
 #include <filesystem>
 #include <set>
+#include <unordered_set>
 
 #include <glm/glm.hpp>
 #include <nvvk/resource_allocator.hpp>
@@ -29,6 +30,7 @@
 #include "nvvk/sampler_pool.hpp"
 #include "nvvk/staging.hpp"
 #include "gpu_memory_tracker.hpp"
+#include "nvshaders/gltf_scene_io.h.slang"
 
 
 /*-------------------------------------------------------------------------------------------------
@@ -90,11 +92,26 @@ public:
                       bool                   enableRayTracing = true);
 
   void update(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn);
-  void updateRenderNodesBuffer(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn);
+
+  // Update render node transforms and material/primitive IDs.
+  // @param dirtyIndices  renderNode indices that changed; empty = update all (full refresh)
+  void updateRenderNodesBuffer(nvvk::StagingUploader&         staging,
+                               const nvvkgltf::Scene&         scn,
+                               const std::unordered_set<int>& dirtyIndices = {});
+
   void updateRenderPrimitivesBuffer(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn);
-  void updateRenderLightsBuffer(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn);
-  void updateMaterialBuffer(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn);
-  void updateVertexBuffers(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scene);
+
+  // Update light positions and properties.
+  // @param dirtyIndices  glTF light indices (model.extensions["KHR_lights_punctual"]) that changed; empty = update all
+  void updateRenderLightsBuffer(nvvk::StagingUploader&         staging,
+                                const nvvkgltf::Scene&         scn,
+                                const std::unordered_set<int>& dirtyIndices = {});
+
+  // Update material properties and texture bindings.
+  // @param dirtyIndices  glTF material indices (model.materials[]) that changed; empty = update all
+  void updateMaterialBuffer(nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn, const std::unordered_set<int>& dirtyIndices = {});
+
+  void         updateVertexBuffers(nvvk::StagingUploader& staging, const nvvkgltf::Scene& scene);
   virtual void destroy();
 
   // Geometry-only recreation (preserves textures) - useful after tangent generation or mesh optimization
@@ -130,8 +147,7 @@ protected:
   VkBufferUsageFlags2 getBufferUsageFlags() const;
   virtual void createVertexBuffers(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn);
   template <typename T>
-  bool         updateAttributeBuffer(VkCommandBuffer            cmd,
-                                     const std::string&         attributeName,
+  bool         updateAttributeBuffer(const std::string&         attributeName,
                                      const tinygltf::Model&     model,
                                      const tinygltf::Primitive& primitive,
                                      nvvk::ResourceAllocator*   alloc,
@@ -143,6 +159,9 @@ protected:
                                    const std::filesystem::path& basedir);
 
   void findSrgbImages(const tinygltf::Model& model);
+
+  // Rebuild scene descriptor buffer (used when buffer addresses change)
+  void updateSceneDescBuffer(nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn);
 
   virtual void loadImage(const std::filesystem::path& basedir, const tinygltf::Model& model, uint64_t imageID);
   virtual void loadImageFromMemory(uint64_t imageID, const void* data, size_t byteLength);
@@ -167,6 +186,10 @@ protected:
   std::vector<nvvk::Image>   m_textures;  // Vector of all textures of the scene
 
   std::set<int> m_sRgbImages;  // All images that are in sRGB (typically, only the one used by baseColorTexture)
+
+  // Cached material data for updates.
+  std::vector<shaderio::GltfShadeMaterial> m_cachedShadeMaterials;
+  std::vector<shaderio::GltfTextureInfo>   m_cachedTextureInfos;
 
   bool m_generateMipmaps   = {};
   bool m_rayTracingEnabled = {};

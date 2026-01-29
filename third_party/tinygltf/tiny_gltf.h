@@ -39,6 +39,7 @@
 
 #include <array>
 #include <cassert>
+#include <cerrno>
 #include <cmath>  // std::fabs
 #include <cstdint>
 #include <cstdlib>
@@ -1655,6 +1656,11 @@ class TinyGLTF {
 
 #include <cstdio>
 #include <fstream>
+#ifdef _WIN32
+#include <direct.h>  // for _mkdir
+#else
+#include <sys/stat.h>  // for mkdir
+#endif
 #endif
 #include <sstream>
 
@@ -2275,6 +2281,74 @@ static std::string GetBaseFilename(const std::string &filepath) {
   return filepath;
 }
 
+// Helper function to create directories recursively
+static bool CreateDirectories(const std::string &filepath) {
+  std::string dirpath = filepath;
+  size_t pos = dirpath.find_last_of("/\\");
+  if (pos != std::string::npos) {
+    dirpath = dirpath.substr(0, pos);
+  } else {
+    return true; // No directory to create
+  }
+
+  // Create directories recursively
+  std::string current_path;
+  size_t start = 0;
+
+  if (dirpath.empty()) {
+    return true; // Nothing to create
+  }
+  // Handle absolute paths
+  if (dirpath[0] == '/' || (dirpath.length() > 1 && dirpath[1] == ':')) {
+    if (dirpath[0] == '/') {
+      current_path = "/";
+      start = 1;
+    } else {
+      // Handle "C:" or "C:\" or "C:/" correctly
+      if (dirpath.length() > 2 && (dirpath[2] == '\\' || dirpath[2] == '/')) {
+        current_path = dirpath.substr(0, 3); // "C:\" or "C:/"
+        start = 3;
+      } else {
+        current_path = dirpath.substr(0, 2); // "C:"
+        start = 2;
+      }
+    }
+  }
+
+  while (start < dirpath.length()) {
+    size_t end = dirpath.find_first_of("/\\", start);
+    if (end == std::string::npos) {
+      end = dirpath.length();
+    }
+    
+    std::string component = dirpath.substr(start, end - start);
+    if (!component.empty()) {
+      if (!current_path.empty() && current_path.back() != '/' && current_path.back() != '\\') {
+        current_path += "/";
+      }
+      current_path += component;
+      
+      // Attempt to create directory; ignore error if it already exists
+#ifdef _WIN32
+      if (_mkdir(current_path.c_str()) != 0) {
+        if (errno != EEXIST) {
+          return false;
+        }
+      }
+#else
+      if (mkdir(current_path.c_str(), 0755) != 0) {
+        if (errno != EEXIST) {
+          return false;
+        }
+      }
+#endif
+    }
+    start = end + 1;
+  }
+  
+  return true;
+}
+
 std::string base64_encode(unsigned char const *, unsigned int len);
 std::string base64_decode(std::string const &s);
 
@@ -2832,6 +2906,10 @@ bool WriteImageData(const std::string *basepath, const std::string *filename,
     if ((fs_cb != nullptr) && (fs_cb->WriteWholeFile != nullptr)) {
       const std::string imagefilepath = JoinPath(*basepath, *filename);
       std::string writeError;
+      if (!CreateDirectories(imagefilepath)) {
+        // Could not create directories for the image file
+        return false;
+      }
       if (!fs_cb->WriteWholeFile(&writeError, imagefilepath, data,
                               fs_cb->user_data)) {
         // Could not write image file to disc; Throw error ?
@@ -3234,6 +3312,14 @@ bool ReadWholeFile(std::vector<unsigned char> *out, std::string *err,
 
 bool WriteWholeFile(std::string *err, const std::string &filepath,
                     const std::vector<unsigned char> &contents, void *) {
+  // Create directories if they don't exist
+  if (!CreateDirectories(filepath)) {
+    if (err) {
+      (*err) += "Failed to create directories for: " + filepath + "\n";
+    }
+    return false;
+  }
+
 #ifdef _WIN32
 #if defined(__GLIBCXX__)  // mingw
   int file_descriptor = _wopen(UTF8ToWchar(filepath).c_str(),
@@ -3299,7 +3385,7 @@ static bool UpdateImageObject(const Image &image, std::string &baseDir,
       // A decode failure results in a failure to write the gltf.
       return false;
     }
-    filename = GetBaseFilename(decoded_uri);
+    filename = decoded_uri;
     ext = GetFilePathExtension(filename);
   } else if (image.bufferView != -1) {
     // If there's no URI and the data exists in a buffer,
@@ -3705,7 +3791,7 @@ static bool ParseJsonAsValue(Value *ret, const detail::json &o) {
       break;
     case Type::kNumberType:
       if (!o.IsDouble()) {
-        if(o.IsInt64())
+        if (o.IsInt64())
         {
           int64_t i = o.GetInt64();
           val = Value(i);
@@ -3895,7 +3981,7 @@ static bool ParseUnsignedProperty(size_t *ret, std::string *err,
   bool isUValue;
 #ifdef TINYGLTF_USE_RAPIDJSON
   isUValue = false;
-  if(value.IsUint64()) {
+  if (value.IsUint64()) {
     uValue   = value.GetUint64();
     isUValue = true;
   } else if (value.IsUint()) {
@@ -4554,14 +4640,14 @@ static bool ParseBuffer(Buffer *buffer, std::string *err, const detail::json &o,
 
   ParseExtrasAndExtensions(buffer, err, o, store_original_json_for_extras_and_extensions);
 
-  if(buffer->extensions.count("EXT_meshopt_compression") != 0) {
+  if (buffer->extensions.count("EXT_meshopt_compression") != 0) {
     auto const& ext = buffer->extensions["EXT_meshopt_compression"];
     if (ext.Has("fallback") && ext.Get("fallback").IsBool() && ext.Get("fallback").Get<bool>()) {
       return true;
     }
   }
 
-  if(buffer->extensions.count("KHR_meshopt_compression") != 0) {
+  if (buffer->extensions.count("KHR_meshopt_compression") != 0) {
     auto const& ext = buffer->extensions["KHR_meshopt_compression"];
     if (ext.Has("fallback") && ext.Get("fallback").IsBool() && ext.Get("fallback").Get<bool>()) {
       return true;

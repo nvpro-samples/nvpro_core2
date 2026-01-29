@@ -150,8 +150,18 @@ VkResult nvvk::GBuffer::initResources(VkCommandBuffer cmd)
   for(uint32_t c = 0; c < numColor; c++)
   {
     // Color image and view
-    const VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT
-                                    | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+                              | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    {
+      // Some formats don't support usage as storage texture, in particular sRGB formats.
+      // But instead of hardcoding that here, query the format features.
+      VkFormatProperties props;
+      vkGetPhysicalDeviceFormatProperties(m_info.allocator->getPhysicalDevice(), m_info.colorFormats[c], &props);
+      if(props.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)
+      {
+        usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+      }
+    }
     const VkImageCreateInfo info = {
         .sType       = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType   = VK_IMAGE_TYPE_2D,

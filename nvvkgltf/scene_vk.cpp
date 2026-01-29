@@ -18,6 +18,8 @@
  */
 
 
+#include <algorithm>
+#include <cassert>
 #include <cinttypes>
 #include <mutex>
 #include <sstream>
@@ -184,35 +186,22 @@ void nvvkgltf::SceneVk::create(VkCommandBuffer        cmd,
 
   namespace fs     = std::filesystem;
   fs::path basedir = fs::path(scn.getFilename()).parent_path();
-  updateMaterialBuffer(cmd, staging, scn);
-  updateRenderNodesBuffer(cmd, staging, scn);
+  updateMaterialBuffer(staging, scn);
+  updateRenderNodesBuffer(staging, scn);
   createVertexBuffers(cmd, staging, scn);
   createTextureImages(cmd, staging, scn.getModel(), basedir);
-  updateRenderLightsBuffer(cmd, staging, scn);
+  updateRenderLightsBuffer(staging, scn);
 
   // Update the buffers for morph and skinning
   updateRenderPrimitivesBuffer(cmd, staging, scn);
 
-  // Buffer references
-  shaderio::GltfScene scene_desc{};
-  scene_desc.materials        = (shaderio::GltfShadeMaterial*)m_bMaterial.address;
-  scene_desc.textureInfos     = (shaderio::GltfTextureInfo*)m_bTextureInfos.address;
-  scene_desc.renderPrimitives = (shaderio::GltfRenderPrimitive*)m_bRenderPrim.address;
-  scene_desc.renderNodes      = (shaderio::GltfRenderNode*)m_bRenderNode.address;
-  scene_desc.lights           = (shaderio::GltfLight*)m_bLights.address;
-  scene_desc.numLights        = static_cast<int>(scn.getRenderLights().size());
-
-  NVVK_CHECK(m_alloc->createBuffer(m_bSceneDesc, std::span(&scene_desc, 1).size_bytes(),
-                                   VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
-  NVVK_CHECK(staging.appendBuffer(m_bSceneDesc, 0, std::span(&scene_desc, 1)));
-  NVVK_DBG_NAME(m_bSceneDesc.buffer);
-  m_memoryTracker.track(kMemCategorySceneData, m_bSceneDesc.allocation);
+  updateSceneDescBuffer(staging, scn);
 }
 
 void nvvkgltf::SceneVk::update(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn)
 {
-  updateMaterialBuffer(cmd, staging, scn);
-  updateRenderNodesBuffer(cmd, staging, scn);
+  updateMaterialBuffer(staging, scn);
+  updateRenderNodesBuffer(staging, scn);
   updateRenderPrimitivesBuffer(cmd, staging, scn);
 }
 
@@ -289,7 +278,12 @@ void nvvkgltf::SceneVk::createGeometry(VkCommandBuffer cmd, nvvk::StagingUploade
   createVertexBuffers(cmd, staging, scn);
   updateRenderPrimitivesBuffer(cmd, staging, scn);
 
-  // Rebuild scene descriptor with new buffer addresses
+  updateSceneDescBuffer(staging, scn);
+}
+
+void nvvkgltf::SceneVk::updateSceneDescBuffer(nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn)
+{
+  // Buffer references
   shaderio::GltfScene scene_desc{};
   scene_desc.materials        = (shaderio::GltfShadeMaterial*)m_bMaterial.address;
   scene_desc.textureInfos     = (shaderio::GltfTextureInfo*)m_bTextureInfos.address;
@@ -298,8 +292,11 @@ void nvvkgltf::SceneVk::createGeometry(VkCommandBuffer cmd, nvvk::StagingUploade
   scene_desc.lights           = (shaderio::GltfLight*)m_bLights.address;
   scene_desc.numLights        = static_cast<int>(scn.getRenderLights().size());
 
-  NVVK_CHECK(m_alloc->createBuffer(m_bSceneDesc, std::span(&scene_desc, 1).size_bytes(),
-                                   VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
+  if(m_bSceneDesc.buffer == VK_NULL_HANDLE)
+  {
+    NVVK_CHECK(m_alloc->createBuffer(m_bSceneDesc, std::span(&scene_desc, 1).size_bytes(),
+                                     VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
+  }
   NVVK_CHECK(staging.appendBuffer(m_bSceneDesc, 0, std::span(&scene_desc, 1)));
   NVVK_DBG_NAME(m_bSceneDesc.buffer);
   m_memoryTracker.track(kMemCategorySceneData, m_bSceneDesc.allocation);
@@ -335,36 +332,39 @@ uint16_t addTextureInfo(const T& tinfo, std::vector<shaderio::GltfTextureInfo>& 
   return 0;  // No texture
 }
 
-static void getShaderMaterial(const tinygltf::Material&                 srcMat,
-                              std::vector<shaderio::GltfShadeMaterial>& shadeMaterial,
-                              std::vector<shaderio::GltfTextureInfo>&   textureInfos)
+//--------------------------------------------------------------------------------------------------
+// Shared material population logic. TextureHandler should have the signature:
+//   void(uint16_t& texIndex, const tinygltf::TextureInfo& srcTexInfo)
+// On creation: assign texIndex = addTextureInfo(srcTexInfo, textureInfos)
+// On update: if texIndex != 0, update cachedTextureInfos[texIndex] in-place
+//
+template <typename TextureHandler>
+static void populateShaderMaterial(shaderio::GltfShadeMaterial& dstMat, const tinygltf::Material& srcMat, TextureHandler handleTexture)
 {
-  int alphaMode = srcMat.alphaMode == "OPAQUE" ? 0 : (srcMat.alphaMode == "MASK" ? 1 : 2 /*BLEND*/);
-
-  shaderio::GltfShadeMaterial dstMat = shaderio::defaultGltfMaterial();
-  if(!srcMat.emissiveFactor.empty())
-  {
-    dstMat.emissiveFactor = glm::make_vec3<double>(srcMat.emissiveFactor.data());
-  }
-
-  dstMat.emissiveTexture     = addTextureInfo(srcMat.emissiveTexture, textureInfos);
-  dstMat.normalTexture       = addTextureInfo(srcMat.normalTexture, textureInfos);
-  dstMat.normalTextureScale  = static_cast<float>(srcMat.normalTexture.scale);
-  dstMat.pbrBaseColorFactor  = glm::make_vec4<double>(srcMat.pbrMetallicRoughness.baseColorFactor.data());
-  dstMat.pbrBaseColorTexture = addTextureInfo(srcMat.pbrMetallicRoughness.baseColorTexture, textureInfos);
-  dstMat.pbrMetallicFactor   = static_cast<float>(srcMat.pbrMetallicRoughness.metallicFactor);
-  dstMat.pbrMetallicRoughnessTexture = addTextureInfo(srcMat.pbrMetallicRoughness.metallicRoughnessTexture, textureInfos);
-  dstMat.pbrRoughnessFactor = static_cast<float>(srcMat.pbrMetallicRoughness.roughnessFactor);
-  dstMat.alphaMode          = alphaMode;
+  // Core PBR properties
+  dstMat.alphaMode          = srcMat.alphaMode == "OPAQUE" ? 0 : (srcMat.alphaMode == "MASK" ? 1 : 2 /*BLEND*/);
   dstMat.alphaCutoff        = static_cast<float>(srcMat.alphaCutoff);
-  dstMat.occlusionStrength  = static_cast<float>(srcMat.occlusionTexture.strength);
-  dstMat.occlusionTexture   = addTextureInfo(srcMat.occlusionTexture, textureInfos);
   dstMat.doubleSided        = srcMat.doubleSided ? 1 : 0;
+  dstMat.pbrBaseColorFactor = glm::make_vec4<double>(srcMat.pbrMetallicRoughness.baseColorFactor.data());
+  dstMat.pbrMetallicFactor  = static_cast<float>(srcMat.pbrMetallicRoughness.metallicFactor);
+  dstMat.pbrRoughnessFactor = static_cast<float>(srcMat.pbrMetallicRoughness.roughnessFactor);
+  dstMat.normalTextureScale = static_cast<float>(srcMat.normalTexture.scale);
+  dstMat.occlusionStrength  = static_cast<float>(srcMat.occlusionTexture.strength);
 
+  if(!srcMat.emissiveFactor.empty())
+    dstMat.emissiveFactor = glm::make_vec3<double>(srcMat.emissiveFactor.data());
 
+  // Core textures
+  handleTexture(dstMat.emissiveTexture, srcMat.emissiveTexture);
+  handleTexture(dstMat.normalTexture, srcMat.normalTexture);
+  handleTexture(dstMat.pbrBaseColorTexture, srcMat.pbrMetallicRoughness.baseColorTexture);
+  handleTexture(dstMat.pbrMetallicRoughnessTexture, srcMat.pbrMetallicRoughness.metallicRoughnessTexture);
+  handleTexture(dstMat.occlusionTexture, srcMat.occlusionTexture);
+
+  // Extensions
   KHR_materials_transmission transmission = tinygltf::utils::getTransmission(srcMat);
   dstMat.transmissionFactor               = transmission.factor;
-  dstMat.transmissionTexture              = addTextureInfo(transmission.texture, textureInfos);
+  handleTexture(dstMat.transmissionTexture, transmission.texture);
 
   KHR_materials_ior ior = tinygltf::utils::getIor(srcMat);
   dstMat.ior            = ior.ior;
@@ -372,21 +372,21 @@ static void getShaderMaterial(const tinygltf::Material&                 srcMat,
   KHR_materials_volume volume = tinygltf::utils::getVolume(srcMat);
   dstMat.attenuationColor     = volume.attenuationColor;
   dstMat.thicknessFactor      = volume.thicknessFactor;
-  dstMat.thicknessTexture     = addTextureInfo(volume.thicknessTexture, textureInfos);
   dstMat.attenuationDistance  = volume.attenuationDistance;
+  handleTexture(dstMat.thicknessTexture, volume.thicknessTexture);
 
   KHR_materials_clearcoat clearcoat = tinygltf::utils::getClearcoat(srcMat);
   dstMat.clearcoatFactor            = clearcoat.factor;
   dstMat.clearcoatRoughness         = clearcoat.roughnessFactor;
-  dstMat.clearcoatRoughnessTexture  = addTextureInfo(clearcoat.roughnessTexture, textureInfos);
-  dstMat.clearcoatTexture           = addTextureInfo(clearcoat.texture, textureInfos);
-  dstMat.clearcoatNormalTexture     = addTextureInfo(clearcoat.normalTexture, textureInfos);
+  handleTexture(dstMat.clearcoatRoughnessTexture, clearcoat.roughnessTexture);
+  handleTexture(dstMat.clearcoatTexture, clearcoat.texture);
+  handleTexture(dstMat.clearcoatNormalTexture, clearcoat.normalTexture);
 
   KHR_materials_specular specular = tinygltf::utils::getSpecular(srcMat);
   dstMat.specularFactor           = specular.specularFactor;
-  dstMat.specularTexture          = addTextureInfo(specular.specularTexture, textureInfos);
   dstMat.specularColorFactor      = specular.specularColorFactor;
-  dstMat.specularColorTexture     = addTextureInfo(specular.specularColorTexture, textureInfos);
+  handleTexture(dstMat.specularTexture, specular.specularTexture);
+  handleTexture(dstMat.specularColorTexture, specular.specularColorTexture);
 
   KHR_materials_emissive_strength emissiveStrength = tinygltf::utils::getEmissiveStrength(srcMat);
   dstMat.emissiveFactor *= emissiveStrength.emissiveStrength;
@@ -396,22 +396,22 @@ static void getShaderMaterial(const tinygltf::Material&                 srcMat,
 
   KHR_materials_iridescence iridescence = tinygltf::utils::getIridescence(srcMat);
   dstMat.iridescenceFactor              = iridescence.iridescenceFactor;
-  dstMat.iridescenceTexture             = addTextureInfo(iridescence.iridescenceTexture, textureInfos);
   dstMat.iridescenceIor                 = iridescence.iridescenceIor;
   dstMat.iridescenceThicknessMaximum    = iridescence.iridescenceThicknessMaximum;
   dstMat.iridescenceThicknessMinimum    = iridescence.iridescenceThicknessMinimum;
-  dstMat.iridescenceThicknessTexture    = addTextureInfo(iridescence.iridescenceThicknessTexture, textureInfos);
+  handleTexture(dstMat.iridescenceTexture, iridescence.iridescenceTexture);
+  handleTexture(dstMat.iridescenceThicknessTexture, iridescence.iridescenceThicknessTexture);
 
   KHR_materials_anisotropy anisotropy = tinygltf::utils::getAnisotropy(srcMat);
   dstMat.anisotropyRotation = glm::vec2(glm::sin(anisotropy.anisotropyRotation), glm::cos(anisotropy.anisotropyRotation));
   dstMat.anisotropyStrength = anisotropy.anisotropyStrength;
-  dstMat.anisotropyTexture  = addTextureInfo(anisotropy.anisotropyTexture, textureInfos);
+  handleTexture(dstMat.anisotropyTexture, anisotropy.anisotropyTexture);
 
-  KHR_materials_sheen sheen    = tinygltf::utils::getSheen(srcMat);
-  dstMat.sheenColorFactor      = sheen.sheenColorFactor;
-  dstMat.sheenColorTexture     = addTextureInfo(sheen.sheenColorTexture, textureInfos);
-  dstMat.sheenRoughnessFactor  = sheen.sheenRoughnessFactor;
-  dstMat.sheenRoughnessTexture = addTextureInfo(sheen.sheenRoughnessTexture, textureInfos);
+  KHR_materials_sheen sheen   = tinygltf::utils::getSheen(srcMat);
+  dstMat.sheenColorFactor     = sheen.sheenColorFactor;
+  dstMat.sheenRoughnessFactor = sheen.sheenRoughnessFactor;
+  handleTexture(dstMat.sheenColorTexture, sheen.sheenColorTexture);
+  handleTexture(dstMat.sheenRoughnessTexture, sheen.sheenRoughnessTexture);
 
   KHR_materials_dispersion dispersion = tinygltf::utils::getDispersion(srcMat);
   dstMat.dispersion                   = dispersion.dispersion;
@@ -421,66 +421,254 @@ static void getShaderMaterial(const tinygltf::Material&                 srcMat,
       tinygltf::utils::hasElementName(srcMat.extensions, KHR_MATERIALS_PBR_SPECULAR_GLOSSINESS_EXTENSION_NAME);
   if(dstMat.usePbrSpecularGlossiness)
   {
-    dstMat.pbrDiffuseFactor             = pbr.diffuseFactor;
-    dstMat.pbrSpecularFactor            = pbr.specularFactor;
-    dstMat.pbrGlossinessFactor          = pbr.glossinessFactor;
-    dstMat.pbrDiffuseTexture            = addTextureInfo(pbr.diffuseTexture, textureInfos);
-    dstMat.pbrSpecularGlossinessTexture = addTextureInfo(pbr.specularGlossinessTexture, textureInfos);
+    dstMat.pbrDiffuseFactor    = pbr.diffuseFactor;
+    dstMat.pbrSpecularFactor   = pbr.specularFactor;
+    dstMat.pbrGlossinessFactor = pbr.glossinessFactor;
   }
+  handleTexture(dstMat.pbrDiffuseTexture, pbr.diffuseTexture);
+  handleTexture(dstMat.pbrSpecularGlossinessTexture, pbr.specularGlossinessTexture);
 
   KHR_materials_diffuse_transmission diffuseTransmission = tinygltf::utils::getDiffuseTransmission(srcMat);
   dstMat.diffuseTransmissionFactor                       = diffuseTransmission.diffuseTransmissionFactor;
-  dstMat.diffuseTransmissionTexture = addTextureInfo(diffuseTransmission.diffuseTransmissionTexture, textureInfos);
-  dstMat.diffuseTransmissionColor   = diffuseTransmission.diffuseTransmissionColor;
-  dstMat.diffuseTransmissionColorTexture = addTextureInfo(diffuseTransmission.diffuseTransmissionColorTexture, textureInfos);
+  dstMat.diffuseTransmissionColor                        = diffuseTransmission.diffuseTransmissionColor;
+  handleTexture(dstMat.diffuseTransmissionTexture, diffuseTransmission.diffuseTransmissionTexture);
+  handleTexture(dstMat.diffuseTransmissionColorTexture, diffuseTransmission.diffuseTransmissionColorTexture);
 
   KHR_materials_volume_scatter volumeScatter = tinygltf::utils::getVolumeScatter(srcMat);
   dstMat.multiscatterColor                   = volumeScatter.multiscatterColor;
   dstMat.scatterAnisotropy                   = volumeScatter.scatterAnisotropy;
+}
 
-  shadeMaterial.emplace_back(dstMat);
+//--------------------------------------------------------------------------------------------------
+// Create a new shader material, appending texture infos to the vector
+//
+static void getShaderMaterial(const tinygltf::Material&                 srcMat,
+                              std::vector<shaderio::GltfShadeMaterial>& shadeMaterials,
+                              std::vector<shaderio::GltfTextureInfo>&   textureInfos)
+{
+  shaderio::GltfShadeMaterial dstMat = shaderio::defaultGltfMaterial();
+  populateShaderMaterial(dstMat, srcMat, [&](uint16_t& texIndex, const auto& srcTexInfo) {
+    texIndex = addTextureInfo(srcTexInfo, textureInfos);
+  });
+  shadeMaterials.emplace_back(dstMat);
+}
+
+//--------------------------------------------------------------------------------------------------
+// Information about a contiguous span of texture infos used by a material
+//  Used to upload the texture infos for a material in a single call
+struct TextureInfoSpan
+{
+  uint16_t minIdx = std::numeric_limits<uint16_t>::max();
+  uint16_t maxIdx = 0;
+  uint16_t count  = 0;
+
+  bool   hasAny() const { return count > 0; }
+  size_t spanSize() const { return static_cast<size_t>(maxIdx - minIdx + 1); }
+};
+
+struct MaterialUpdateResult
+{
+  TextureInfoSpan span{};
+  bool            topologyChanged = false;
+};
+
+// Update an existing cached material, preserving texture indices, and updating texture info.
+// Returns the contiguous texture-info span used by this material and whether texture slot topology changed.
+static MaterialUpdateResult updateCachedMaterial(shaderio::GltfShadeMaterial& dstMat,
+                                                 const tinygltf::Material&    srcMat,
+                                                 shaderio::GltfTextureInfo*   cachedTextureInfos)
+{
+  MaterialUpdateResult result{};
+  populateShaderMaterial(dstMat, srcMat, [&](uint16_t& texIndex, const auto& srcTexInfo) {
+    const bool hasSrcTexture = srcTexInfo.index != -1;
+
+    // Check if a texture slot was added or removed
+    {
+      // The cached material has no texture slots, check if the source material has any texture slots
+      if(texIndex == 0)
+      {
+        if(hasSrcTexture)
+          result.topologyChanged = true;  // New texture slots, we need to rebuild the cache
+        return;
+      }
+
+      // The cached material has texture slots, so we need to check if the source material has any texture slots
+      if(!hasSrcTexture)
+      {
+        result.topologyChanged = true;
+        return;
+      }
+    }
+
+    // Update the cached texture info and the span of texture infos
+    cachedTextureInfos[texIndex] = getTextureInfo(srcTexInfo);
+    result.span.minIdx           = std::min(result.span.minIdx, texIndex);  // Minimum txt ID in this material
+    result.span.maxIdx = std::max(result.span.maxIdx, texIndex);  //Max to check later if the texture infos are contiguous
+    result.span.count++;                                          // Count the number of texture infos for this material
+  });
+  return result;
 }
 
 //--------------------------------------------------------------------------------------------------
 // Create a buffer of all materials, with only the elements we need
 //
-void nvvkgltf::SceneVk::updateMaterialBuffer(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn)
+void nvvkgltf::SceneVk::updateMaterialBuffer(nvvk::StagingUploader&         staging,
+                                             const nvvkgltf::Scene&         scn,
+                                             const std::unordered_set<int>& dirtyIndices)
 {
-  nvutils::ScopedTimer st(__FUNCTION__);
+  // nvutils::ScopedTimer st(__FUNCTION__);
 
   using namespace tinygltf;
   const std::vector<tinygltf::Material>& materials = scn.getModel().materials;
 
-  std::vector<shaderio::GltfShadeMaterial> shadeMaterials;
-  std::vector<shaderio::GltfTextureInfo>   textureInfos;
-  textureInfos.push_back({});  // 0 is reserved for no texture
-  shadeMaterials.reserve(materials.size());
-  for(const auto& srcMat : materials)
+  // Rebuild the cached materials and texture infos
+  auto rebuildCaches = [&]() {
+    m_cachedTextureInfos.clear();
+    m_cachedTextureInfos.push_back({});  // 0 is reserved for no texture
+    m_cachedShadeMaterials.clear();
+    m_cachedShadeMaterials.reserve(materials.size());
+    for(const auto& srcMat : materials)
+    {
+      getShaderMaterial(srcMat, m_cachedShadeMaterials, m_cachedTextureInfos);
+    }
+  };
+
+  // Ensure that the buffer has the required capacity to avoid resizing the buffer
+  // If the buffer is already large enough, return false
+  // If the buffer is not large enough, destroy the buffer and create a new one
+  // Return true if the buffer was resized
+  auto ensureBufferCapacity = [&](nvvk::Buffer& buffer, VkDeviceSize requiredBytes) {
+    if(buffer.buffer != VK_NULL_HANDLE && buffer.bufferSize >= requiredBytes)
+      return false;
+
+    if(buffer.buffer != VK_NULL_HANDLE)
+    {
+      m_memoryTracker.untrack(kMemCategorySceneData, buffer.allocation);
+      m_alloc->destroyBuffer(buffer);
+    }
+
+    NVVK_CHECK(m_alloc->createBuffer(buffer, requiredBytes,
+                                     VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
+    NVVK_DBG_NAME(buffer.buffer);
+    m_memoryTracker.track(kMemCategorySceneData, buffer.allocation);
+    return true;
+  };
+
+  // Ensure that the material and texture buffers have the required capacity to avoid resizing the buffers
+  // If the buffers are already large enough, return false
+  // If the buffers are not large enough, destroy the buffers and create new ones
+  // Return true if the buffers were resized
+  auto ensureMaterialBuffers = [&]() {
+    const VkDeviceSize materialBytes = std::span(m_cachedShadeMaterials).size_bytes();
+    const VkDeviceSize textureBytes  = std::span(m_cachedTextureInfos).size_bytes();
+
+    bool resized = false;
+    resized |= ensureBufferCapacity(m_bMaterial, materialBytes);
+    resized |= ensureBufferCapacity(m_bTextureInfos, textureBytes);
+    return resized;
+  };
+
+  // If more than half of materials are dirty, a full update is faster (fewer staging calls)
+  const bool doFullUpdate = dirtyIndices.empty() || dirtyIndices.size() > materials.size() / 2;
+
+  // Rebuild all materials and texture infos into cache
+  if(doFullUpdate)
   {
-    getShaderMaterial(srcMat, shadeMaterials, textureInfos);
+    rebuildCaches();
   }
 
-  if(m_bMaterial.buffer == VK_NULL_HANDLE)
+  // If the buffer changed, update the scene descriptor buffer (contain the buffer addresses)
+  const bool buffersResized = ensureMaterialBuffers();
+  if(buffersResized && m_bSceneDesc.buffer != VK_NULL_HANDLE)
   {
-    NVVK_CHECK(m_alloc->createBuffer(m_bMaterial, std::span(shadeMaterials).size_bytes(),
-                                     VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
-    NVVK_CHECK(staging.appendBuffer(m_bMaterial, 0, std::span(shadeMaterials)));
-    NVVK_DBG_NAME(m_bMaterial.buffer);
-    m_memoryTracker.track(kMemCategorySceneData, m_bMaterial.allocation);
-
-    NVVK_CHECK(m_alloc->createBuffer(m_bTextureInfos, std::span(textureInfos).size_bytes(),
-                                     VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
-    NVVK_CHECK(staging.appendBuffer(m_bTextureInfos, 0, std::span(textureInfos)));
-    NVVK_DBG_NAME(m_bTextureInfos.buffer);
-    m_memoryTracker.track(kMemCategorySceneData, m_bTextureInfos.allocation);
+    updateSceneDescBuffer(staging, scn);
   }
-  else
+
+  // Full update: upload all materials and texture infos (faster when many materials changed)
+  if(doFullUpdate || buffersResized)
   {
-    staging.appendBuffer(m_bMaterial, 0, std::span(shadeMaterials));
-    staging.appendBuffer(m_bTextureInfos, 0, std::span(textureInfos));
+    staging.appendBuffer(m_bMaterial, 0, std::span(m_cachedShadeMaterials));
+    staging.appendBuffer(m_bTextureInfos, 0, std::span(m_cachedTextureInfos));
+    return;
+  }
+
+  //--------------------------------------------------------------------------------------------------
+  // From here, we are doing a surgical update: only process dirty materials,
+  // but fall back to full rebuild if texture slots change
+
+  struct PendingUpload
+  {
+    int             idx = -1;
+    TextureInfoSpan span{};
+  };
+
+  // We will upload the materials and texture infos for the dirty materials after the process
+  std::vector<PendingUpload> pendingUploads;
+  pendingUploads.reserve(dirtyIndices.size());
+
+  // We will track if the texture slots changed
+  bool topologyChanged = false;
+
+  // Go through the dirty materials indices and update the materials and texture infos
+  for(int idx : dirtyIndices)
+  {
+    if(idx < 0 || idx >= static_cast<int>(materials.size()) || idx >= static_cast<int>(m_cachedShadeMaterials.size()))
+      continue;
+
+    shaderio::GltfShadeMaterial& cachedMat = m_cachedShadeMaterials[idx];
+
+    // Update material properties AND texture infos in one pass (parses extensions once)
+    MaterialUpdateResult update = updateCachedMaterial(cachedMat, materials[idx], m_cachedTextureInfos.data());
+    if(update.topologyChanged)
+    {
+      topologyChanged = true;  // New texture slots, we need to rebuild the entirecache
+      break;
+    }
+
+    // Add the material and texture infos to the pending uploads
+    pendingUploads.push_back({idx, update.span});
+  }
+
+  // If the texture slots changed, we need to rebuild the cache and upload
+  // the new materials and texture infos
+  if(topologyChanged)
+  {
+    rebuildCaches();
+    const bool resized = ensureMaterialBuffers();
+    if(resized)
+    {
+      // Making sure the scene descriptor buffer is updated with the new material and texture info buffer addresses
+      updateSceneDescBuffer(staging, scn);
+    }
+    // Upload all materials and texture infos
+    staging.appendBuffer(m_bMaterial, 0, std::span(m_cachedShadeMaterials));
+    staging.appendBuffer(m_bTextureInfos, 0, std::span(m_cachedTextureInfos));
+    return;
+  }
+
+  // Upload the materials and texture infos for the dirty materials
+  for(const PendingUpload& upload : pendingUploads)
+  {
+    shaderio::GltfShadeMaterial& cachedMat = m_cachedShadeMaterials[upload.idx];
+
+    // Upload material `idx` (only one material per upload)
+    size_t matOffset = upload.idx * sizeof(shaderio::GltfShadeMaterial);
+    staging.appendBuffer(m_bMaterial, matOffset, sizeof(shaderio::GltfShadeMaterial), &cachedMat);
+
+    // Batch-upload the contiguous texture info range for this material (ex. texID 9, 10, 11)
+    if(upload.span.hasAny())
+    {
+      const size_t spanSize = upload.span.spanSize();
+      assert(spanSize == upload.span.count && "Texture infos for a material are expected to be contiguous");
+
+      size_t texOffset = upload.span.minIdx * sizeof(shaderio::GltfTextureInfo);
+      staging.appendBuffer(m_bTextureInfos, texOffset, spanSize * sizeof(shaderio::GltfTextureInfo),
+                           &m_cachedTextureInfos[upload.span.minIdx]);
+    }
   }
 }
 
+//--------------------------------------------------------------------------------------------------
 // Function to blend positions of a primitive with morph targets
 static std::vector<glm::vec3> getBlendedPositions(const tinygltf::Accessor&  baseAccessor,
                                                   const glm::vec3*           basePositionData,
@@ -602,31 +790,56 @@ static SkinningResult applySkinning(nvvkgltf::SkinningWorkspace&       workspace
 //--------------------------------------------------------------------------------------------------
 // Array of instance information
 // - Use by the vertex shader to retrieve the position of the instance
-void nvvkgltf::SceneVk::updateRenderNodesBuffer(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn)
+// - dirtyIndices contains renderNode indices that changed (empty means update all)
+void nvvkgltf::SceneVk::updateRenderNodesBuffer(nvvk::StagingUploader&         staging,
+                                                const nvvkgltf::Scene&         scn,
+                                                const std::unordered_set<int>& dirtyIndices)
 {
   // nvutils::ScopedTimer st(__FUNCTION__);
 
-  std::vector<shaderio::GltfRenderNode> instanceInfo;
-  for(const nvvkgltf::RenderNode& renderNode : scn.getRenderNodes())
-  {
+  const std::vector<nvvkgltf::RenderNode>& renderNodes       = scn.getRenderNodes();
+  const auto                               buildInstanceInfo = [](const nvvkgltf::RenderNode& renderNode) {
     shaderio::GltfRenderNode info{};
     info.objectToWorld = renderNode.worldMatrix;
     info.worldToObject = glm::inverse(renderNode.worldMatrix);
     info.materialID    = renderNode.materialID;
     info.renderPrimID  = renderNode.renderPrimID;
-    instanceInfo.emplace_back(info);
-  }
-  if(m_bRenderNode.buffer == VK_NULL_HANDLE)
+    return info;
+  };
+
+  const bool wasNullBuffer = (m_bRenderNode.buffer == VK_NULL_HANDLE);
+  if(wasNullBuffer)
   {
-    NVVK_CHECK(m_alloc->createBuffer(m_bRenderNode, std::span(instanceInfo).size_bytes(),
+    // Create the buffer early (size is known), fill below
+    NVVK_CHECK(m_alloc->createBuffer(m_bRenderNode, renderNodes.size() * sizeof(shaderio::GltfRenderNode),
                                      VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
-    NVVK_CHECK(staging.appendBuffer(m_bRenderNode, 0, std::span(instanceInfo)));
     NVVK_DBG_NAME(m_bRenderNode.buffer);
     m_memoryTracker.track(kMemCategorySceneData, m_bRenderNode.allocation);
   }
+
+  if(wasNullBuffer || dirtyIndices.empty())
+  {
+    // First time or empty dirty set means update all
+    std::vector<shaderio::GltfRenderNode> instanceInfo;
+    instanceInfo.reserve(renderNodes.size());
+    for(const nvvkgltf::RenderNode& renderNode : renderNodes)
+    {
+      instanceInfo.emplace_back(buildInstanceInfo(renderNode));
+    }
+    staging.appendBuffer(m_bRenderNode, 0, std::span(instanceInfo));
+  }
   else
   {
-    staging.appendBuffer(m_bRenderNode, 0, std::span(instanceInfo));
+    // Surgical update: dirtyIndices are renderNode indices
+    const size_t renderNodeCount = renderNodes.size();
+    for(int renderNodeIdx : dirtyIndices)
+    {
+      if(renderNodeIdx < 0 || static_cast<size_t>(renderNodeIdx) >= renderNodeCount)
+        continue;
+      const shaderio::GltfRenderNode info   = buildInstanceInfo(renderNodes[renderNodeIdx]);
+      const size_t                   offset = static_cast<size_t>(renderNodeIdx) * sizeof(shaderio::GltfRenderNode);
+      staging.appendBuffer(m_bRenderNode, offset, sizeof(shaderio::GltfRenderNode), &info);
+    }
   }
 }
 
@@ -634,7 +847,10 @@ void nvvkgltf::SceneVk::updateRenderNodesBuffer(VkCommandBuffer cmd, nvvk::Stagi
 //--------------------------------------------------------------------------------------------------
 // Update the buffer of all lights
 // - If the light data was changes, the buffer needs to be updated
-void nvvkgltf::SceneVk::updateRenderLightsBuffer(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn)
+// - dirtyIndices contains glTF light indices that changed (empty means update all)
+void nvvkgltf::SceneVk::updateRenderLightsBuffer(nvvk::StagingUploader&         staging,
+                                                 const nvvkgltf::Scene&         scn,
+                                                 const std::unordered_set<int>& dirtyIndices)
 {
   const std::vector<nvvkgltf::RenderLight>& rlights = scn.getRenderLights();
   if(rlights.empty())
@@ -644,15 +860,29 @@ void nvvkgltf::SceneVk::updateRenderLightsBuffer(VkCommandBuffer cmd, nvvk::Stag
 
   if(m_bLights.buffer == VK_NULL_HANDLE)
   {
+    // First time: create buffer and upload all
     NVVK_CHECK(m_alloc->createBuffer(m_bLights, std::span(shaderLights).size_bytes(),
                                      VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_2_SHADER_DEVICE_ADDRESS_BIT));
     NVVK_CHECK(staging.appendBuffer(m_bLights, 0, std::span(shaderLights)));
     NVVK_DBG_NAME(m_bLights.buffer);
     m_memoryTracker.track(kMemCategorySceneData, m_bLights.allocation);
   }
+  else if(dirtyIndices.empty())
+  {
+    // Empty dirty set means update all (backward compatibility / full re-parse)
+    staging.appendBuffer(m_bLights, 0, std::span(shaderLights));
+  }
   else
   {
-    staging.appendBuffer(m_bLights, 0, std::span(shaderLights));
+    // Surgical update: find RenderLights that reference dirty glTF lights
+    for(size_t renderLightIdx = 0; renderLightIdx < rlights.size(); ++renderLightIdx)
+    {
+      if(dirtyIndices.contains(rlights[renderLightIdx].light))
+      {
+        size_t offset = renderLightIdx * sizeof(shaderio::GltfLight);
+        staging.appendBuffer(m_bLights, offset, sizeof(shaderio::GltfLight), &shaderLights[renderLightIdx]);
+      }
+    }
   }
 }
 
@@ -661,6 +891,7 @@ void nvvkgltf::SceneVk::updateRenderLightsBuffer(VkCommandBuffer cmd, nvvk::Stag
 //
 void nvvkgltf::SceneVk::updateRenderPrimitivesBuffer(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn)
 {
+  // SCOPED_TIMER(__FUNCTION__);
   const tinygltf::Model& model = scn.getModel();
 
   // ** Morph **
@@ -767,13 +998,12 @@ void nvvkgltf::SceneVk::updateRenderPrimitivesBuffer(VkCommandBuffer cmd, nvvk::
 // Function to create attribute buffers in Vulkan only if the attribute is present
 // Return true if a buffer was created, false if the buffer was updated
 template <typename T>
-bool nvvkgltf::SceneVk::updateAttributeBuffer(VkCommandBuffer cmd,               // Command buffer to record the copy
-                                              const std::string& attributeName,  // Name of the attribute: POSITION, NORMAL, ...
-                                              const tinygltf::Model&     model,      // GLTF model
-                                              const tinygltf::Primitive& primitive,  // GLTF primitive
-                                              nvvk::ResourceAllocator*   alloc,      // Allocator to create the buffer
+bool nvvkgltf::SceneVk::updateAttributeBuffer(const std::string&         attributeName,
+                                              const tinygltf::Model&     model,
+                                              const tinygltf::Primitive& primitive,
+                                              nvvk::ResourceAllocator*   alloc,
                                               nvvk::StagingUploader*     staging,
-                                              nvvk::Buffer&              attributeBuffer)  // Buffer to be created
+                                              nvvk::Buffer&              attributeBuffer)
 {
   const auto& findResult = primitive.attributes.find(attributeName);
   if(findResult != primitive.attributes.end())
@@ -847,11 +1077,11 @@ void nvvkgltf::SceneVk::createVertexBuffers(VkCommandBuffer cmd, nvvk::StagingUp
     const tinygltf::Mesh&      mesh          = model.meshes[scn.getRenderPrimitive(primID).meshID];
     VertexBuffers&             vertexBuffers = m_vertexBuffers[primID];
 
-    updateAttributeBuffer<glm::vec3>(cmd, "POSITION", model, primitive, m_alloc, &staging, vertexBuffers.position);
-    updateAttributeBuffer<glm::vec3>(cmd, "NORMAL", model, primitive, m_alloc, &staging, vertexBuffers.normal);
-    updateAttributeBuffer<glm::vec2>(cmd, "TEXCOORD_0", model, primitive, m_alloc, &staging, vertexBuffers.texCoord0);
-    updateAttributeBuffer<glm::vec2>(cmd, "TEXCOORD_1", model, primitive, m_alloc, &staging, vertexBuffers.texCoord1);
-    updateAttributeBuffer<glm::vec4>(cmd, "TANGENT", model, primitive, m_alloc, &staging, vertexBuffers.tangent);
+    updateAttributeBuffer<glm::vec3>("POSITION", model, primitive, m_alloc, &staging, vertexBuffers.position);
+    updateAttributeBuffer<glm::vec3>("NORMAL", model, primitive, m_alloc, &staging, vertexBuffers.normal);
+    updateAttributeBuffer<glm::vec2>("TEXCOORD_0", model, primitive, m_alloc, &staging, vertexBuffers.texCoord0);
+    updateAttributeBuffer<glm::vec2>("TEXCOORD_1", model, primitive, m_alloc, &staging, vertexBuffers.texCoord1);
+    updateAttributeBuffer<glm::vec4>("TANGENT", model, primitive, m_alloc, &staging, vertexBuffers.tangent);
 
     if(tinygltf::utils::hasElementName(primitive.attributes, "COLOR_0"))
     {
@@ -960,7 +1190,7 @@ void nvvkgltf::SceneVk::createVertexBuffers(VkCommandBuffer cmd, nvvk::StagingUp
 }
 
 // This version updates all the vertex buffers
-void nvvkgltf::SceneVk::updateVertexBuffers(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scene)
+void nvvkgltf::SceneVk::updateVertexBuffers(nvvk::StagingUploader& staging, const nvvkgltf::Scene& scene)
 {
   const auto& model = scene.getModel();
 
@@ -969,11 +1199,11 @@ void nvvkgltf::SceneVk::updateVertexBuffers(VkCommandBuffer cmd, nvvk::StagingUp
     const tinygltf::Primitive& primitive     = *scene.getRenderPrimitive(primID).pPrimitive;
     VertexBuffers&             vertexBuffers = m_vertexBuffers[primID];
     bool                       newBuffer     = false;
-    updateAttributeBuffer<glm::vec3>(cmd, "POSITION", model, primitive, m_alloc, &staging, vertexBuffers.position);
-    newBuffer |= updateAttributeBuffer<glm::vec3>(cmd, "NORMAL", model, primitive, m_alloc, &staging, vertexBuffers.normal);
-    newBuffer |= updateAttributeBuffer<glm::vec2>(cmd, "TEXCOORD_0", model, primitive, m_alloc, &staging, vertexBuffers.texCoord0);
-    newBuffer |= updateAttributeBuffer<glm::vec2>(cmd, "TEXCOORD_1", model, primitive, m_alloc, &staging, vertexBuffers.texCoord1);
-    newBuffer |= updateAttributeBuffer<glm::vec4>(cmd, "TANGENT", model, primitive, m_alloc, &staging, vertexBuffers.tangent);
+    updateAttributeBuffer<glm::vec3>("POSITION", model, primitive, m_alloc, &staging, vertexBuffers.position);
+    newBuffer |= updateAttributeBuffer<glm::vec3>("NORMAL", model, primitive, m_alloc, &staging, vertexBuffers.normal);
+    newBuffer |= updateAttributeBuffer<glm::vec2>("TEXCOORD_0", model, primitive, m_alloc, &staging, vertexBuffers.texCoord0);
+    newBuffer |= updateAttributeBuffer<glm::vec2>("TEXCOORD_1", model, primitive, m_alloc, &staging, vertexBuffers.texCoord1);
+    newBuffer |= updateAttributeBuffer<glm::vec4>("TANGENT", model, primitive, m_alloc, &staging, vertexBuffers.tangent);
 
     // A buffer was created (most likely tangent buffer), we need to update the RenderPrimitive buffer
     if(newBuffer)
@@ -1195,9 +1425,8 @@ void nvvkgltf::SceneVk::findSrgbImages(const tinygltf::Model& model)
   };
 
   // Loop over all materials and find the sRgb textures
-  for(size_t matID = 0; matID < model.materials.size(); matID++)
+  for(tinygltf::Material const& mat : model.materials)
   {
-    const auto& mat = model.materials[matID];
     // https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#metallic-roughness-material
     addImage(mat.pbrMetallicRoughness.baseColorTexture.index);
     addImage(mat.emissiveTexture.index);
@@ -1215,9 +1444,8 @@ void nvvkgltf::SceneVk::findSrgbImages(const tinygltf::Model& model)
   }
 
   // Special, if the 'extra' in the texture has a gamma defined greater than 1.0, it is sRGB
-  for(size_t texID = 0; texID < model.textures.size(); texID++)
+  for(tinygltf::Texture const& texture : model.textures)
   {
-    const auto& texture = model.textures[texID];
     if(texture.extras.Has("gamma") && texture.extras.Get("gamma").GetNumberAsDouble() > 1.0)
     {
       m_sRgbImages.insert(tinygltf::utils::getTextureImageIndex(texture));
@@ -1643,6 +1871,8 @@ void nvvkgltf::SceneVk::destroy()
 
   // Release CPU skinning workspace memory
   m_skinningWorkspace.clear();
+  m_cachedShadeMaterials.clear();
+  m_cachedTextureInfos.clear();
 }
 
 //////////////////////////////////////////////////////////////////////////

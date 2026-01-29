@@ -27,6 +27,7 @@
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -168,9 +169,13 @@ public:
   tinygltf::Model&       getModel() { return m_model; }
   bool                   valid() const { return m_validSceneParsed; }
 
+  // Update render node world matrices.
+  // If dirtyNodeIds is empty, performs a full update.
+  void updateNodeWorldMatrices(const std::unordered_set<int>& dirtyNodeIds = {});
+  void updateVisibility(int nodeID);
+
   // Animation Management
-  void                     updateRenderNodes();  // Update the render nodes matrices and materials
-  bool                     updateAnimation(uint32_t animationIndex);
+  std::unordered_set<int>  updateAnimation(uint32_t animationIndex);
   int                      getNumAnimations() const { return static_cast<int>(m_animations.size()); }
   bool                     hasAnimation() const { return !m_animations.empty(); }
   nvvkgltf::AnimationInfo& getAnimationInfo(int index) { return m_animations[index].info; }
@@ -190,6 +195,17 @@ public:
 
   // Render Node Management
   const std::vector<nvvkgltf::RenderNode>& getRenderNodes() const { return m_renderNodes; }
+  // Collect render node indices affected by node changes (optionally including descendants).
+  // Returns true if a full update is recommended (e.g., root node changed or too many nodes affected).
+  // Returns false if a partial update is recommended or if no render nodes are affected.
+  bool collectRenderNodeIndices(const std::unordered_set<int>& nodeIds,
+                                std::unordered_set<int>&       outRenderNodeIndices,
+                                bool                           includeDescendants = true,
+                                float                          fullUpdateRatio    = 0.5f) const;
+  // Map (nodeID, primitiveIndex) to RenderNode index using the scene-owned mapping.
+  int getRenderNodeForPrimitive(int nodeId, int primitiveIndex) const;
+  // Map RenderNode index back to primitive index within its node.
+  int getPrimitiveIndexForRenderNode(int renderNodeIndex) const;
 
   // Render Primitive Management
   const std::vector<nvvkgltf::RenderPrimitive>& getRenderPrimitives() const { return m_renderPrimitives; }
@@ -201,14 +217,16 @@ public:
   // Scene Management
   void           setCurrentScene(int sceneID);  // Parse the scene and create the render nodes, call when changing scene
   int            getCurrentScene() const { return m_currentScene; }
-  tinygltf::Node getSceneRootNode() const;
-  void           setSceneRootNode(const tinygltf::Node& node);
   const std::vector<glm::mat4>& getNodesWorldMatrices() const { return m_nodesWorldMatrices; }
 
   // Variant Management
-  void                            setCurrentVariant(int variant);  // Set the variant to be used
+  // Set the variant to be used and return the list of modified renderNodes
+  void                            setCurrentVariant(int variant, std::unordered_set<int>& dirtyRenderNodes);
   const std::vector<std::string>& getVariants() const { return m_variants; }
   int                             getCurrentVariant() const { return m_currentVariant; }
+
+  // Return the list of render nodes that are affected by the material variant change
+  std::unordered_set<int> getMaterialRenderNodes(const std::unordered_set<int>& materialVariantNodeIDs) const;
 
   // Shading Management
   std::vector<uint32_t> getShadedNodes(PipelineType type);  // Get the nodes that will be shaded by the pipeline type
@@ -266,7 +284,6 @@ private:
   void parseVariants();                 // Parse the variants
   void setSceneElementsDefaultNames();  // Set a default name for the scene elements
   void createSceneCamera();             // Create a camera for the scene
-  void createRootIfMultipleNodes(tinygltf::Scene& scene);
 
   int getUniqueRenderPrimitive(tinygltf::Primitive& primitive, int meshID);
   int getMaterialVariantIndex(const tinygltf::Primitive& primitive, int currentVariant);
@@ -275,7 +292,6 @@ private:
   size_t handleGpuInstancing(const tinygltf::Value& attributes, nvvkgltf::RenderNode renderNode, glm::mat4 worldMatrix);
   bool   handleCameraTraversal(int nodeID, const glm::mat4& worldMatrix);
   bool   handleLightTraversal(int nodeID, const glm::mat4& worldMatrix);
-  void   updateVisibility(int nodeID, bool visible, uint32_t& renderNodeID);
   void   createMissingTangents();
   bool processAnimationChannel(tinygltf::Node* gltfNode, AnimationSampler& sampler, const AnimationChannel& channel, float time);
   float calculateInterpolationFactor(float inputStart, float inputEnd, float time);
@@ -287,6 +303,8 @@ private:
                                       float                   t,
                                       float                   keyDelta,
                                       size_t                  index);
+  void updateRenderNodesFull();
+
 
   tinygltf::Model                        m_model;                 // The glTF model
   std::filesystem::path                  m_filename;              // Filename of the glTF
@@ -299,14 +317,18 @@ private:
   std::unordered_map<std::string, int>   m_uniquePrimitiveIndex;  // Key: primitive, Value: renderPrimID
   std::vector<uint32_t>                  m_morphPrimitives;       // All the primitives that are animated
   std::vector<uint32_t>                  m_skinNodes;             // All the primitives that are animated
-  std::vector<glm::mat4>                 m_nodesWorldMatrices;
+
+
+  std::vector<glm::mat4>        m_nodesLocalMatrices;
+  std::vector<glm::mat4>        m_nodesWorldMatrices;
+  std::vector<std::vector<int>> m_nodeToRenderNodes;  // nodeID -> renderNode indices in primitive order
+  std::vector<int>              m_nodeParents;        // Parent node index for each node (cached)
 
   nvvkgltf::AnimationPointerSystem m_animationPointer;  // Unified animation pointer system (direct member)
 
   int           m_numTriangles    = 0;   // Stat - Number of triangles
   int           m_currentScene    = 0;   // Scene index
   int           m_currentVariant  = 0;   // Variant index
-  int           m_sceneRootNode   = -1;  // Node index of the root
   int           m_sceneCameraNode = -1;  // Node index of the camera
   nvutils::Bbox m_sceneBounds;           // Scene bounds
 

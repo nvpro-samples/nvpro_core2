@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -397,29 +397,66 @@ void nvvkgltf::SceneRtx::cmdCreateBuildTopLevelAccelerationStructure(VkCommandBu
 }
 
 
-// This function is called when the scene has been updated
-void nvvkgltf::SceneRtx::updateTopLevelAS(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scene)
+// Partial update: only update instances for the dirty render nodes
+void nvvkgltf::SceneRtx::updateTopLevelAS(VkCommandBuffer                cmd,
+                                          nvvk::StagingUploader&         staging,
+                                          const nvvkgltf::Scene&         scene,
+                                          const std::unordered_set<int>& dirtyRenderNodes)
 {
-  //nvh::ScopedTimer st(__FUNCTION__);
-  const std::vector<nvvkgltf::RenderNode>& drawObjects = scene.getRenderNodes();
-  const auto&                              materials   = scene.getModel().materials;
+  // nvutils::ScopedTimer st(__FUNCTION__);
 
-  uint32_t numVisibleElement = 0;
-  // Updating all matrices
-  for(size_t i = 0; i < drawObjects.size(); i++)
-  {
-    auto&                     object      = drawObjects[i];
+  const auto& drawObjects = scene.getRenderNodes();
+  const auto& materials   = scene.getModel().materials;
+
+  // Number of visible elements before the update.
+  // If the dirtyRenderNodes is empty, we do a full update, so the number of visible elements is 0.
+  // Otherwise, we do a partial update, so the number of visible elements is the number of visible elements before the update
+  // which can be reduced if no longer visible.
+  uint32_t numVisibleElement = dirtyRenderNodes.empty() ? 0 : m_numVisibleElement;
+
+
+  auto updateInstance = [&](int idx) {
+    const auto&               object      = drawObjects[idx];
     const tinygltf::Material& mat         = materials[object.materialID];
     VkDeviceAddress           blasAddress = m_blasAccel[object.renderPrimID].address;
+    const bool                isVisible   = object.visible && (blasAddress != 0);
+    const bool                wasVisible  = (m_tlasInstances[idx].accelerationStructureReference != 0);
 
-    m_tlasInstances[i].transform = nvvk::toTransformMatrixKHR(object.worldMatrix);  // Position of the instance
-    m_tlasInstances[i].flags     = getInstanceFlag(mat);
-    m_tlasInstances[i].accelerationStructureReference = (object.visible ? blasAddress : 0);  // The reference to the BLAS
-    numVisibleElement += object.visible;
+    m_tlasInstances[idx].transform                      = nvvk::toTransformMatrixKHR(object.worldMatrix);
+    m_tlasInstances[idx].flags                          = getInstanceFlag(mat);
+    m_tlasInstances[idx].accelerationStructureReference = isVisible ? blasAddress : 0;
+    return std::pair<bool, bool>{wasVisible, isVisible};
+  };
+
+  if(dirtyRenderNodes.empty())
+  {
+    // Full update
+    for(size_t i = 0; i < drawObjects.size(); i++)
+    {
+      auto visibility = updateInstance(static_cast<int>(i));
+      numVisibleElement += visibility.second ? 1 : 0;
+    }
+
+    // Update the full instance buffer
+    staging.appendBuffer(m_instancesBuffer, 0, std::span(m_tlasInstances));
+  }
+  else
+  {
+    // Partial update: only dirty indices
+    for(int idx : dirtyRenderNodes)
+    {
+      if(idx < 0 || idx >= static_cast<int>(drawObjects.size()))
+        continue;
+
+      auto visibility = updateInstance(idx);
+      if(visibility.first != visibility.second)
+        numVisibleElement += visibility.second ? 1 : -1;
+
+      const VkDeviceSize offset = static_cast<VkDeviceSize>(idx) * sizeof(VkAccelerationStructureInstanceKHR);
+      staging.appendBuffer(m_instancesBuffer, offset, std::span(&m_tlasInstances[idx], 1));
+    }
   }
 
-  // Update the instance buffer
-  staging.appendBuffer(m_instancesBuffer, 0, std::span(m_tlasInstances));
   staging.cmdUploadAppended(cmd);
 
   // Make sure the copy of the instance buffer are copied before triggering the acceleration structure build
@@ -452,6 +489,7 @@ void nvvkgltf::SceneRtx::updateTopLevelAS(VkCommandBuffer cmd, nvvk::StagingUplo
 
 void nvvkgltf::SceneRtx::updateBottomLevelAS(VkCommandBuffer cmd, const nvvkgltf::Scene& scene)
 {
+  // nvutils::ScopedTimer st(__FUNCTION__);
   // #TODO - Check that primID aren't duplicated
   for(auto& primID : scene.getMorphPrimitives())
   {

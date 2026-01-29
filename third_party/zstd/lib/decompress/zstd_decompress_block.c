@@ -16,14 +16,13 @@
 *********************************************************/
 #include "../common/zstd_deps.h"   /* ZSTD_memcpy, ZSTD_memmove, ZSTD_memset */
 #include "../common/compiler.h"    /* prefetch */
-#include "../common/cpu.h"         /* bmi2 */
 #include "../common/mem.h"         /* low level memory routines */
+#include <stddef.h>
 #define FSE_STATIC_LINKING_ONLY
 #include "../common/fse.h"
 #include "../common/huf.h"
 #include "../common/zstd_internal.h"
 #include "zstd_decompress_internal.h"   /* ZSTD_DCtx */
-#include "zstd_ddict.h"  /* ZSTD_DDictDictContent */
 #include "zstd_decompress_block.h"
 #include "../common/bits.h"  /* ZSTD_highbit32 */
 
@@ -734,9 +733,10 @@ size_t ZSTD_decodeSeqHeaders(ZSTD_DCtx* dctx, int* nbSeqPtr,
         ip++;
 
         /* Build DTables */
+        assert(ip <= iend);
         {   size_t const llhSize = ZSTD_buildSeqTable(dctx->entropy.LLTable, &dctx->LLTptr,
                                                       LLtype, MaxLL, LLFSELog,
-                                                      ip, iend-ip,
+                                                      ip, (size_t)(iend-ip),
                                                       LL_base, LL_bits,
                                                       LL_defaultDTable, dctx->fseEntropy,
                                                       dctx->ddictIsCold, nbSeq,
@@ -746,9 +746,10 @@ size_t ZSTD_decodeSeqHeaders(ZSTD_DCtx* dctx, int* nbSeqPtr,
             ip += llhSize;
         }
 
+        assert(ip <= iend);
         {   size_t const ofhSize = ZSTD_buildSeqTable(dctx->entropy.OFTable, &dctx->OFTptr,
                                                       OFtype, MaxOff, OffFSELog,
-                                                      ip, iend-ip,
+                                                      ip, (size_t)(iend-ip),
                                                       OF_base, OF_bits,
                                                       OF_defaultDTable, dctx->fseEntropy,
                                                       dctx->ddictIsCold, nbSeq,
@@ -758,9 +759,10 @@ size_t ZSTD_decodeSeqHeaders(ZSTD_DCtx* dctx, int* nbSeqPtr,
             ip += ofhSize;
         }
 
+        assert(ip <= iend);
         {   size_t const mlhSize = ZSTD_buildSeqTable(dctx->entropy.MLTable, &dctx->MLTptr,
                                                       MLtype, MaxML, MLFSELog,
-                                                      ip, iend-ip,
+                                                      ip, (size_t)(iend-ip),
                                                       ML_base, ML_bits,
                                                       ML_defaultDTable, dctx->fseEntropy,
                                                       dctx->ddictIsCold, nbSeq,
@@ -771,7 +773,7 @@ size_t ZSTD_decodeSeqHeaders(ZSTD_DCtx* dctx, int* nbSeqPtr,
         }
     }
 
-    return ip-istart;
+    return (size_t)(ip-istart);
 }
 
 
@@ -801,7 +803,8 @@ typedef struct {
  *  Precondition: *ip <= *op
  *  Postcondition: *op - *op >= 8
  */
-HINT_INLINE void ZSTD_overlapCopy8(BYTE** op, BYTE const** ip, size_t offset) {
+HINT_INLINE void ZSTD_overlapCopy8(BYTE** op, BYTE const** ip, size_t offset)
+{
     assert(*ip <= *op);
     if (offset < 8) {
         /* close range match, overlap */
@@ -834,7 +837,9 @@ HINT_INLINE void ZSTD_overlapCopy8(BYTE** op, BYTE const** ip, size_t offset) {
  *         - ZSTD_overlap_src_before_dst: The src and dst may overlap and may be any distance apart.
  *           The src buffer must be before the dst buffer.
  */
-static void ZSTD_safecopy(BYTE* op, const BYTE* const oend_w, BYTE const* ip, ptrdiff_t length, ZSTD_overlap_e ovtype) {
+static void
+ZSTD_safecopy(BYTE* op, const BYTE* const oend_w, BYTE const* ip, size_t length, ZSTD_overlap_e ovtype)
+{
     ptrdiff_t const diff = op - ip;
     BYTE* const oend = op + length;
 
@@ -849,7 +854,8 @@ static void ZSTD_safecopy(BYTE* op, const BYTE* const oend_w, BYTE const* ip, pt
     if (ovtype == ZSTD_overlap_src_before_dst) {
         /* Copy 8 bytes and ensure the offset >= 8 when there can be overlap. */
         assert(length >= 8);
-        ZSTD_overlapCopy8(&op, &ip, diff);
+        assert(diff > 0);
+        ZSTD_overlapCopy8(&op, &ip, (size_t)diff);
         length -= 8;
         assert(op - ip >= 8);
         assert(op <= oend);
@@ -863,7 +869,7 @@ static void ZSTD_safecopy(BYTE* op, const BYTE* const oend_w, BYTE const* ip, pt
     if (op <= oend_w) {
         /* Wildcopy until we get close to the end. */
         assert(oend > oend_w);
-        ZSTD_wildcopy(op, ip, oend_w - op, ovtype);
+        ZSTD_wildcopy(op, ip, (size_t)(oend_w - op), ovtype);
         ip += oend_w - op;
         op += oend_w - op;
     }
@@ -874,7 +880,8 @@ static void ZSTD_safecopy(BYTE* op, const BYTE* const oend_w, BYTE const* ip, pt
 /* ZSTD_safecopyDstBeforeSrc():
  * This version allows overlap with dst before src, or handles the non-overlap case with dst after src
  * Kept separate from more common ZSTD_safecopy case to avoid performance impact to the safecopy common case */
-static void ZSTD_safecopyDstBeforeSrc(BYTE* op, const BYTE* ip, ptrdiff_t length) {
+static void ZSTD_safecopyDstBeforeSrc(BYTE* op, const BYTE* ip, size_t length)
+{
     ptrdiff_t const diff = op - ip;
     BYTE* const oend = op + length;
 
@@ -885,7 +892,7 @@ static void ZSTD_safecopyDstBeforeSrc(BYTE* op, const BYTE* ip, ptrdiff_t length
     }
 
     if (op <= oend - WILDCOPY_OVERLENGTH && diff < -WILDCOPY_VECLEN) {
-        ZSTD_wildcopy(op, ip, oend - WILDCOPY_OVERLENGTH - op, ZSTD_no_overlap);
+        ZSTD_wildcopy(op, ip, (size_t)(oend - WILDCOPY_OVERLENGTH - op), ZSTD_no_overlap);
         ip += oend - WILDCOPY_OVERLENGTH - op;
         op += oend - WILDCOPY_OVERLENGTH - op;
     }
@@ -936,11 +943,11 @@ size_t ZSTD_execSequenceEnd(BYTE* op,
             return sequenceLength;
         }
         /* span extDict & currentPrefixSegment */
-        {   size_t const length1 = dictEnd - match;
-        ZSTD_memmove(oLitEnd, match, length1);
-        op = oLitEnd + length1;
-        sequence.matchLength -= length1;
-        match = prefixStart;
+        {   size_t const length1 = (size_t)(dictEnd - match);
+            ZSTD_memmove(oLitEnd, match, length1);
+            op = oLitEnd + length1;
+            sequence.matchLength -= length1;
+            match = prefixStart;
         }
     }
     ZSTD_safecopy(op, oend_w, match, sequence.matchLength, ZSTD_overlap_src_before_dst);
@@ -985,11 +992,11 @@ size_t ZSTD_execSequenceEndSplitLitBuffer(BYTE* op,
             return sequenceLength;
         }
         /* span extDict & currentPrefixSegment */
-        {   size_t const length1 = dictEnd - match;
-        ZSTD_memmove(oLitEnd, match, length1);
-        op = oLitEnd + length1;
-        sequence.matchLength -= length1;
-        match = prefixStart;
+        {   size_t const length1 = (size_t)(dictEnd - match);
+            ZSTD_memmove(oLitEnd, match, length1);
+            op = oLitEnd + length1;
+            sequence.matchLength -= length1;
+            match = prefixStart;
         }
     }
     ZSTD_safecopy(op, oend_w, match, sequence.matchLength, ZSTD_overlap_src_before_dst);
@@ -1058,11 +1065,11 @@ size_t ZSTD_execSequence(BYTE* op,
             return sequenceLength;
         }
         /* span extDict & currentPrefixSegment */
-        {   size_t const length1 = dictEnd - match;
-        ZSTD_memmove(oLitEnd, match, length1);
-        op = oLitEnd + length1;
-        sequence.matchLength -= length1;
-        match = prefixStart;
+        {   size_t const length1 = (size_t)(dictEnd - match);
+            ZSTD_memmove(oLitEnd, match, length1);
+            op = oLitEnd + length1;
+            sequence.matchLength -= length1;
+            match = prefixStart;
         }
     }
     /* Match within prefix of 1 or more bytes */
@@ -1079,7 +1086,7 @@ size_t ZSTD_execSequence(BYTE* op,
          * longer than literals (in general). In silesia, ~10% of matches are longer
          * than 16 bytes.
          */
-        ZSTD_wildcopy(op, match, (ptrdiff_t)sequence.matchLength, ZSTD_no_overlap);
+        ZSTD_wildcopy(op, match, sequence.matchLength, ZSTD_no_overlap);
         return sequenceLength;
     }
     assert(sequence.offset < WILDCOPY_VECLEN);
@@ -1090,7 +1097,7 @@ size_t ZSTD_execSequence(BYTE* op,
     /* If the match length is > 8 bytes, then continue with the wildcopy. */
     if (sequence.matchLength > 8) {
         assert(op < oMatchEnd);
-        ZSTD_wildcopy(op, match, (ptrdiff_t)sequence.matchLength - 8, ZSTD_overlap_src_before_dst);
+        ZSTD_wildcopy(op, match, sequence.matchLength - 8, ZSTD_overlap_src_before_dst);
     }
     return sequenceLength;
 }
@@ -1151,7 +1158,7 @@ size_t ZSTD_execSequenceSplitLitBuffer(BYTE* op,
             return sequenceLength;
         }
         /* span extDict & currentPrefixSegment */
-        {   size_t const length1 = dictEnd - match;
+        {   size_t const length1 = (size_t)(dictEnd - match);
             ZSTD_memmove(oLitEnd, match, length1);
             op = oLitEnd + length1;
             sequence.matchLength -= length1;
@@ -1171,7 +1178,7 @@ size_t ZSTD_execSequenceSplitLitBuffer(BYTE* op,
          * longer than literals (in general). In silesia, ~10% of matches are longer
          * than 16 bytes.
          */
-        ZSTD_wildcopy(op, match, (ptrdiff_t)sequence.matchLength, ZSTD_no_overlap);
+        ZSTD_wildcopy(op, match, sequence.matchLength, ZSTD_no_overlap);
         return sequenceLength;
     }
     assert(sequence.offset < WILDCOPY_VECLEN);
@@ -1182,7 +1189,7 @@ size_t ZSTD_execSequenceSplitLitBuffer(BYTE* op,
     /* If the match length is > 8 bytes, then continue with the wildcopy. */
     if (sequence.matchLength > 8) {
         assert(op < oMatchEnd);
-        ZSTD_wildcopy(op, match, (ptrdiff_t)sequence.matchLength-8, ZSTD_overlap_src_before_dst);
+        ZSTD_wildcopy(op, match, sequence.matchLength-8, ZSTD_overlap_src_before_dst);
     }
     return sequenceLength;
 }
@@ -1229,6 +1236,10 @@ FORCE_INLINE_TEMPLATE seq_t
 ZSTD_decodeSequence(seqState_t* seqState, const ZSTD_longOffset_e longOffsets, const int isLastSeq)
 {
     seq_t seq;
+#if defined(__aarch64__)
+    size_t prevOffset0 = seqState->prevOffset[0];
+    size_t prevOffset1 = seqState->prevOffset[1];
+    size_t prevOffset2 = seqState->prevOffset[2];
     /*
      * ZSTD_seqSymbol is a 64 bits wide structure.
      * It can be loaded in one operation
@@ -1237,7 +1248,7 @@ ZSTD_decodeSequence(seqState_t* seqState, const ZSTD_longOffset_e longOffsets, c
      * operations that cause performance drop. This can be avoided by using this
      * ZSTD_memcpy hack.
      */
-#if defined(__aarch64__) && (defined(__GNUC__) && !defined(__clang__))
+#  if defined(__GNUC__) && !defined(__clang__)
     ZSTD_seqSymbol llDInfoS, mlDInfoS, ofDInfoS;
     ZSTD_seqSymbol* const llDInfo = &llDInfoS;
     ZSTD_seqSymbol* const mlDInfo = &mlDInfoS;
@@ -1245,11 +1256,12 @@ ZSTD_decodeSequence(seqState_t* seqState, const ZSTD_longOffset_e longOffsets, c
     ZSTD_memcpy(llDInfo, seqState->stateLL.table + seqState->stateLL.state, sizeof(ZSTD_seqSymbol));
     ZSTD_memcpy(mlDInfo, seqState->stateML.table + seqState->stateML.state, sizeof(ZSTD_seqSymbol));
     ZSTD_memcpy(ofDInfo, seqState->stateOffb.table + seqState->stateOffb.state, sizeof(ZSTD_seqSymbol));
-#else
+#  else
     const ZSTD_seqSymbol* const llDInfo = seqState->stateLL.table + seqState->stateLL.state;
     const ZSTD_seqSymbol* const mlDInfo = seqState->stateML.table + seqState->stateML.state;
     const ZSTD_seqSymbol* const ofDInfo = seqState->stateOffb.table + seqState->stateOffb.state;
-#endif
+#  endif
+    (void)longOffsets;
     seq.matchLength = mlDInfo->baseValue;
     seq.litLength = llDInfo->baseValue;
     {   U32 const ofBase = ofDInfo->baseValue;
@@ -1268,10 +1280,98 @@ ZSTD_decodeSequence(seqState_t* seqState, const ZSTD_longOffset_e longOffsets, c
         assert(llBits <= MaxLLBits);
         assert(mlBits <= MaxMLBits);
         assert(ofBits <= MaxOff);
-        /*
-         * As gcc has better branch and block analyzers, sometimes it is only
-         * valuable to mark likeliness for clang, it gives around 3-4% of
-         * performance.
+        /* As GCC has better branch and block analyzers, sometimes it is only
+         * valuable to mark likeliness for Clang.
+         */
+
+        /* sequence */
+        {   size_t offset;
+            if (ofBits > 1) {
+                ZSTD_STATIC_ASSERT(ZSTD_lo_isLongOffset == 1);
+                ZSTD_STATIC_ASSERT(LONG_OFFSETS_MAX_EXTRA_BITS_32 == 5);
+                ZSTD_STATIC_ASSERT(STREAM_ACCUMULATOR_MIN_32 > LONG_OFFSETS_MAX_EXTRA_BITS_32);
+                ZSTD_STATIC_ASSERT(STREAM_ACCUMULATOR_MIN_32 - LONG_OFFSETS_MAX_EXTRA_BITS_32 >= MaxMLBits);
+                offset = ofBase + BIT_readBitsFast(&seqState->DStream, ofBits/*>0*/);   /* <=  (ZSTD_WINDOWLOG_MAX-1) bits */
+                prevOffset2 = prevOffset1;
+                prevOffset1 = prevOffset0;
+                prevOffset0 = offset;
+            } else {
+                U32 const ll0 = (llDInfo->baseValue == 0);
+                if (LIKELY((ofBits == 0))) {
+                    if (ll0) {
+                        offset = prevOffset1;
+                        prevOffset1 = prevOffset0;
+                        prevOffset0 = offset;
+                    } else {
+                        offset = prevOffset0;
+                    }
+                } else {
+                    offset = ofBase + ll0 + BIT_readBitsFast(&seqState->DStream, 1);
+                    {   size_t temp = (offset == 1)   ? prevOffset1
+                                      : (offset == 3) ? prevOffset0 - 1
+                                      : (offset >= 2) ? prevOffset2
+                                      : prevOffset0;
+                        /* 0 is not valid: input corrupted => force offset to -1 =>
+                         * corruption detected at execSequence.
+                         */
+                        temp -= !temp;
+                        prevOffset2 = (offset == 1) ? prevOffset2 : prevOffset1;
+                        prevOffset1 = prevOffset0;
+                        prevOffset0 = offset = temp;
+            }   }   }
+            seq.offset = offset;
+        }
+
+        if (mlBits > 0)
+            seq.matchLength += BIT_readBitsFast(&seqState->DStream, mlBits/*>0*/);
+
+        if (UNLIKELY(totalBits >= STREAM_ACCUMULATOR_MIN_64-(LLFSELog+MLFSELog+OffFSELog)))
+            BIT_reloadDStream(&seqState->DStream);
+
+        /* Ensure there are enough bits to read the rest of data in 64-bit mode. */
+        ZSTD_STATIC_ASSERT(16+LLFSELog+MLFSELog+OffFSELog < STREAM_ACCUMULATOR_MIN_64);
+
+        if (llBits > 0)
+            seq.litLength += BIT_readBitsFast(&seqState->DStream, llBits/*>0*/);
+
+        DEBUGLOG(6, "seq: litL=%u, matchL=%u, offset=%u",
+                    (U32)seq.litLength, (U32)seq.matchLength, (U32)seq.offset);
+
+        if (!isLastSeq) {
+            /* Don't update FSE state for last sequence. */
+            ZSTD_updateFseStateWithDInfo(&seqState->stateLL, &seqState->DStream, llNext, llnbBits);    /* <=  9 bits */
+            ZSTD_updateFseStateWithDInfo(&seqState->stateML, &seqState->DStream, mlNext, mlnbBits);    /* <=  9 bits */
+            ZSTD_updateFseStateWithDInfo(&seqState->stateOffb, &seqState->DStream, ofNext, ofnbBits);  /* <=  8 bits */
+            BIT_reloadDStream(&seqState->DStream);
+        }
+    }
+    seqState->prevOffset[0] = prevOffset0;
+    seqState->prevOffset[1] = prevOffset1;
+    seqState->prevOffset[2] = prevOffset2;
+#else   /* !defined(__aarch64__) */
+    const ZSTD_seqSymbol* const llDInfo = seqState->stateLL.table + seqState->stateLL.state;
+    const ZSTD_seqSymbol* const mlDInfo = seqState->stateML.table + seqState->stateML.state;
+    const ZSTD_seqSymbol* const ofDInfo = seqState->stateOffb.table + seqState->stateOffb.state;
+    seq.matchLength = mlDInfo->baseValue;
+    seq.litLength = llDInfo->baseValue;
+    {   U32 const ofBase = ofDInfo->baseValue;
+        BYTE const llBits = llDInfo->nbAdditionalBits;
+        BYTE const mlBits = mlDInfo->nbAdditionalBits;
+        BYTE const ofBits = ofDInfo->nbAdditionalBits;
+        BYTE const totalBits = llBits+mlBits+ofBits;
+
+        U16 const llNext = llDInfo->nextState;
+        U16 const mlNext = mlDInfo->nextState;
+        U16 const ofNext = ofDInfo->nextState;
+        U32 const llnbBits = llDInfo->nbBits;
+        U32 const mlnbBits = mlDInfo->nbBits;
+        U32 const ofnbBits = ofDInfo->nbBits;
+
+        assert(llBits <= MaxLLBits);
+        assert(mlBits <= MaxMLBits);
+        assert(ofBits <= MaxOff);
+        /* As GCC has better branch and block analyzers, sometimes it is only
+         * valuable to mark likeliness for Clang.
          */
 
         /* sequence */
@@ -1333,7 +1433,7 @@ ZSTD_decodeSequence(seqState_t* seqState, const ZSTD_longOffset_e longOffsets, c
                     (U32)seq.litLength, (U32)seq.matchLength, (U32)seq.offset);
 
         if (!isLastSeq) {
-            /* don't update FSE state for last Sequence */
+            /* Don't update FSE state for last sequence. */
             ZSTD_updateFseStateWithDInfo(&seqState->stateLL, &seqState->DStream, llNext, llnbBits);    /* <=  9 bits */
             ZSTD_updateFseStateWithDInfo(&seqState->stateML, &seqState->DStream, mlNext, mlnbBits);    /* <=  9 bits */
             if (MEM_32bits()) BIT_reloadDStream(&seqState->DStream);    /* <= 18 bits */
@@ -1341,6 +1441,7 @@ ZSTD_decodeSequence(seqState_t* seqState, const ZSTD_longOffset_e longOffsets, c
             BIT_reloadDStream(&seqState->DStream);
         }
     }
+#endif  /* defined(__aarch64__) */
 
     return seq;
 }
@@ -1405,10 +1506,8 @@ ZSTD_decompressSequences_bodySplitLitBuffer( ZSTD_DCtx* dctx,
                          const void* seqStart, size_t seqSize, int nbSeq,
                          const ZSTD_longOffset_e isLongOffset)
 {
-    const BYTE* ip = (const BYTE*)seqStart;
-    const BYTE* const iend = ip + seqSize;
     BYTE* const ostart = (BYTE*)dst;
-    BYTE* const oend = ZSTD_maybeNullPtrAdd(ostart, maxDstSize);
+    BYTE* const oend = (BYTE*)ZSTD_maybeNullPtrAdd(ostart, (ptrdiff_t)maxDstSize);
     BYTE* op = ostart;
     const BYTE* litPtr = dctx->litPtr;
     const BYTE* litBufferEnd = dctx->litBufferEnd;
@@ -1423,7 +1522,7 @@ ZSTD_decompressSequences_bodySplitLitBuffer( ZSTD_DCtx* dctx,
         dctx->fseEntropy = 1;
         { U32 i; for (i=0; i<ZSTD_REP_NUM; i++) seqState.prevOffset[i] = dctx->entropy.rep[i]; }
         RETURN_ERROR_IF(
-            ERR_isError(BIT_initDStream(&seqState.DStream, ip, iend-ip)),
+            ERR_isError(BIT_initDStream(&seqState.DStream, seqStart, seqSize)),
             corruption_detected, "");
         ZSTD_initFseState(&seqState.stateLL, &seqState.DStream, dctx->LLTptr);
         ZSTD_initFseState(&seqState.stateOffb, &seqState.DStream, dctx->OFTptr);
@@ -1515,7 +1614,8 @@ ZSTD_decompressSequences_bodySplitLitBuffer( ZSTD_DCtx* dctx,
 
             /* If there are more sequences, they will need to read literals from litExtraBuffer; copy over the remainder from dst and update litPtr and litEnd */
             if (nbSeq > 0) {
-                const size_t leftoverLit = dctx->litBufferEnd - litPtr;
+                const size_t leftoverLit = (size_t)(dctx->litBufferEnd - litPtr);
+                assert(dctx->litBufferEnd >= litPtr);
                 DEBUGLOG(6, "There are %i sequences left, and %zu/%zu literals left in buffer", nbSeq, leftoverLit, sequence.litLength);
                 if (leftoverLit) {
                     RETURN_ERROR_IF(leftoverLit > (size_t)(oend - op), dstSize_tooSmall, "remaining lit must fit within dstBuffer");
@@ -1617,10 +1717,10 @@ ZSTD_decompressSequences_body(ZSTD_DCtx* dctx,
     const void* seqStart, size_t seqSize, int nbSeq,
     const ZSTD_longOffset_e isLongOffset)
 {
-    const BYTE* ip = (const BYTE*)seqStart;
-    const BYTE* const iend = ip + seqSize;
     BYTE* const ostart = (BYTE*)dst;
-    BYTE* const oend = dctx->litBufferLocation == ZSTD_not_in_dst ? ZSTD_maybeNullPtrAdd(ostart, maxDstSize) : dctx->litBuffer;
+    BYTE* const oend = (dctx->litBufferLocation == ZSTD_not_in_dst) ?
+                        (BYTE*)ZSTD_maybeNullPtrAdd(ostart, (ptrdiff_t)maxDstSize) :
+                        dctx->litBuffer;
     BYTE* op = ostart;
     const BYTE* litPtr = dctx->litPtr;
     const BYTE* const litEnd = litPtr + dctx->litSize;
@@ -1635,7 +1735,7 @@ ZSTD_decompressSequences_body(ZSTD_DCtx* dctx,
         dctx->fseEntropy = 1;
         { U32 i; for (i = 0; i < ZSTD_REP_NUM; i++) seqState.prevOffset[i] = dctx->entropy.rep[i]; }
         RETURN_ERROR_IF(
-            ERR_isError(BIT_initDStream(&seqState.DStream, ip, iend - ip)),
+            ERR_isError(BIT_initDStream(&seqState.DStream, seqStart, seqSize)),
             corruption_detected, "");
         ZSTD_initFseState(&seqState.stateLL, &seqState.DStream, dctx->LLTptr);
         ZSTD_initFseState(&seqState.stateOffb, &seqState.DStream, dctx->OFTptr);
@@ -1719,8 +1819,8 @@ size_t ZSTD_prefetchMatch(size_t prefetchPos, seq_t const sequence,
     {   const BYTE* const matchBase = (sequence.offset > prefetchPos) ? dictEnd : prefixStart;
         /* note : this operation can overflow when seq.offset is really too large, which can only happen when input is corrupted.
          * No consequence though : memory address is only used for prefetching, not for dereferencing */
-        const BYTE* const match = ZSTD_wrappedPtrSub(ZSTD_wrappedPtrAdd(matchBase, prefetchPos), sequence.offset);
-        PREFETCH_L1(match); PREFETCH_L1(match+CACHELINE_SIZE);   /* note : it's safe to invoke PREFETCH() on any memory address, including invalid ones */
+        const BYTE* const match = (const BYTE*)ZSTD_wrappedPtrSub(ZSTD_wrappedPtrAdd(matchBase, (ptrdiff_t)prefetchPos), (ptrdiff_t)sequence.offset);
+        PREFETCH_L1(match); PREFETCH_L1(ZSTD_wrappedPtrAdd(match, CACHELINE_SIZE));   /* note : it's safe to invoke PREFETCH() on any memory address, including invalid ones */
     }
     return prefetchPos + sequence.matchLength;
 }
@@ -1736,10 +1836,10 @@ ZSTD_decompressSequencesLong_body(
                          const void* seqStart, size_t seqSize, int nbSeq,
                          const ZSTD_longOffset_e isLongOffset)
 {
-    const BYTE* ip = (const BYTE*)seqStart;
-    const BYTE* const iend = ip + seqSize;
     BYTE* const ostart = (BYTE*)dst;
-    BYTE* const oend = dctx->litBufferLocation == ZSTD_in_dst ? dctx->litBuffer : ZSTD_maybeNullPtrAdd(ostart, maxDstSize);
+    BYTE* const oend = (dctx->litBufferLocation == ZSTD_in_dst) ?
+                        dctx->litBuffer :
+                        (BYTE*)ZSTD_maybeNullPtrAdd(ostart, (ptrdiff_t)maxDstSize);
     BYTE* op = ostart;
     const BYTE* litPtr = dctx->litPtr;
     const BYTE* litBufferEnd = dctx->litBufferEnd;
@@ -1761,9 +1861,8 @@ ZSTD_decompressSequencesLong_body(
         dctx->fseEntropy = 1;
         { int i; for (i=0; i<ZSTD_REP_NUM; i++) seqState.prevOffset[i] = dctx->entropy.rep[i]; }
         assert(dst != NULL);
-        assert(iend >= ip);
         RETURN_ERROR_IF(
-            ERR_isError(BIT_initDStream(&seqState.DStream, ip, iend-ip)),
+            ERR_isError(BIT_initDStream(&seqState.DStream, seqStart, seqSize)),
             corruption_detected, "");
         ZSTD_initFseState(&seqState.stateLL, &seqState.DStream, dctx->LLTptr);
         ZSTD_initFseState(&seqState.stateOffb, &seqState.DStream, dctx->OFTptr);
@@ -1782,9 +1881,9 @@ ZSTD_decompressSequencesLong_body(
 
             if (dctx->litBufferLocation == ZSTD_split && litPtr + sequences[(seqNb - ADVANCED_SEQS) & STORED_SEQS_MASK].litLength > dctx->litBufferEnd) {
                 /* lit buffer is reaching split point, empty out the first buffer and transition to litExtraBuffer */
-                const size_t leftoverLit = dctx->litBufferEnd - litPtr;
-                if (leftoverLit)
-                {
+                const size_t leftoverLit = (size_t)(dctx->litBufferEnd - litPtr);
+                assert(dctx->litBufferEnd >= litPtr);
+                if (leftoverLit) {
                     RETURN_ERROR_IF(leftoverLit > (size_t)(oend - op), dstSize_tooSmall, "remaining lit must fit within dstBuffer");
                     ZSTD_safecopyDstBeforeSrc(op, litPtr, leftoverLit);
                     sequences[(seqNb - ADVANCED_SEQS) & STORED_SEQS_MASK].litLength -= leftoverLit;
@@ -1828,7 +1927,8 @@ ZSTD_decompressSequencesLong_body(
         for ( ; seqNb<nbSeq ; seqNb++) {
             seq_t *sequence = &(sequences[seqNb&STORED_SEQS_MASK]);
             if (dctx->litBufferLocation == ZSTD_split && litPtr + sequence->litLength > dctx->litBufferEnd) {
-                const size_t leftoverLit = dctx->litBufferEnd - litPtr;
+                const size_t leftoverLit = (size_t)(dctx->litBufferEnd - litPtr);
+                assert(dctx->litBufferEnd >= litPtr);
                 if (leftoverLit) {
                     RETURN_ERROR_IF(leftoverLit > (size_t)(oend - op), dstSize_tooSmall, "remaining lit must fit within dstBuffer");
                     ZSTD_safecopyDstBeforeSrc(op, litPtr, leftoverLit);
@@ -1867,7 +1967,8 @@ ZSTD_decompressSequencesLong_body(
 
     /* last literal segment */
     if (dctx->litBufferLocation == ZSTD_split) { /* first deplete literal buffer in dst, then copy litExtraBuffer */
-        size_t const lastLLSize = litBufferEnd - litPtr;
+        size_t const lastLLSize = (size_t)(litBufferEnd - litPtr);
+        assert(litBufferEnd >= litPtr);
         RETURN_ERROR_IF(lastLLSize > (size_t)(oend - op), dstSize_tooSmall, "");
         if (op != NULL) {
             ZSTD_memmove(op, litPtr, lastLLSize);
@@ -1876,7 +1977,8 @@ ZSTD_decompressSequencesLong_body(
         litPtr = dctx->litExtraBuffer;
         litBufferEnd = dctx->litExtraBuffer + ZSTD_LITBUFFEREXTRASIZE;
     }
-    {   size_t const lastLLSize = litBufferEnd - litPtr;
+    {   size_t const lastLLSize = (size_t)(litBufferEnd - litPtr);
+        assert(litBufferEnd >= litPtr);
         RETURN_ERROR_IF(lastLLSize > (size_t)(oend-op), dstSize_tooSmall, "");
         if (op != NULL) {
             ZSTD_memmove(op, litPtr, lastLLSize);
@@ -1993,9 +2095,9 @@ ZSTD_decompressSequencesLong(ZSTD_DCtx* dctx,
  * both the prefix and the extDict. At @p op any offset larger than this
  * is invalid.
  */
-static size_t ZSTD_totalHistorySize(BYTE* op, BYTE const* virtualStart)
+static size_t ZSTD_totalHistorySize(void* curPtr, const void* virtualStart)
 {
-    return (size_t)(op - virtualStart);
+    return (size_t)((char*)curPtr - (const char*)virtualStart);
 }
 
 typedef struct {
@@ -2094,7 +2196,7 @@ ZSTD_decompressBlock_internal(ZSTD_DCtx* dctx,
          * Additionally, take the min with dstCapacity to ensure that the totalHistorySize fits in a size_t.
          */
         size_t const blockSizeMax = MIN(dstCapacity, ZSTD_blockSizeMax(dctx));
-        size_t const totalHistorySize = ZSTD_totalHistorySize(ZSTD_maybeNullPtrAdd((BYTE*)dst, blockSizeMax), (BYTE const*)dctx->virtualStart);
+        size_t const totalHistorySize = ZSTD_totalHistorySize(ZSTD_maybeNullPtrAdd(dst, (ptrdiff_t)blockSizeMax), (BYTE const*)dctx->virtualStart);
         /* isLongOffset must be true if there are long offsets.
          * Offsets are long if they are larger than ZSTD_maxShortOffset().
          * We don't expect that to be the case in 64-bit mode.
