@@ -58,7 +58,7 @@ public:
   // Always non-negative even if the underlying timer is non-monotonic.
   double getSeconds() const
   {
-#ifdef __unix__
+#if defined(__unix__) || defined(__APPLE__)
     const TimeValue t     = now();
     const double    delta = 1e-9 * static_cast<double>(t.nanoseconds - m_start.nanoseconds)  //
                          + static_cast<double>(t.seconds - m_start.seconds);
@@ -76,7 +76,7 @@ public:
 private:
   struct TimeValue
   {
-#ifdef __unix__
+#if defined(__unix__) || defined(__APPLE__)
     // On Unix platforms, store the full 128-bit time struct; this gets us
     // nanosecond precision and still avoids overflow issues.
     int64_t seconds{};

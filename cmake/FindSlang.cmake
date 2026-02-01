@@ -4,7 +4,7 @@
 # You can use a custom installation instead by setting Slang_ROOT and Slang_VERSION.
 #
 # Sets the following variables:
-# Slang_VERSION: The downloaded version of Slang. This script is compatible with >= 2025.20.
+# Slang_VERSION: The downloaded version of Slang.
 # Slang_ROOT: Path to the Slang SDK root directory.
 # Slang_INCLUDE_DIR: Directory that includes slang.h.
 # Slang_SLANGC_EXECUTABLE: Path to the Slang compiler.
@@ -23,7 +23,7 @@
 #   ...
 # )
 
-set(Slang_VERSION "2026.1.1" CACHE STRING "Slang version. If you change this and ran CMake before, you will need to delete the other Slang_* cache variables")
+set(Slang_VERSION "2025.13.1")
 
 if(NOT Slang_ROOT)
   string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" ARCH_PROC)
@@ -47,6 +47,8 @@ if(NOT Slang_ROOT)
 
   if(WIN32)
       set(SLANG_OS "windows")
+  elseif(APPLE)
+      set(SLANG_OS "macos")
   else()
       set(SLANG_OS "linux")
   endif()
@@ -105,12 +107,8 @@ find_program(Slang_SLANGD_EXECUTABLE
 )
 mark_as_advanced(Slang_SLANGD_EXECUTABLE)
 
-# Slang versions since v2025.20 renamed their libraries. Linux .so files
-# also now include version numbers. This allows us to remove
-# LD_LIBRARY_PATH workarounds we had in the past.
 find_library(Slang_LIBRARY
-  NAMES libslang-compiler.so.0.${Slang_VERSION} # Linux
-        slang-compiler.lib                      # Windows
+  NAMES slang
   HINTS ${Slang_ROOT}/lib
   NO_DEFAULT_PATH
   DOC "Slang linker library"
@@ -119,7 +117,7 @@ mark_as_advanced(Slang_LIBRARY)
 
 if(WIN32)
   find_file(Slang_DLL
-    NAMES slang-compiler.dll
+    NAMES slang.dll
     HINTS ${Slang_ROOT}/bin
     NO_DEFAULT_PATH
     DOC "Slang shared library (.dll)"
@@ -143,6 +141,13 @@ if(NOT TARGET Slang)
   )
   if(WIN32)
     set_property(TARGET Slang PROPERTY IMPORTED_IMPLIB ${Slang_LIBRARY})
+  elseif(NOT APPLE)
+    # Vulkan SDK includes 'libslang.so' and sets LD_LIBRARY_PATH, which conflict
+    # with the downloaded slang. This uses the deprecated RPATH instead of
+    # RUNPATH to take priority over LD_LIBRARY_PATH.
+    set_target_properties(Slang PROPERTIES
+      INTERFACE_LINK_OPTIONS "-Wl,--disable-new-dtags"
+    )
   endif()
 endif()
 
@@ -153,10 +158,9 @@ endif()
 # To make this work, we make the GLSL module an IMPORTED library, with the same
 # IMPLIB as core Slang.
 find_file(Slang_GLSL_MODULE
-  NAMES libslang-glsl-module-${Slang_VERSION}.so # Linuz
-        slang-glsl-module.dll                    # Windows
-  HINTS ${Slang_ROOT}/lib
-        ${Slang_ROOT}/bin
+  NAMES ${CMAKE_SHARED_LIBRARY_PREFIX}slang-glsl-module${CMAKE_SHARED_LIBRARY_SUFFIX}
+  HINTS ${Slang_ROOT}/bin
+        ${Slang_ROOT}/lib
   NO_DEFAULT_PATH
   DOC "Slang embedded GLSL module"
 )
@@ -164,11 +168,9 @@ mark_as_advanced(Slang_GLSL_MODULE)
 
 if(NOT TARGET SlangGlslModule)
   add_library(SlangGlslModule SHARED IMPORTED)
-  set_target_properties(SlangGlslModule PROPERTIES 
+  set_target_properties(SlangGlslModule PROPERTIES
+    IMPORTED_NO_SONAME ON # See https://github.com/shader-slang/slang/issues/7722
     IMPORTED_LOCATION ${Slang_GLSL_MODULE}
-	# Samples shouldn't link with this; this is for safety in case they do.
-	# See https://github.com/shader-slang/slang/issues/7722
-	IMPORTED_NO_SONAME ON
   )
   if(WIN32)
     set_property(TARGET SlangGlslModule PROPERTY IMPORTED_IMPLIB ${Slang_LIBRARY})
@@ -178,10 +180,9 @@ endif()
 # Additionally, SLANG_OPTIMIZATION_LEVEL_HIGH requires slang-glslang.dll.
 # Find it:
 find_file(Slang_GLSLANG
-  NAMES libslang-glslang-${Slang_VERSION}.so # Linux
-        slang-glslang.dll                    # Windows
-  HINTS ${Slang_ROOT}/lib
-        ${Slang_ROOT}/bin
+  NAMES ${CMAKE_SHARED_LIBRARY_PREFIX}slang-glslang${CMAKE_SHARED_LIBRARY_SUFFIX}
+  HINTS ${Slang_ROOT}/bin
+        ${Slang_ROOT}/lib
   NO_DEFAULT_PATH
   DOC "slang-glslang shared library"
 )
@@ -190,10 +191,8 @@ mark_as_advanced(Slang_GLSLANG)
 if(NOT TARGET SlangGlslang)
   add_library(SlangGlslang SHARED IMPORTED)
   set_target_properties(SlangGlslang PROPERTIES
+    IMPORTED_NO_SONAME ON # See https://github.com/shader-slang/slang/issues/7722
     IMPORTED_LOCATION ${Slang_GLSLANG}
-	# Samples shouldn't link with this; this is for safety in case they do.
-	# See https://github.com/shader-slang/slang/issues/7722
-	IMPORTED_NO_SONAME ON
   )
   if(WIN32)
     set_property(TARGET SlangGlslang PROPERTY IMPORTED_IMPLIB ${Slang_LIBRARY})
