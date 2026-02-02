@@ -192,6 +192,7 @@ public:
   // Camera Management
   const std::vector<nvvkgltf::RenderCamera>& getRenderCameras(bool force = false);
   void                                       setSceneCamera(const nvvkgltf::RenderCamera& camera);
+  void                                       setSceneCameras(const std::vector<nvvkgltf::RenderCamera>& cameras);
 
   // Render Node Management
   const std::vector<nvvkgltf::RenderNode>& getRenderNodes() const { return m_renderNodes; }
@@ -215,8 +216,8 @@ public:
   const std::vector<uint32_t>&                  getSkinNodes() const { return m_skinNodes; }
 
   // Scene Management
-  void           setCurrentScene(int sceneID);  // Parse the scene and create the render nodes, call when changing scene
-  int            getCurrentScene() const { return m_currentScene; }
+  void setCurrentScene(int sceneID);  // Parse the scene and create the render nodes, call when changing scene
+  int  getCurrentScene() const { return m_currentScene; }
   const std::vector<glm::mat4>& getNodesWorldMatrices() const { return m_nodesWorldMatrices; }
 
   // Variant Management

@@ -17,6 +17,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <algorithm>
 #include <execution>
 #include <filesystem>
 #include <unordered_set>
@@ -361,8 +362,15 @@ bool nvvkgltf::Scene::save(const std::filesystem::path& filename)
         // Create the parent directory of the destination file if it doesn't exist
         fs::create_directories(dstFile.parent_path());
 
-        if(fs::copy_file(srcFile, dstFile, fs::copy_options::update_existing))
-          numCopied++;
+        try
+        {
+          if(fs::copy_file(srcFile, dstFile, fs::copy_options::update_existing))
+            numCopied++;
+        }
+        catch(const fs::filesystem_error& e)
+        {
+          LOGW("%sError copying image: %s\n", st.indent().c_str(), e.what());
+        }
       }
     }
     if(numCopied > 0)
@@ -1062,29 +1070,93 @@ std::vector<uint32_t> nvvkgltf::Scene::getShadedNodes(PipelineType type)
 }
 
 
-void nvvkgltf::Scene::setSceneCamera(const nvvkgltf::RenderCamera& camera)
+namespace {
+void applyRenderCameraToNode(tinygltf::Node& tnode, tinygltf::Camera& tcamera, const nvvkgltf::RenderCamera& camera)
 {
-  assert(m_sceneCameraNode != -1 && "No camera node found in the scene");
+  glm::quat q       = glm::quatLookAt(glm::normalize(camera.center - camera.eye), camera.up);
+  tnode.translation = {camera.eye.x, camera.eye.y, camera.eye.z};
+  tnode.rotation    = {q.x, q.y, q.z, q.w};
 
-  // Set the tinygltf::Node
-  tinygltf::Node& tnode = m_model.nodes[m_sceneCameraNode];
-  glm::quat       q     = glm::quatLookAt(glm::normalize(camera.center - camera.eye), camera.up);
-  tnode.translation     = {camera.eye.x, camera.eye.y, camera.eye.z};
-  tnode.rotation        = {q.x, q.y, q.z, q.w};
+  if(camera.type == nvvkgltf::RenderCamera::CameraType::eOrthographic)
+  {
+    tcamera.type               = "orthographic";
+    tcamera.orthographic.znear = camera.znear;
+    tcamera.orthographic.zfar  = camera.zfar;
+    tcamera.orthographic.xmag  = camera.xmag;
+    tcamera.orthographic.ymag  = camera.ymag;
+  }
+  else
+  {
+    tcamera.type              = "perspective";
+    tcamera.perspective.znear = camera.znear;
+    tcamera.perspective.zfar  = camera.zfar;
+    tcamera.perspective.yfov  = camera.yfov;
+  }
 
-  // Set the tinygltf::Camera
-  tinygltf::Camera& tcamera = m_model.cameras[tnode.camera];
-  tcamera.type              = "perspective";
-  tcamera.perspective.znear = camera.znear;
-  tcamera.perspective.zfar  = camera.zfar;
-  tcamera.perspective.yfov  = camera.yfov;
-
-  // Add extras to the tinygltf::Camera, to store the eye, center, and up vectors
   tinygltf::Value::Object extras;
   extras["camera::eye"]    = tinygltf::utils::convertToTinygltfValue(3, glm::value_ptr(camera.eye));
   extras["camera::center"] = tinygltf::utils::convertToTinygltfValue(3, glm::value_ptr(camera.center));
   extras["camera::up"]     = tinygltf::utils::convertToTinygltfValue(3, glm::value_ptr(camera.up));
   tnode.extras             = tinygltf::Value(extras);
+}
+}  // namespace
+
+void nvvkgltf::Scene::setSceneCamera(const nvvkgltf::RenderCamera& camera)
+{
+  assert(m_sceneCameraNode != -1 && "No camera node found in the scene");
+
+  tinygltf::Node&   tnode   = m_model.nodes[m_sceneCameraNode];
+  tinygltf::Camera& tcamera = m_model.cameras[tnode.camera];
+  applyRenderCameraToNode(tnode, tcamera, camera);
+}
+
+//--------------------------------------------------------------------------------------------------
+// Set the scene cameras
+// The cameras are stored in the model as nodes, and the camera index is stored in the node
+void nvvkgltf::Scene::setSceneCameras(const std::vector<nvvkgltf::RenderCamera>& cameras)
+{
+  assert(!cameras.empty() && "cameras must not be empty");
+
+  std::vector<int> cameraNodeIds;
+  for(auto& sceneNode : m_model.scenes[m_currentScene].nodes)
+  {
+    tinygltf::utils::traverseSceneGraph(m_model, sceneNode, glm::mat4(1), [&](int nodeID, const glm::mat4&) {
+      if(m_model.nodes[nodeID].camera >= 0)
+        cameraNodeIds.push_back(nodeID);
+      return false;
+    });
+  }
+
+  // Adjust the number of cameras
+  m_model.cameras.resize(cameras.size());
+
+  for(size_t i = 0; i < cameras.size(); ++i)
+  {
+    int nodeIndex = -1;
+    // If the node camera already exists, use it
+    if(i < cameraNodeIds.size())
+    {
+      nodeIndex = cameraNodeIds[i];
+    }
+    // If the node camera does not exist, add a new node to hold the camera
+    else
+    {
+      tinygltf::Node& tnode = m_model.nodes.emplace_back();
+      nodeIndex             = static_cast<int>(m_model.nodes.size() - 1);
+      tnode.name            = fmt::format("Camera-{}", i);
+      m_model.scenes[m_currentScene].nodes.push_back(nodeIndex);
+    }
+
+    tinygltf::Node& tnode = m_model.nodes[nodeIndex];
+    tnode.camera          = static_cast<int>(i);
+    applyRenderCameraToNode(tnode, m_model.cameras[i], cameras[i]);
+  }
+
+  // Set all other cameras nodes to the first camera
+  for(size_t i = cameras.size(); i < cameraNodeIds.size(); ++i)
+  {
+    m_model.nodes[cameraNodeIds[i]].camera = 0;  // Re-using the first camera
+  }
 }
 
 // Collects all animation data

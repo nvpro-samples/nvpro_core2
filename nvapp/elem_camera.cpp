@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -21,6 +21,8 @@
 #include <nvgui/window.hpp>
 
 #include "elem_camera.hpp"
+
+float nvapp::ElementCamera::wheelSpeed = -10.0f;
 
 void nvapp::ElementCamera::updateCamera(std::shared_ptr<nvutils::CameraManipulator> m_cameraManip, ImGuiWindow* viewportWindow)
 {
@@ -56,37 +58,37 @@ void nvapp::ElementCamera::updateCamera(std::shared_ptr<nvutils::CameraManipulat
 
     if(ImGui::IsKeyDown(ImGuiKey_W))
     {
-      m_cameraManip->keyMotion({keyMotionFactor, 0}, nvutils::CameraManipulator::Dolly);
+      m_cameraManip->keyMotion({keyMotionFactor, 0}, nvutils::CameraManipulator::Actions::Dolly);
       inputs.shift = inputs.ctrl = false;
     }
 
     if(ImGui::IsKeyDown(ImGuiKey_S))
     {
-      m_cameraManip->keyMotion({-keyMotionFactor, 0}, nvutils::CameraManipulator::Dolly);
+      m_cameraManip->keyMotion({-keyMotionFactor, 0}, nvutils::CameraManipulator::Actions::Dolly);
       inputs.shift = inputs.ctrl = false;
     }
 
     if(ImGui::IsKeyDown(ImGuiKey_D) || ImGui::IsKeyDown(ImGuiKey_RightArrow))
     {
-      m_cameraManip->keyMotion({keyMotionFactor, 0}, nvutils::CameraManipulator::Pan);
+      m_cameraManip->keyMotion({keyMotionFactor, 0}, nvutils::CameraManipulator::Actions::Pan);
       inputs.shift = inputs.ctrl = false;
     }
 
     if(ImGui::IsKeyDown(ImGuiKey_A) || ImGui::IsKeyDown(ImGuiKey_LeftArrow))
     {
-      m_cameraManip->keyMotion({-keyMotionFactor, 0}, nvutils::CameraManipulator::Pan);
+      m_cameraManip->keyMotion({-keyMotionFactor, 0}, nvutils::CameraManipulator::Actions::Pan);
       inputs.shift = inputs.ctrl = false;
     }
 
     if(ImGui::IsKeyDown(ImGuiKey_UpArrow))
     {
-      m_cameraManip->keyMotion({0, keyMotionFactor}, nvutils::CameraManipulator::Pan);
+      m_cameraManip->keyMotion({0, keyMotionFactor}, nvutils::CameraManipulator::Actions::Pan);
       inputs.shift = inputs.ctrl = false;
     }
 
     if(ImGui::IsKeyDown(ImGuiKey_DownArrow))
     {
-      m_cameraManip->keyMotion({0, -keyMotionFactor}, nvutils::CameraManipulator::Pan);
+      m_cameraManip->keyMotion({0, -keyMotionFactor}, nvutils::CameraManipulator::Actions::Pan);
       inputs.shift = inputs.ctrl = false;
     }
   }
@@ -106,7 +108,7 @@ void nvapp::ElementCamera::updateCamera(std::shared_ptr<nvutils::CameraManipulat
   // Mouse Wheel
   if(ImGui::GetIO().MouseWheel != 0.0F)
   {
-    m_cameraManip->wheel(ImGui::GetIO().MouseWheel * -3.f, inputs);
+    m_cameraManip->wheel(ImGui::GetIO().MouseWheel * nvapp::ElementCamera::wheelSpeed, inputs);
   }
 }
 
@@ -125,4 +127,5 @@ void nvapp::ElementCamera::onResize(VkCommandBuffer cmd, const VkExtent2D& size)
 {
   assert(m_cameraManip && "Missing setCamera");
   m_cameraManip->setWindowSize({size.width, size.height});
+  m_cameraManip->adjustOrthographicAspect();
 }

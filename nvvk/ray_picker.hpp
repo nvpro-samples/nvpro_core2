@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023--2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023--2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -55,6 +55,7 @@ public:
   {
     glm::mat4                  modelViewInv{1};    // inverse model view matrix
     glm::mat4                  perspectiveInv{1};  // inverse perspective matrix
+    int                        isOrthographic{0};  // 1 if orthographic projection
     glm::vec2                  pickPos{0};         // normalized position
     VkAccelerationStructureKHR tlas{};             // top level acceleration structure
   };

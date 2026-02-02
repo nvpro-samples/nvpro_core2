@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -222,9 +222,13 @@ struct CameraPresetManager
         if(getJsonValue(c, "fov", fVal))
           camera.fov = fVal;
         if(getJsonArray(c, "clip", vfVal))
-          camera.clip = {vfVal[0], vfVal[1]};
+          camera.nearFar = {vfVal[0], vfVal[1]};
         else
-          camera.clip = currentClipPlanes;  // For old JSON files that didn't have clip planes saved
+          camera.nearFar = currentClipPlanes;  // For old JSON files that didn't have clip planes saved
+        if(getJsonArray(c, "orthMag", vfVal))
+          camera.orthMag = {vfVal[0], vfVal[1]};
+        if(getJsonValue(c, "projectionType", iVal))
+          camera.projectionType = static_cast<nvutils::CameraManipulator::ProjectionType>(iVal);
         addCamera(camera);
       }
       i.close();
@@ -251,13 +255,15 @@ struct CameraPresetManager
       json cc = json::array();
       for(size_t n = 1; n < m_cameras.size(); n++)
       {
-        auto& c    = m_cameras[n];
-        json  jo   = json::object();
-        jo["eye"]  = std::vector<float>{c.eye.x, c.eye.y, c.eye.z};
-        jo["up"]   = std::vector<float>{c.up.x, c.up.y, c.up.z};
-        jo["ctr"]  = std::vector<float>{c.ctr.x, c.ctr.y, c.ctr.z};
-        jo["fov"]  = c.fov;
-        jo["clip"] = std::vector<float>{c.clip.x, c.clip.y};
+        auto& c              = m_cameras[n];
+        json  jo             = json::object();
+        jo["eye"]            = std::vector<float>{c.eye.x, c.eye.y, c.eye.z};
+        jo["up"]             = std::vector<float>{c.up.x, c.up.y, c.up.z};
+        jo["ctr"]            = std::vector<float>{c.ctr.x, c.ctr.y, c.ctr.z};
+        jo["fov"]            = c.fov;
+        jo["clip"]           = std::vector<float>{c.nearFar.x, c.nearFar.y};
+        jo["orthMag"]        = std::vector<float>{c.orthMag.x, c.orthMag.y};
+        jo["projectionType"] = static_cast<int>(c.projectionType);
         cc.push_back(jo);
       }
       j["cameras"] = cc;
@@ -361,7 +367,11 @@ static bool QuickActionsBar(std::shared_ptr<nvutils::CameraManipulator> cameraM,
     ImGui::BulletText("Left Mouse: Orbit/Pan/Dolly (depends on mode)");
     ImGui::BulletText("Right Mouse: Look around");
     ImGui::BulletText("Middle Mouse: Pan");
-    ImGui::BulletText("Mouse Wheel: Zoom (change FOV)");
+    ImGui::BulletText("Mouse Wheel: Dolly / Shift+Wheel: Zoom");
+    ImGui::Indent();
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Perspective: Changes FOV");
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Orthographic: Changes viewport size");
+    ImGui::Unindent();
     ImGui::BulletText("WASD: Move camera");
     ImGui::BulletText("Q/E: Roll camera");
     ImGui::Spacing();
@@ -369,6 +379,10 @@ static bool QuickActionsBar(std::shared_ptr<nvutils::CameraManipulator> cameraM,
     ImGui::BulletText("Examine: Orbit around center point");
     ImGui::BulletText("Fly: Free movement in 3D space");
     ImGui::BulletText("Walk: Movement constrained to horizontal plane");
+    ImGui::Spacing();
+    ImGui::Text("Projection Types:");
+    ImGui::BulletText("Perspective: Objects get smaller with distance");
+    ImGui::BulletText("Orthographic: Parallel projection, no size change");
 
     if(ImGui::Button("Close", ImVec2(120, 0)))
       ImGui::CloseCurrentPopup();
@@ -463,32 +477,32 @@ static bool NavigationSettingsSection(std::shared_ptr<nvutils::CameraManipulator
   };
 
   // Left-aligned navigation buttons
-  setColor(mode == nvutils::CameraManipulator::Examine);
+  setColor(mode == nvutils::CameraManipulator::Modes::Examine);
   if(ImGui::Button(ICON_MS_ORBIT))
   {
-    cameraM->setMode(nvutils::CameraManipulator::Examine);
+    cameraM->setMode(nvutils::CameraManipulator::Modes::Examine);
     changed = true;
   }
   nvgui::tooltip("Orbit around a point of interest");
   ImGui::SameLine(0, s_buttonSpacing);
-  setColor(mode == nvutils::CameraManipulator::Fly);
+  setColor(mode == nvutils::CameraManipulator::Modes::Fly);
   if(ImGui::Button(ICON_MS_FLIGHT))
   {
-    cameraM->setMode(nvutils::CameraManipulator::Fly);
+    cameraM->setMode(nvutils::CameraManipulator::Modes::Fly);
     changed = true;
   }
   nvgui::tooltip("Fly: Free camera movement");
   ImGui::SameLine(0, s_buttonSpacing);
-  setColor(mode == nvutils::CameraManipulator::Walk);
+  setColor(mode == nvutils::CameraManipulator::Modes::Walk);
   if(ImGui::Button(ICON_MS_DIRECTIONS_WALK))
   {
-    cameraM->setMode(nvutils::CameraManipulator::Walk);
+    cameraM->setMode(nvutils::CameraManipulator::Modes::Walk);
     changed = true;
   }
   nvgui::tooltip("Walk: Stay on a horizontal plane");
 
   ImGui::PopStyleColor();
-  const bool showSettings = (mode == nvutils::CameraManipulator::Fly || mode == nvutils::CameraManipulator::Walk);
+  const bool showSettings = (mode == nvutils::CameraManipulator::Modes::Fly || mode == nvutils::CameraManipulator::Modes::Walk);
   // Speed and transition controls (only shown when fly or walk is selected)
   if(showSettings)
   {
@@ -542,7 +556,7 @@ static bool PositionSection(std::shared_ptr<nvutils::CameraManipulator> cameraM,
 }
 
 //--------------------------------------------------------------------------------------------------
-// Projection Settings Section: field of view, Z-clip planes
+// Projection Settings Section: projection type, field of view, orthographic size, Z-clip planes
 //
 static bool ProjectionSettingsSection(std::shared_ptr<nvutils::CameraManipulator> cameraManip,
                                       nvutils::CameraManipulator::Camera&         camera,
@@ -553,13 +567,102 @@ static bool ProjectionSettingsSection(std::shared_ptr<nvutils::CameraManipulator
   {
     if(PeBeginAutostretch("##Projection"))
     {
-      changed |= PE::SliderFloat("FOV", &camera.fov, 1.F, 179.F, "%.1f°", ImGuiSliderFlags_Logarithmic,
-                                 "Field of view of the camera (degrees)");
+      // Projection type selector
+      changed |= PE::entry("Type", [&] {
+        const bool isPerspective = (camera.projectionType == nvutils::CameraManipulator::ProjectionType::Perspective);
+        if(ImGui::RadioButton("Perspective", isPerspective))
+        {
+          if(!isPerspective)
+          {
+            // Apply the camera changes first, then convert
+            cameraManip->setCamera(camera, true);
+            cameraManip->convertToPerspective();
+            camera = cameraManip->getCamera();
+            return true;
+          }
+        }
+        ImGui::SameLine();
+        if(ImGui::RadioButton("Orthographic", !isPerspective))
+        {
+          if(isPerspective)
+          {
+            // Apply the camera changes first, then convert
+            cameraManip->setCamera(camera, true);
+            cameraManip->convertToOrthographic();
+            camera = cameraManip->getCamera();
+            return true;
+          }
+        }
+        return false;
+      });
+
+      // Show FOV for perspective cameras
+      if(camera.projectionType == nvutils::CameraManipulator::ProjectionType::Perspective)
+      {
+        changed |= PE::SliderFloat("FOV", &camera.fov, 1.F, 179.F, "%.1f°", ImGuiSliderFlags_Logarithmic,
+                                   "Field of view of the camera (degrees)");
+      }
+      else  // Show orthographic size for orthographic cameras
+      {
+
+        // Quick axis-aligned orthographic view buttons
+        {
+          const float     distance = glm::length(camera.eye - camera.ctr);
+          const glm::vec3 center   = camera.ctr;
+
+          struct AxisView
+          {
+            const char* label;
+            glm::vec3   direction;
+            glm::vec3   up;
+            const char* tooltip;
+          };
+
+          const AxisView views[] = {
+              {"+X", {1, 0, 0}, {0, 1, 0}, "Right view"}, {"-X", {-1, 0, 0}, {0, 1, 0}, "Left view"},
+              {"+Y", {0, 1, 0}, {0, 0, -1}, "Top view"},  {"-Y", {0, -1, 0}, {0, 0, 1}, "Bottom view"},
+              {"+Z", {0, 0, 1}, {0, 1, 0}, "Front view"}, {"-Z", {0, 0, -1}, {0, 1, 0}, "Back view"},
+          };
+
+          for(size_t i = 0; i < 6; i++)
+          {
+            if(i > 0)
+              ImGui::SameLine();
+            if(ImGui::Button(views[i].label))
+            {
+              camera.eye = center + views[i].direction * distance;
+              camera.up  = views[i].up;
+              changed    = true;
+            }
+            nvgui::tooltip(views[i].tooltip);
+          }
+        }
+        // Orthographic magnitude slider
+        {
+          float magValues[2] = {camera.orthMag.x, camera.orthMag.y};
+          if(PE::DragFloat2("Mag", magValues, 0.1f, 0.01f, 10000.0f, "%.3f", ImGuiSliderFlags_None,
+                            "Orthographic half-width/height (glTF xmag/ymag)"))
+          {
+            // Detect which value changed and update the other to maintain aspect ratio
+            if(magValues[0] != camera.orthMag.x)
+            {
+              camera.orthMag.x = magValues[0];
+              camera.orthMag.y = camera.orthMag.x / cameraManip->getAspectRatio();
+            }
+            else if(magValues[1] != camera.orthMag.y)
+            {
+              camera.orthMag.y = magValues[1];
+              camera.orthMag.x = camera.orthMag.y * cameraManip->getAspectRatio();
+            }
+            changed |= true;
+          }
+        }
+      }
 
       // ImGuiSliderFlags_Logarithmic requires a value range for its scaling to work.
       const float minClip = 1e-5f;
       const float maxClip = 1e+9f;
-      changed |= PE::DragFloat2("Z-Clip", &camera.clip.x, 2e-5f * (maxClip - minClip), minClip, maxClip, "%.6f",
+      changed |= PE::DragFloat2("Z-Clip", &camera.nearFar.x, 2e-5f * (maxClip - minClip), minClip, maxClip, "%.6f",
                                 ImGuiSliderFlags_Logarithmic, "Near/Far clip planes for depth buffer");
 
       PE::end();
@@ -692,4 +795,9 @@ void nvgui::SetHomeCamera(const nvutils::CameraManipulator::Camera& camera)
 void nvgui::AddCamera(const nvutils::CameraManipulator::Camera& camera)
 {
   CameraPresetManager::getInstance().addCamera(camera);
+}
+
+std::vector<nvutils::CameraManipulator::Camera> nvgui::GetCameras()
+{
+  return CameraPresetManager::getInstance().m_cameras;
 }

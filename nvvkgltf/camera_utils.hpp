@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022--2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022--2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -41,14 +41,49 @@ inline void addSceneCamerasToWidget(std::shared_ptr<nvutils::CameraManipulator> 
   nvgui::SetCameraJsonFile(filename.stem());
   if(!cameras.empty())
   {
-    const auto& camera = cameras[0];
-    cameraManip->setCamera(
-        {camera.eye, camera.center, camera.up, static_cast<float>(glm::degrees(camera.yfov)), {camera.znear, camera.zfar}});
-    nvgui::SetHomeCamera({camera.eye, camera.center, camera.up, static_cast<float>(glm::degrees(camera.yfov))});
+    const auto&                        camera = cameras[0];
+    nvutils::CameraManipulator::Camera cam;
+    cam.eye     = camera.eye;
+    cam.ctr     = camera.center;
+    cam.up      = camera.up;
+    cam.nearFar = {static_cast<float>(camera.znear), static_cast<float>(camera.zfar)};
+
+    if(camera.type == nvvkgltf::RenderCamera::CameraType::eOrthographic)
+    {
+      cam.projectionType = nvutils::CameraManipulator::ProjectionType::Orthographic;
+      cam.orthMag.x      = static_cast<float>(camera.xmag);
+      cam.orthMag.y      = static_cast<float>(camera.ymag);
+      cam.fov            = 45.0f;
+    }
+    else
+    {
+      cam.projectionType = nvutils::CameraManipulator::ProjectionType::Perspective;
+      cam.fov            = static_cast<float>(glm::degrees(camera.yfov));
+    }
+
+    cameraManip->setCamera(cam);
+    nvgui::SetHomeCamera(cam);
 
     for(const auto& cam : cameras)
     {
-      nvgui::AddCamera({cam.eye, cam.center, cam.up, static_cast<float>(glm::degrees(cam.yfov)), {camera.znear, camera.zfar}});
+      nvutils::CameraManipulator::Camera uiCam;
+      uiCam.eye     = cam.eye;
+      uiCam.ctr     = cam.center;
+      uiCam.up      = cam.up;
+      uiCam.nearFar = {static_cast<float>(cam.znear), static_cast<float>(cam.zfar)};
+      if(cam.type == nvvkgltf::RenderCamera::CameraType::eOrthographic)
+      {
+        uiCam.projectionType = nvutils::CameraManipulator::ProjectionType::Orthographic;
+        uiCam.orthMag.x      = static_cast<float>(cam.xmag);
+        uiCam.orthMag.y      = static_cast<float>(cam.ymag);
+        uiCam.fov            = 45.0f;
+      }
+      else
+      {
+        uiCam.projectionType = nvutils::CameraManipulator::ProjectionType::Perspective;
+        uiCam.fov            = static_cast<float>(glm::degrees(cam.yfov));
+      }
+      nvgui::AddCamera(uiCam);
     }
   }
   else
@@ -58,6 +93,40 @@ inline void addSceneCamerasToWidget(std::shared_ptr<nvutils::CameraManipulator> 
     cameraManip->setClipPlanes(glm::vec2(0.001F * sceneBbox.radius(), 100.0F * sceneBbox.radius()));
     nvgui::SetHomeCamera(cameraManip->getCamera());
   }
+}
+
+// Convert widget cameras to RenderCamera list (HOME included at index 0)
+inline std::vector<nvvkgltf::RenderCamera> getCamerasFromWidget()
+{
+  std::vector<nvvkgltf::RenderCamera> renderCameras;
+  const auto                          widgetCameras = nvgui::GetCameras();
+  renderCameras.reserve(widgetCameras.size());
+
+  for(const auto& cam : widgetCameras)
+  {
+    nvvkgltf::RenderCamera renderCam;
+    renderCam.eye    = cam.eye;
+    renderCam.center = cam.ctr;
+    renderCam.up     = cam.up;
+    renderCam.znear  = static_cast<double>(cam.nearFar.x);
+    renderCam.zfar   = static_cast<double>(cam.nearFar.y);
+
+    if(cam.projectionType == nvutils::CameraManipulator::ProjectionType::Orthographic)
+    {
+      renderCam.type = nvvkgltf::RenderCamera::CameraType::eOrthographic;
+      renderCam.xmag = static_cast<double>(cam.orthMag.x);
+      renderCam.ymag = static_cast<double>(cam.orthMag.y);
+    }
+    else
+    {
+      renderCam.type = nvvkgltf::RenderCamera::CameraType::ePerspective;
+      renderCam.yfov = static_cast<double>(glm::radians(cam.fov));
+    }
+
+    renderCameras.push_back(renderCam);
+  }
+
+  return renderCameras;
 }
 
 

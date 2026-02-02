@@ -220,6 +220,7 @@ public:
   inline GLFWwindow*            getWindowHandle() const { return m_windowHandle; }
   inline uint32_t               getFrameCycleIndex() const { return m_frameRingCurrent; }
   inline uint32_t               getFrameCycleSize() const { return uint32_t(m_frameData.size()); }
+  const nvvk::Swapchain&        getSwapchain() const { return m_swapchain; }
 
   // Simulate the Drag&Drop of a file
   void onFileDrop(const std::filesystem::path& filename);
@@ -244,7 +245,7 @@ public:
                        VkImageLayout                srcLayout = VK_IMAGE_LAYOUT_GENERAL);
 
 
-private:
+protected:
   void            initGlfw(ApplicationCreateInfo& info);
   void            createTransientCommandPool();
   void            createFrameSubmission(uint32_t numFrames);

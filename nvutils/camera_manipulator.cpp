@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2018-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,18 +13,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2018-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 //--------------------------------------------------------------------
 
 #include <algorithm>
 #include <chrono>
-#include <iostream>
 #include <cmath>
 #include <fmt/format.h>
 
 #include "camera_manipulator.hpp"
+#include "logger.hpp"
 
 #ifdef _MSC_VER
 #define SAFE_SSCANF sscanf_s
@@ -45,20 +45,28 @@ CameraManipulator::CameraManipulator()
 // instantSet = true will not interpolate to the new position
 void CameraManipulator::setCamera(Camera camera, bool instantSet /*=true*/)
 {
-  m_animDone = true;
+  if(!validateCamera(camera))
+  {
+    LOGW("CameraManipulator::setCamera: Invalid camera parameters\n");
+    return;
+  }
+
+  camera.up     = glm::normalize(camera.up);
+  m_isAnimating = false;
+
+  // Force instant transition if projection type changes
+  if(camera.projectionType != m_current.projectionType)
+  {
+    instantSet = true;
+  }
 
   if(instantSet || m_duration == 0.0)
   {
-    m_current = camera;
-    updateLookatMatrix();
+    applyCameraInstant(camera);
   }
   else if(camera != m_current)
   {
-    m_goal      = camera;
-    m_snapshot  = m_current;
-    m_animDone  = false;
-    m_startTime = getSystemTime();
-    findBezierPoints();
+    startAnimationTo(camera);
   }
 }
 
@@ -69,7 +77,16 @@ void CameraManipulator::setCamera(Camera camera, bool instantSet /*=true*/)
 //
 void CameraManipulator::setLookat(const glm::vec3& eye, const glm::vec3& center, const glm::vec3& up, bool instantSet)
 {
-  setCamera({eye, center, up, m_current.fov, m_current.clip}, instantSet);
+  Camera cam = m_current;  // preserve projection, clip, orthographic size, etc.
+  cam.eye    = eye;
+  cam.ctr    = center;
+  cam.up     = up;
+  if(!validateCamera(cam))
+  {
+    LOGW("CameraManipulator::setLookat: Invalid camera parameters\n");
+    return;
+  }
+  setCamera(cam, instantSet);
 }
 
 //-----------------------------------------------------------------------------
@@ -81,24 +98,167 @@ void CameraManipulator::getLookat(glm::vec3& eye, glm::vec3& center, glm::vec3& 
   up     = m_current.up;
 }
 
+float CameraManipulator::getAnimationProgress() const
+{
+  if(!m_isAnimating)
+    return 1.0f;
+
+  const float elapsed = static_cast<float>((getSystemTime() - m_startTime) / 1000.0);
+  return std::min(elapsed / static_cast<float>(m_duration), 1.0f);
+}
+
+void CameraManipulator::setWindowSize(glm::uvec2 winSize)
+{
+  if(winSize.x == 0 || winSize.y == 0)
+  {
+    LOGW("CameraManipulator::setWindowSize: Invalid window size\n");
+    return;
+  }
+  m_windowSize = winSize;
+}
+
+void CameraManipulator::setSpeed(float speed)
+{
+  m_speed = speed;
+}
+
+void CameraManipulator::setClipPlanes(glm::vec2 nearFar)
+{
+  if(nearFar.x <= 0.0f || nearFar.y <= nearFar.x)
+  {
+    LOGW("CameraManipulator::setClipPlanes: Invalid clip planes\n");
+    return;
+  }
+  m_current.nearFar = nearFar;
+}
+
+void CameraManipulator::setOrthographicMagnitudes(const glm::vec2& mag)
+{
+  if(mag.x <= 0.0f || mag.y <= 0.0f)
+  {
+    LOGW("CameraManipulator::setOrthographicMagnitudes: Magnitudes must be positive\n");
+    return;
+  }
+  m_current.orthMag = mag;
+}
+
+void CameraManipulator::setAnimationDuration(double val)
+{
+  if(val < 0.0)
+  {
+    LOGW("CameraManipulator::setAnimationDuration: Duration must be non-negative\n");
+    return;
+  }
+  m_duration = val;
+}
+
+CameraManipulator::ViewDimensions CameraManipulator::getViewDimensions() const
+{
+  if(m_current.projectionType == ProjectionType::Orthographic)
+  {
+    return {m_current.orthMag.x * 2.0f, m_current.orthMag.y * 2.0f};
+  }
+
+  const float distance   = glm::length(m_current.eye - m_current.ctr);
+  const float halfHeight = distance * std::tan(getRadFov() * 0.5f);
+  const float viewHeight = 2.0f * halfHeight;
+  const float viewWidth  = viewHeight * std::max(getAspectRatio(), CameraConstants::MIN_ASPECT_RATIO);
+  return {viewWidth, viewHeight};
+}
+
+CameraManipulator::CameraFrame CameraManipulator::computeCameraFrame() const
+{
+  CameraFrame     frame;
+  const glm::vec3 viewDelta = m_current.ctr - m_current.eye;
+  if(glm::length(viewDelta) < CameraConstants::EPSILON)
+  {
+    frame.forward = glm::vec3(0, 0, -1);
+    frame.right   = glm::vec3(1, 0, 0);
+    frame.up      = glm::vec3(0, 1, 0);
+    return frame;
+  }
+
+  frame.forward   = glm::normalize(viewDelta);
+  glm::vec3 right = glm::cross(frame.forward, m_current.up);
+  if(glm::dot(right, right) < CameraConstants::EPSILON)
+  {
+    const glm::vec3 fallbackUp = std::abs(frame.forward.y) < 0.99f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
+    right                      = glm::cross(frame.forward, fallbackUp);
+  }
+  frame.right = glm::normalize(right);
+  frame.up    = glm::cross(frame.right, frame.forward);
+  return frame;
+}
+
+glm::vec3 CameraManipulator::projectToGroundPlane(const glm::vec3& vec) const
+{
+  const float upLen2 = glm::dot(m_current.up, m_current.up);
+  if(upLen2 < CameraConstants::EPSILON)
+    return vec;
+
+  const float projection = glm::dot(vec, m_current.up) / upLen2;
+  return vec - projection * m_current.up;
+}
+
+void CameraManipulator::zoomOrthographic(float factor)
+{
+  m_current.orthMag.x = std::max(m_current.orthMag.x * factor, CameraConstants::MIN_ORTHOGRAPHIC_SIZE);
+  m_current.orthMag.y = std::max(m_current.orthMag.y * factor, CameraConstants::MIN_ORTHOGRAPHIC_SIZE);
+}
+
+void CameraManipulator::updateLookatMatrix()
+{
+  m_matrix = glm::lookAt(m_current.eye, m_current.ctr, m_current.up);
+}
+
+void CameraManipulator::applyCameraInstant(const Camera& camera)
+{
+  m_current = camera;
+  m_snapshot.reset();
+  m_isAnimating = false;
+  updateLookatMatrix();
+}
+
+void CameraManipulator::startAnimationTo(const Camera& camera)
+{
+  m_goal        = camera;
+  m_snapshot    = m_current;
+  m_startTime   = getSystemTime();
+  m_isAnimating = true;
+  findBezierPoints();
+
+  // Calculate the Dolly-zoom style FOV: keep apparent size consistent from start to end. (Vertigo effect)
+  const float d0   = glm::length(m_snapshot->eye - m_snapshot->ctr);
+  const float d1   = glm::length(m_goal.eye - m_goal.ctr);
+  m_animDollyZoom0 = d0 * std::tan(glm::radians(m_snapshot->fov * 0.5f));
+  m_animDollyZoom1 = d1 * std::tan(glm::radians(m_goal.fov * 0.5f));
+}
+
+void CameraManipulator::applyUserChange(bool updateMatrix)
+{
+  m_isAnimating = false;
+  if(updateMatrix)
+  {
+    updateLookatMatrix();
+  }
+}
+
 //--------------------------------------------------------------------------------------------------
 // Pan the camera perpendicularly to the light of sight.
 void CameraManipulator::pan(glm::vec2 displacement)
 {
-  if(m_mode == Fly)
+  if(displacement == glm::vec2(0.f, 0.f))
+    return;
+
+  if(m_mode == Modes::Fly)
   {
     displacement *= -1.f;
   }
 
-  glm::vec3 viewDirection(m_current.eye - m_current.ctr);
-  float     viewDistance = static_cast<float>(glm::length(viewDirection)) / 0.785f;  // 45 degrees
-  viewDirection          = glm::normalize(viewDirection);
-  glm::vec3 rightVector  = glm::cross(m_current.up, viewDirection);
-  glm::vec3 upVector     = glm::cross(viewDirection, rightVector);
-  rightVector            = glm::normalize(rightVector);
-  upVector               = glm::normalize(upVector);
+  const CameraFrame    frame = computeCameraFrame();
+  const ViewDimensions view  = getViewDimensions();
 
-  glm::vec3 panOffset = (-displacement.x * rightVector + displacement.y * upVector) * viewDistance;
+  glm::vec3 panOffset = (-displacement.x * frame.right * view.width) + (displacement.y * frame.up * view.height);
   m_current.eye += panOffset;
   m_current.ctr += panOffset;
 }
@@ -122,8 +282,9 @@ void CameraManipulator::orbit(glm::vec2 displacement, bool invert /*= false*/)
   // Get the length of sight
   glm::vec3 centerToEye(position - origin);
   float     radius = glm::length(centerToEye);
-  centerToEye      = glm::normalize(centerToEye);
-  glm::vec3 axeZ   = centerToEye;
+  if(radius < CameraConstants::EPSILON)
+    return;
+  centerToEye = glm::normalize(centerToEye);
 
   // Find the rotation around the UP axis (Y)
   glm::mat4 rotY = glm::rotate(glm::mat4(1), -displacement.x, m_current.up);
@@ -132,7 +293,10 @@ void CameraManipulator::orbit(glm::vec2 displacement, bool invert /*= false*/)
   centerToEye = rotY * glm::vec4(centerToEye, 0);
 
   // Find the rotation around the X vector: cross between eye-center and up (X)
-  glm::vec3 axeX = glm::normalize(glm::cross(m_current.up, axeZ));
+  glm::vec3 axeX = glm::cross(m_current.up, centerToEye);
+  if(glm::dot(axeX, axeX) < CameraConstants::EPSILON)
+    return;
+  axeX           = glm::normalize(axeX);
   glm::mat4 rotX = glm::rotate(glm::mat4(1), -displacement.y, axeX);
 
   // Apply the (X) rotation to the eye-center vector
@@ -159,38 +323,45 @@ void CameraManipulator::orbit(glm::vec2 displacement, bool invert /*= false*/)
 
 //--------------------------------------------------------------------------------------------------
 // Move the camera toward the interest point, but don't cross it
+// For orthographic cameras, this adjusts the orthographic size (zoom) instead
 //
 void CameraManipulator::dolly(glm::vec2 displacement, bool keepCenterFixed /*= false*/)
 {
+  // Use the larger movement.
+  float largerDisplacement = (fabs(displacement.x) > fabs(displacement.y)) ? displacement.x : -displacement.y;
+
+  // For orthographic cameras, adjust the size (zoom)
+  if(m_current.projectionType == ProjectionType::Orthographic)
+  {
+    float zoomFactor = 1.0f - largerDisplacement;
+    zoomOrthographic(zoomFactor);
+    return;
+  }
+
+  // Perspective camera: move camera position
   glm::vec3 directionVec = m_current.ctr - m_current.eye;
   float     length       = static_cast<float>(glm::length(directionVec));
 
   // We are at the point of interest, do nothing!
-  if(length < 0.000001f)
+  if(length < CameraConstants::MIN_DISTANCE)
     return;
 
-  // Use the larger movement.
-  float largerDisplacement = fabs(displacement.x) > fabs(displacement.y) ? displacement.x : -displacement.y;
-
   // Don't move over the point of interest.
-  if(largerDisplacement >= 1.0f)
+  if(largerDisplacement >= CameraConstants::MAX_DOLLY_DISPLACEMENT)
     return;
 
   directionVec *= largerDisplacement;
 
   // Not going up
-  if(m_mode == Walk)
+  if(m_mode == Modes::Walk)
   {
-    if(m_current.up.y > m_current.up.z)
-      directionVec.y = 0;
-    else
-      directionVec.z = 0;
+    directionVec = projectToGroundPlane(directionVec);
   }
 
   m_current.eye += directionVec;
 
   // In fly mode, the interest moves with us.
-  if((m_mode == Fly || m_mode == Walk) && !keepCenterFixed)
+  if((m_mode == Modes::Fly || m_mode == Modes::Walk) && !keepCenterFixed)
   {
     m_current.ctr += directionVec;
   }
@@ -202,12 +373,15 @@ void CameraManipulator::dolly(glm::vec2 displacement, bool keepCenterFixed /*= f
 //   eye and center, until the key is released
 // - A new position of the camera is defined and the camera will reach that position
 //   over time.
-void CameraManipulator::updateAnim()
+void CameraManipulator::updateAnim(double currentTimeMs)
 {
-  auto elapse = static_cast<float>(getSystemTime() - m_startTime) / 1000.f;
+  if(currentTimeMs < 0.0)
+    currentTimeMs = getSystemTime();
+
+  auto elapse = static_cast<float>(currentTimeMs - m_startTime) / 1000.f;
 
   // Camera moving to new position
-  if(m_animDone)
+  if(!m_isAnimating)
     return;
 
   float t = std::min(elapse / float(m_duration), 1.0f);
@@ -215,19 +389,39 @@ void CameraManipulator::updateAnim()
   t = t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
   if(t >= 1.0f)
   {
-    m_current  = m_goal;
-    m_animDone = true;
+    m_current     = m_goal;
+    m_isAnimating = false;
+    m_snapshot.reset();
     updateLookatMatrix();
     return;
   }
 
   // Interpolate camera position and interest
   // The distance of the camera between the interest is preserved to create a nicer interpolation
-  m_current.ctr  = glm::mix(m_snapshot.ctr, m_goal.ctr, t);
-  m_current.up   = glm::mix(m_snapshot.up, m_goal.up, t);
-  m_current.eye  = computeBezier(t, m_bezier[0], m_bezier[1], m_bezier[2]);
-  m_current.fov  = glm::mix(m_snapshot.fov, m_goal.fov, t);
-  m_current.clip = glm::mix(m_snapshot.clip, m_goal.clip, t);
+  if(!m_snapshot)
+  {
+    m_isAnimating = false;
+    return;
+  }
+
+  m_current.ctr = glm::mix(m_snapshot->ctr, m_goal.ctr, t);
+  m_current.up  = glm::mix(m_snapshot->up, m_goal.up, t);
+  m_current.eye = computeBezier(t, m_bezier[0], m_bezier[1], m_bezier[2]);
+
+  // Dolly-zoom style FOV: keep apparent size consistent from start to end. (Vertigo effect)
+  const float distance = glm::length(m_current.eye - m_current.ctr);
+  const float k        = glm::mix(m_animDollyZoom0, m_animDollyZoom1, t);
+  if(distance > CameraConstants::EPSILON && k > 0.0f)
+  {
+    m_current.fov = glm::degrees(2.0f * std::atan(k / distance));
+    m_current.fov = glm::clamp(m_current.fov, CameraConstants::MIN_FOV, CameraConstants::MAX_FOV);
+  }
+  else
+  {
+    m_current.fov = glm::mix(m_snapshot->fov, m_goal.fov, t);
+  }
+  m_current.nearFar = glm::mix(m_snapshot->nearFar, m_goal.nearFar, t);
+  m_current.orthMag = glm::mix(m_snapshot->orthMag, m_goal.orthMag, t);
 
   updateLookatMatrix();
 }
@@ -236,29 +430,29 @@ void CameraManipulator::updateAnim()
 //
 void CameraManipulator::setMatrix(const glm::mat4& matrix, bool instantSet, float centerDistance)
 {
-  Camera camera;
+  Camera camera = m_current;
+
+  auto      rotMat        = glm::mat3(matrix);
+  glm::vec3 forwardVector = rotMat * glm::vec3(0, 0, -centerDistance);
+
   camera.eye = matrix[3];
+  camera.ctr = camera.eye + forwardVector;
+  camera.up  = {0, 1, 0};
 
-  auto rotMat = glm::mat3(matrix);
-  camera.ctr  = {0, 0, -centerDistance};
-  camera.ctr  = camera.eye + (rotMat * camera.ctr);
-  camera.up   = {0, 1, 0};
-  camera.fov  = m_current.fov;
-
-  m_animDone = instantSet;
+  if(!validateCamera(camera))
+  {
+    LOGW("CameraManipulator::setMatrix: Invalid camera parameters\n");
+    return;
+  }
 
   if(instantSet)
   {
-    m_current = camera;
+    applyCameraInstant(camera);
   }
   else
   {
-    m_goal      = camera;
-    m_snapshot  = m_current;
-    m_startTime = getSystemTime();
-    findBezierPoints();
+    startAnimationTo(camera);
   }
-  updateLookatMatrix();
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -272,23 +466,24 @@ void CameraManipulator::motion(const glm::vec2& screenDisplacement, Actions acti
 
   switch(action)
   {
-    case Orbit:
+    case Actions::Orbit:
       orbit(displacement, false);
       break;
-    case CameraManipulator::Dolly:
+    case Actions::Dolly:
       dolly(displacement);
       break;
-    case CameraManipulator::Pan:
+    case Actions::Pan:
       pan(displacement);
       break;
-    case CameraManipulator::LookAround:
+    case Actions::LookAround:
       orbit({displacement.x, -displacement.y}, true);
+      break;
+    default:
       break;
   }
 
   // Resetting animation and update the camera
-  m_animDone = true;
-  updateLookatMatrix();
+  applyUserChange();
 
   m_mouse = screenDisplacement;
 }
@@ -298,35 +493,33 @@ void CameraManipulator::motion(const glm::vec2& screenDisplacement, Actions acti
 // Note: dx and dy are the speed of the camera movement.
 void CameraManipulator::keyMotion(glm::vec2 delta, Actions action)
 {
+  if(delta == glm::vec2(0.f, 0.f))
+    return;
+
   float movementSpeed = m_speed;
 
-  auto directionVector = glm::normalize(m_current.ctr - m_current.eye);  // Vector from eye to center
+  const CameraFrame frame = computeCameraFrame();
   delta *= movementSpeed;
 
   glm::vec3 keyboardMovementVector{0, 0, 0};
-  if(action == Dolly)
+  if(action == Actions::Dolly)
   {
-    keyboardMovementVector = directionVector * delta.x;
-    if(m_mode == Walk)
+    keyboardMovementVector = frame.forward * delta.x;
+    if(m_mode == Modes::Walk)
     {
-      if(m_current.up.y > m_current.up.z)
-        keyboardMovementVector.y = 0;
-      else
-        keyboardMovementVector.z = 0;
+      keyboardMovementVector = projectToGroundPlane(keyboardMovementVector);
     }
   }
-  else if(action == Pan)
+  else if(action == Actions::Pan)
   {
-    auto rightVector       = glm::cross(directionVector, m_current.up);
-    keyboardMovementVector = rightVector * delta.x + m_current.up * delta.y;
+    keyboardMovementVector = frame.right * delta.x + frame.up * delta.y;
   }
 
   m_current.eye += keyboardMovementVector;
   m_current.ctr += keyboardMovementVector;
 
   // Resetting animation and update the camera
-  m_animDone = true;
-  updateLookatMatrix();
+  applyUserChange();
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -341,58 +534,141 @@ CameraManipulator::Actions CameraManipulator::mouseMove(glm::vec2 screenDisplace
   if(!inputs.lmb && !inputs.rmb && !inputs.mmb)
   {
     setMousePosition(screenDisplacement);
-    return NoAction;  // no mouse button pressed
+    return Actions::NoAction;  // no mouse button pressed
   }
 
-  Actions curAction = NoAction;
+  Actions curAction = Actions::NoAction;
   if(inputs.lmb)
   {
     if(((inputs.ctrl) && (inputs.shift)) || inputs.alt)
-      curAction = m_mode == Examine ? LookAround : Orbit;
+      curAction = m_mode == Modes::Examine ? Actions::LookAround : Actions::Orbit;
     else if(inputs.shift)
-      curAction = Dolly;
+      curAction = Actions::Dolly;
     else if(inputs.ctrl)
-      curAction = Pan;
+      curAction = Actions::Pan;
     else
-      curAction = m_mode == Examine ? Orbit : LookAround;
+      curAction = m_mode == Modes::Examine ? Actions::Orbit : Actions::LookAround;
   }
   else if(inputs.mmb)
-    curAction = Pan;
+    curAction = Actions::Pan;
   else if(inputs.rmb)
-    curAction = Dolly;
+    curAction = Actions::Dolly;
 
-  if(curAction != NoAction)
+  if(curAction != Actions::NoAction)
     motion(screenDisplacement, curAction);
 
   return curAction;
 }
 
 //--------------------------------------------------------------------------------------------------
-// Trigger a dolly when the wheel change, or change the FOV if the shift key was pressed
+// Trigger a dolly when the wheel change, or change the FOV/ortho-size if the shift key was pressed
 //
 void CameraManipulator::wheel(float value, const Inputs& inputs)
 {
+  if(value == 0.0f)
+    return;
+
   float deltaX = (value * fabsf(value)) / static_cast<float>(m_windowSize.x);
 
   if(inputs.shift)
   {
-    setFov(m_current.fov + value);
+    if(m_current.projectionType == ProjectionType::Orthographic)
+    {
+
+      float zoomFactor = 1.0f + deltaX;
+      zoomOrthographic(zoomFactor);
+      applyUserChange();
+    }
+    else
+    {
+      // For perspective cameras, adjust FOV
+      setFov(m_current.fov + value);
+      applyUserChange(false);
+    }
   }
   else
   {
     // Dolly in or out. CTRL key keeps center fixed, which has for side effect to adjust the speed for fly/walk mode
     dolly(glm::vec2(deltaX), inputs.ctrl);
-    updateLookatMatrix();
+    applyUserChange();
+  }
+}
+
+//--------------------------------------------------------------------------------------------------
+// Adjust the orthographic camera's aspect ratio to match the current viewport.
+// Sets the orthographic width (xmag) to be the height (ymag) multiplied by the aspect ratio.
+void CameraManipulator::adjustOrthographicAspect()
+{
+  if(m_current.projectionType != ProjectionType::Orthographic)
+    return;
+
+  const float aspect = getAspectRatio();
+  if(aspect <= 0.0f)
+    return;
+
+  const float height = m_current.orthMag.y;
+  const float width  = height * aspect;
+  if(width <= 0.0f)
+    return;
+
+  if(std::abs(width - m_current.orthMag.x) > CameraConstants::EPSILON)
+  {
+    m_current.orthMag.x = width;
+    m_current.orthMag.y = height;
   }
 }
 
 // Set and clamp FOV between 0.01 and 179 degrees
 void CameraManipulator::setFov(float fovDegree)
 {
-  m_current.fov = std::min(std::max(fovDegree, 0.01f), 179.0f);
+  m_current.fov = std::min(std::max(fovDegree, CameraConstants::MIN_FOV), CameraConstants::MAX_FOV);
 }
 
-glm::vec3 CameraManipulator::computeBezier(float t, glm::vec3& p0, glm::vec3& p1, glm::vec3& p2)
+//--------------------------------------------------------------------------------------------------
+// Convert from orthographic to perspective projection, preserving the view at center point
+//
+void CameraManipulator::convertToPerspective()
+{
+  if(m_current.projectionType == ProjectionType::Perspective)
+    return;  // Already perspective
+
+  // Calculate FOV based on the orthographic viewport and distance to center
+  const float distance = glm::length(m_current.eye - m_current.ctr);
+  if(distance > 0.0f && m_current.orthMag.y > 0.0f)
+  {
+    // FOV = 2 * atan(ymag / distance)
+    m_current.fov = glm::degrees(2.0f * std::atan(m_current.orthMag.y / distance));
+    // Clamp to reasonable range
+    m_current.fov = glm::clamp(m_current.fov, CameraConstants::MIN_FOV, CameraConstants::MAX_FOV);
+  }
+
+  m_current.projectionType = ProjectionType::Perspective;
+}
+
+//--------------------------------------------------------------------------------------------------
+// Convert from perspective to orthographic projection, preserving the view at center point
+//
+void CameraManipulator::convertToOrthographic()
+{
+  if(m_current.projectionType == ProjectionType::Orthographic)
+    return;  // Already orthographic
+
+  // Calculate orthographic viewport based on FOV and distance to center
+  const float distance = glm::length(m_current.eye - m_current.ctr);
+  if(distance > 0.0f)
+  {
+    // visibleHeight = 2 * distance * tan(fov/2)
+    // ymag = visibleHeight / 2 = distance * tan(fov/2)
+    const float halfFovRad = glm::radians(m_current.fov * 0.5f);
+    m_current.orthMag.y    = distance * std::tan(halfFovRad);
+    m_current.orthMag.x    = m_current.orthMag.y * getAspectRatio();
+  }
+
+  m_current.projectionType = ProjectionType::Orthographic;
+}
+
+// Quadratic Bezier curve: B(t) = (1-t)^2*p0 + 2*(1-t)*t*p1 + t^2*p2
+glm::vec3 CameraManipulator::computeBezier(float t, const glm::vec3& p0, const glm::vec3& p1, const glm::vec3& p2) const
 {
   float u  = 1.f - t;
   float tt = t * t;
@@ -407,21 +683,34 @@ glm::vec3 CameraManipulator::computeBezier(float t, glm::vec3& p0, glm::vec3& p1
 
 void CameraManipulator::findBezierPoints()
 {
-  glm::vec3 p0 = m_current.eye;
-  glm::vec3 p2 = m_goal.eye;
-  glm::vec3 p1, pc;
+  if(!m_snapshot)
+    return;
 
-  // point of interest
-  glm::vec3 pi = (m_goal.ctr + m_current.ctr) * 0.5f;
+  // Compute a smooth arc in view space between current and goal positions.
+  const glm::vec3 p0 = m_current.eye;
+  const glm::vec3 p2 = m_goal.eye;
+  // Point of interest (center)
+  const glm::vec3 pi = (m_goal.ctr + m_snapshot->ctr) * 0.5f;
+  // Midpoint between endpoints
+  const glm::vec3 mid = (p0 + p2) * 0.5f;
 
-  glm::vec3 p02    = (p0 + p2) * 0.5f;                            // mid p0-p2
-  float     radius = (length(p0 - pi) + length(p2 - pi)) * 0.5f;  // Radius for p1
-  glm::vec3 p02pi(p02 - pi);                                      // Vector from interest to mid point
-  p02pi = glm::normalize(p02pi);
-  p02pi *= radius;
-  pc   = pi + p02pi;                        // Calculated point to go through
-  p1   = 2.f * pc - p0 * 0.5f - p2 * 0.5f;  // Computing p1 for t=0.5
-  p1.y = p02.y;                             // Clamping the P1 to be in the same height as p0-p2
+  // Radius based on average distance to interest
+  const float radius = 0.5f * (glm::length(p0 - pi) + glm::length(p2 - pi));
+  // Vector from interest to the midpoint
+  glm::vec3 toMid = mid - pi;
+  if(glm::dot(toMid, toMid) < CameraConstants::EPSILON)
+  {
+    toMid = glm::vec3(0, 0, 1);
+  }
+  // Calculated point to pass through
+  const glm::vec3 pc = pi + radius * glm::normalize(toMid);
+  // Compute control point so curve goes through pc at t=0.5
+  glm::vec3 p1 = 2.0f * pc - 0.5f * (p0 + p2);
+
+  // Project onto plane perpendicular to average up vector to avoid Y-up assumptions
+  const glm::vec3 avgUp      = glm::normalize(m_snapshot->up + m_goal.up);
+  const float     projection = glm::dot(mid - p1, avgUp);
+  p1 += projection * avgUp;
 
   m_bezier[0] = p0;
   m_bezier[1] = p1;
@@ -431,11 +720,37 @@ void CameraManipulator::findBezierPoints()
 //--------------------------------------------------------------------------------------------------
 // Return the time in fraction of milliseconds
 //
-double CameraManipulator::getSystemTime()
+double CameraManipulator::getSystemTime() const
 {
   auto now(std::chrono::system_clock::now());
   auto duration = now.time_since_epoch();
   return std::chrono::duration_cast<std::chrono::microseconds>(duration).count() / 1000.0;
+}
+
+bool CameraManipulator::isValidPosition(const glm::vec3& pos)
+{
+  return !std::isnan(pos.x) && !std::isnan(pos.y) && !std::isnan(pos.z) && !std::isinf(pos.x) && !std::isinf(pos.y)
+         && !std::isinf(pos.z);
+}
+
+bool CameraManipulator::isValidDirection(const glm::vec3& dir)
+{
+  float len = glm::length(dir);
+  return isValidPosition(dir) && len > CameraConstants::EPSILON;
+}
+
+bool CameraManipulator::validateCamera(const Camera& cam) const
+{
+  if(!isValidPosition(cam.eye) || !isValidPosition(cam.ctr) || !isValidDirection(cam.up))
+    return false;
+
+  if(glm::distance(cam.eye, cam.ctr) < CameraConstants::MIN_DISTANCE)
+    return false;
+
+  if(cam.fov < CameraConstants::MIN_FOV || cam.fov > CameraConstants::MAX_FOV)
+    return false;
+
+  return true;
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -449,7 +764,7 @@ const std::string& CameraManipulator::getHelp()
       "MMB: Pan along view plane\n"
       "LMB + Shift: Dolly in/out\n"
       "LMB + Ctrl: Pan\n"
-      "LMB + Alt: Look aroundPan\n"
+      "LMB + Alt: Look around\n"
       "Mouse wheel: Dolly in/out\n"
       "Mouse wheel + Shift: Zoom in/out\n";
   return helpText;
@@ -515,11 +830,14 @@ void CameraManipulator::fit(const glm::vec3& boxMin, const glm::vec3& boxMax, bo
 
 std::string CameraManipulator::Camera::getString() const
 {
-  return fmt::format("{{{}, {}, {}}}, {{{}, {}, {}}}, {{{}, {}, {}}}, {{{}}}, {{{}, {}}}",  //
-                     eye.x, eye.y, eye.z,                                                   //
-                     ctr.x, ctr.y, ctr.z,                                                   //
-                     up.x, up.y, up.z,                                                      //
-                     fov, clip.x, clip.y);
+  return fmt::format("{{{}, {}, {}}}, {{{}, {}, {}}}, {{{}, {}, {}}}, {{{}}}, {{{}, {}}}, {{{}, {}}}, {{{}}}",  //
+                     eye.x, eye.y, eye.z,                                                                       //
+                     ctr.x, ctr.y, ctr.z,                                                                       //
+                     up.x, up.y, up.z,                                                                          //
+                     fov,                                                                                       //
+                     nearFar.x, nearFar.y,                                                                      //
+                     orthMag.x, orthMag.y,                                                                      //
+                     static_cast<int>(projectionType));
 }
 
 bool CameraManipulator::Camera::setFromString(const std::string& text)
@@ -527,9 +845,10 @@ bool CameraManipulator::Camera::setFromString(const std::string& text)
   if(text.empty())
     return false;
 
-  std::array<float, 12> val{};
-  int result = SAFE_SSCANF(text.c_str(), "{%f, %f, %f}, {%f, %f, %f}, {%f, %f, %f}, {%f}, {%f, %f}", &val[0], &val[1],
-                           &val[2], &val[3], &val[4], &val[5], &val[6], &val[7], &val[8], &val[9], &val[10], &val[11]);
+  std::array<float, 16> val{};
+  int result = SAFE_SSCANF(text.c_str(), "{%f, %f, %f}, {%f, %f, %f}, {%f, %f, %f}, {%f}, {%f, %f}, {%f, %f}, {%f}",
+                           &val[0], &val[1], &val[2], &val[3], &val[4], &val[5], &val[6], &val[7], &val[8], &val[9],
+                           &val[10], &val[11], &val[12], &val[13], &val[14]);
   if(result >= 9)  // Before 2025-09-03, this format didn't include the FOV at the end
   {
     eye = glm::vec3{val[0], val[1], val[2]};
@@ -537,8 +856,12 @@ bool CameraManipulator::Camera::setFromString(const std::string& text)
     up  = glm::vec3{val[6], val[7], val[8]};
     if(result >= 10)
       fov = val[9];
-    if(result >= 11)
-      clip = glm::vec2{val[10], val[11]};
+    if(result >= 12)
+      nearFar = glm::vec2{val[10], val[11]};
+    if(result >= 14)
+      orthMag = glm::vec2{val[12], val[13]};
+    if(result >= 15)
+      projectionType = static_cast<ProjectionType>(static_cast<int>(val[14]));
 
     return true;
   }
