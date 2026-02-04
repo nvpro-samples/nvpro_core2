@@ -24,7 +24,6 @@
 #include <cassert>
 #include <functional>
 #include <map>
-#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -159,10 +158,12 @@ public:
   };
 
   // File Management
-  bool                         load(const std::filesystem::path& filename);  // Load the glTF file, .gltf or .glb
-  bool                         save(const std::filesystem::path& filename);  // Save the glTF file, .gltf or .glb
-  const std::filesystem::path& getFilename() const { return m_filename; }
-  void                         takeModel(tinygltf::Model&& model);  // Use a model that has been loaded
+  bool load(const std::filesystem::path& filename);  // Load the glTF file, .gltf or .glb
+  bool save(const std::filesystem::path& filename);  // Save the glTF file, .gltf or .glb
+  // Read or modify supported extensions before loading (for e.g. custom image formats)
+  std::unordered_set<std::string>& supportedExtensions() { return m_supportedExtensions; }
+  const std::filesystem::path&     getFilename() const { return m_filename; }
+  void                             takeModel(tinygltf::Model&& model);  // Use a model that has been loaded
 
   // Getters
   const tinygltf::Model& getModel() const { return m_model; }
@@ -325,7 +326,8 @@ private:
   std::vector<std::vector<int>> m_nodeToRenderNodes;  // nodeID -> renderNode indices in primitive order
   std::vector<int>              m_nodeParents;        // Parent node index for each node (cached)
 
-  nvvkgltf::AnimationPointerSystem m_animationPointer;  // Unified animation pointer system (direct member)
+  nvvkgltf::AnimationPointerSystem m_animationPointer;     // Unified animation pointer system (direct member)
+  std::unordered_set<std::string>  m_supportedExtensions;  // Modifiable list of extensions
 
   int           m_numTriangles    = 0;   // Stat - Number of triangles
   int           m_currentScene    = 0;   // Scene index

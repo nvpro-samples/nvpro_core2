@@ -20,6 +20,7 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <set>
 #include <unordered_set>
 
@@ -130,20 +131,33 @@ public:
   const GpuMemoryTracker&           getMemoryTracker() const { return m_memoryTracker; }
   GpuMemoryTracker&                 getMemoryTracker() { return m_memoryTracker; }
 
-protected:
-  struct SceneImage  // Image to be loaded and created
+  // An image to be loaded and created.
+  struct SceneImage
   {
+    // GPU image.
     nvvk::Image imageTexture{};
 
-    // Loading information
-    bool                           srgb{false};
-    std::string                    imgName{};
-    VkExtent2D                     size{0, 0};
+    // Loaded information.
+    std::string imgName{};
+    bool        srgb{false};
+    // Custom image loaders must set these:
     VkFormat                       format{VK_FORMAT_UNDEFINED};
-    VkComponentMapping             componentMapping{};  // Component swizzle for image view (e.g. grayscale expansion)
+    VkExtent2D                     size{0, 0};
     std::vector<std::vector<char>> mipData{};
+    // And optionally set the component swizzle for image view (e.g. grayscale expansion):
+    VkComponentMapping componentMapping{};
   };
 
+  // A custom callback for loading images that will be called before
+  // SceneVK's built-in image loaders.
+  // This must fill SceneImage::{size, format, mipData}, optionally fill
+  // `SceneImage::componentMapping`, and return whether the image was
+  // successfully loaded. The rest can be left unchanged.
+  // For an example, see `webPLoadCallback()` in vk_gltf_renderer.
+  using ImageLoadCallback = std::function<bool(SceneImage& outImage, const void* data, size_t byteLength)>;
+  void setImageLoadCallback(ImageLoadCallback callback) { m_imageLoadCallback = callback; }
+
+protected:
   VkBufferUsageFlags2 getBufferUsageFlags() const;
   virtual void createVertexBuffers(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const nvvkgltf::Scene& scn);
   template <typename T>
@@ -185,7 +199,11 @@ protected:
   std::vector<SceneImage>    m_images;
   std::vector<nvvk::Image>   m_textures;  // Vector of all textures of the scene
 
-  std::set<int> m_sRgbImages;  // All images that are in sRGB (typically, only the one used by baseColorTexture)
+  // All images the glTF specification implies should be forced to use the sRGB
+  // transfer function. This is used to fix cases where an image is loaded as
+  // e.g. VK_FORMAT_R8G8B8A8_UNORM, but should be read as VK_FORMAT_R8G8B8A8_SRGB.
+  std::set<int>     m_sRgbImages;
+  ImageLoadCallback m_imageLoadCallback = {};
 
   // Cached material data for updates.
   std::vector<shaderio::GltfShadeMaterial> m_cachedShadeMaterials;

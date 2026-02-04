@@ -684,16 +684,22 @@ int tinygltf::utils::getTextureImageIndex(const tinygltf::Texture& texture)
 {
   int source_image = texture.source;
 
-  // MSFT_texture_dds: if the texture is a DDS file, we need to get the source image from the extension
+  // If the image uses one of the WebP, DDS, or KTX extensions, we need to get
+  // the source image from the extension.
+  // glTF doesn't specify what happens if multiple of these extensions exist;
+  // for now, we arbitrarily prefer KTX.
+  if(hasElementName(texture.extensions, EXT_TEXTURE_WEBP_EXTENSION_NAME))
+  {
+    const tinygltf::Value& ext = getElementValue(texture.extensions, EXT_TEXTURE_WEBP_EXTENSION_NAME);
+    getValue(ext, "source", source_image);
+  }
+
   if(hasElementName(texture.extensions, MSFT_TEXTURE_DDS_NAME))
   {
     const tinygltf::Value& ext = getElementValue(texture.extensions, MSFT_TEXTURE_DDS_NAME);
     getValue(ext, "source", source_image);
   }
 
-  // KHR_texture_basisu: if the texture has this extension, we need to get the source image from that extension.
-  // glTF doesn't specify what happens if both KHR_texture_basisu and MSFT_texture_dds exist;
-  // for now, we arbitrarily prefer the KTX source.
   if(hasElementName(texture.extensions, KHR_TEXTURE_BASISU_EXTENSION_NAME))
   {
     const tinygltf::Value& ext = getElementValue(texture.extensions, KHR_TEXTURE_BASISU_EXTENSION_NAME);

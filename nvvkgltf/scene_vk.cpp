@@ -1525,10 +1525,17 @@ void nvvkgltf::SceneVk::loadImage(const std::filesystem::path& diskPath, const t
 //
 void nvvkgltf::SceneVk::loadImageFromMemory(uint64_t imageID, const void* data, size_t byteLength)
 {
-  SceneImage& image  = m_images[imageID];
-  const bool  isSrgb = m_sRgbImages.find(static_cast<int>(imageID)) != m_sRgbImages.end();
+  SceneImage& image = m_images[imageID];
+  image.srgb        = m_sRgbImages.find(static_cast<int>(imageID)) != m_sRgbImages.end();
 
-  // Look at the first few bytes to determine the type of the image.
+  // Try the custom image load callback first.
+  if(m_imageLoadCallback && m_imageLoadCallback(image, data, byteLength))
+  {
+    return;  // Successfully loaded
+  }
+
+  // Look at the first few bytes to determine the type of the image and choose
+  // between our other loaders.
   const char    ddsIdentifier[4] = {'D', 'D', 'S', ' '};
   const uint8_t ktxIdentifier[5] = {0xAB, 0x4B, 0x54, 0x58, 0x20};  // Common for KTX1 + KTX2
 
@@ -1543,7 +1550,6 @@ void nvvkgltf::SceneVk::loadImageFromMemory(uint64_t imageID, const void* data, 
       return;
     }
 
-    image.srgb        = isSrgb;
     image.size.width  = ddsImage.getWidth(0);
     image.size.height = ddsImage.getHeight(0);
     if(ddsImage.getDepth(0) > 1)
@@ -1589,7 +1595,6 @@ void nvvkgltf::SceneVk::loadImageFromMemory(uint64_t imageID, const void* data, 
       return;
     }
 
-    image.srgb        = isSrgb;
     image.size.width  = ktxImage.mip_0_width;
     image.size.height = ktxImage.mip_0_height;
     if(ktxImage.mip_0_depth > 1)
@@ -1659,6 +1664,7 @@ void nvvkgltf::SceneVk::loadImageFromMemory(uint64_t imageID, const void* data, 
       decompressed  = stbi_load_from_memory(dataStb, lengthStb, &w, &h, &comp, requiredComponents);
       bytesPerPixel = sizeof(*decompressed) * requiredComponents;
     }
+
     switch(requiredComponents)
     {
       case 1:
@@ -1667,9 +1673,9 @@ void nvvkgltf::SceneVk::loadImageFromMemory(uint64_t imageID, const void* data, 
         image.componentMapping = {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_ONE};
         break;
       case 4:
-        image.format = is16Bit ? VK_FORMAT_R16G16B16A16_UNORM :
-                       isSrgb  ? VK_FORMAT_R8G8B8A8_SRGB :
-                                 VK_FORMAT_R8G8B8A8_UNORM;
+        image.format = is16Bit    ? VK_FORMAT_R16G16B16A16_UNORM :
+                       image.srgb ? VK_FORMAT_R8G8B8A8_SRGB :
+                                    VK_FORMAT_R8G8B8A8_UNORM;
 
         break;
     }

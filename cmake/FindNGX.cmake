@@ -112,4 +112,7 @@ include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(NGX
   REQUIRED_VARS
     NGX_INCLUDE_DIR
+	DLSS_ROOT
+	DLSS_DLLS
+  VERSION_VAR DLSS_VERSION
 )

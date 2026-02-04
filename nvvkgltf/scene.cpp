@@ -34,65 +34,47 @@
 #include "scene.hpp"
 #include "animation_pointer.hpp"
 
-// List of supported extensions
-static const std::set<std::string> supportedExtensions = {
-    "KHR_animation_pointer",
-    "KHR_lights_punctual",
-    "KHR_materials_anisotropy",
-    "KHR_materials_clearcoat",
-    "KHR_materials_displacement",
-    "KHR_materials_emissive_strength",
-    "KHR_materials_ior",
-    "KHR_materials_iridescence",
-    "KHR_materials_sheen",
-    "KHR_materials_specular",
-    "KHR_materials_transmission",
-    "KHR_materials_unlit",
-    "KHR_materials_variants",
-    "KHR_materials_volume",
-    "KHR_materials_volume_scatter",
-    "KHR_mesh_quantization",
-    "KHR_texture_transform",
-    "KHR_materials_dispersion",
-    "KHR_node_visibility",
-    "EXT_mesh_gpu_instancing",
-    "NV_attributes_iray",
-    "MSFT_texture_dds",
-    "KHR_materials_pbrSpecularGlossiness",
-    "KHR_materials_diffuse_transmission",
-    "EXT_meshopt_compression",
-#ifdef USE_DRACO
-    "KHR_draco_mesh_compression",
-#endif
-#ifdef NVP_SUPPORTS_BASISU
-    "KHR_texture_basisu",
-#endif
-};
-
-// Given only a normal vector, finds a valid tangent.
-//
-// This uses the technique from "Improved accuracy when building an orthonormal
-// basis" by Nelson Max, https://jcgt.org/published/0006/01/02.
-// Any tangent-generating algorithm must produce at least one discontinuity
-// when operating on a sphere (due to the hairy ball theorem); this has a
-// small ring-shaped discontinuity at normal.z == -0.99998796.
-static glm::vec4 makeFastTangent(const glm::vec3& n)
-{
-  if(n.z < -0.99998796F)  // Handle the singularity
-  {
-    return {0.0F, -1.0F, 0.0F, 1.0F};
-  }
-  const float a = 1.0F / (1.0F + n.z);
-  const float b = -n.x * n.y * a;
-  return {1.0F - n.x * n.x * a, b, -n.x, 1.0F};
-}
-
 //--------------------------------------------------------------------------------------------------
 // Constructor
 //
 nvvkgltf::Scene::Scene()
     : m_animationPointer(m_model)
 {
+  // Base list of supported extensions; samples can add onto this for custom
+  // image formats.
+  m_supportedExtensions = {
+      "KHR_animation_pointer",
+      "KHR_lights_punctual",
+      "KHR_materials_anisotropy",
+      "KHR_materials_clearcoat",
+      "KHR_materials_displacement",
+      "KHR_materials_emissive_strength",
+      "KHR_materials_ior",
+      "KHR_materials_iridescence",
+      "KHR_materials_sheen",
+      "KHR_materials_specular",
+      "KHR_materials_transmission",
+      "KHR_materials_unlit",
+      "KHR_materials_variants",
+      "KHR_materials_volume",
+      "KHR_materials_volume_scatter",
+      "KHR_mesh_quantization",
+      "KHR_texture_transform",
+      "KHR_materials_dispersion",
+      "KHR_node_visibility",
+      "EXT_mesh_gpu_instancing",
+      "NV_attributes_iray",
+      "MSFT_texture_dds",
+      "KHR_materials_pbrSpecularGlossiness",
+      "KHR_materials_diffuse_transmission",
+      "EXT_meshopt_compression",
+#ifdef USE_DRACO
+      "KHR_draco_mesh_compression",
+#endif
+#ifdef NVP_SUPPORTS_BASISU
+      "KHR_texture_basisu",
+#endif
+  };
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -160,7 +142,7 @@ bool nvvkgltf::Scene::load(const std::filesystem::path& filename)
   // Check for required extensions
   for(auto& extension : m_model.extensionsRequired)
   {
-    if(supportedExtensions.find(extension) == supportedExtensions.end())
+    if(m_supportedExtensions.find(extension) == m_supportedExtensions.end())
     {
       LOGE("%sRequired extension unsupported : %s\n", st.indent().c_str(), extension.c_str());
       clearParsedData();
@@ -171,7 +153,7 @@ bool nvvkgltf::Scene::load(const std::filesystem::path& filename)
   // Check for used extensions
   for(auto& extension : m_model.extensionsUsed)
   {
-    if(supportedExtensions.find(extension) == supportedExtensions.end())
+    if(m_supportedExtensions.find(extension) == m_supportedExtensions.end())
     {
       LOGW("%sUsed extension unsupported : %s\n", st.indent().c_str(), extension.c_str());
     }
