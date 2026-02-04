@@ -57,6 +57,7 @@ public:
   const std::unordered_set<int>& getDirtyMaterials() const { return m_dirtyMaterials; }
   const std::unordered_set<int>& getDirtyLights() const { return m_dirtyLights; }
   const std::unordered_set<int>& getDirtyCameras() const { return m_dirtyCameras; }
+  const std::unordered_set<int>& getDirtyNodes() const { return m_dirtyNodes; }
 
   void clearDirty();
   bool hasDirty() const;
@@ -71,13 +72,14 @@ private:
     eNone,
     eMaterial,
     eLight,
-    eCamera
+    eCamera,
+    eNode,
   };
 
   struct CachedPathInfo
   {
     nlohmann::json::json_pointer ptr;                 // Parsed pointer (avoids re-parsing path string)
-    int                          resourceIndex = -1;  // Index of material/light/camera
+    int                          resourceIndex = -1;  // Index of material/light/camera/node
     ResourceType                 resourceType  = ResourceType::eNone;
   };
 
@@ -91,6 +93,7 @@ private:
   std::unordered_set<int> m_dirtyMaterials;
   std::unordered_set<int> m_dirtyLights;
   std::unordered_set<int> m_dirtyCameras;
+  std::unordered_set<int> m_dirtyNodes;
 
   // Get or create cached info for a path (main optimization entry point)
   CachedPathInfo& getOrCreateCachedPath(const std::string& jsonPointerPath);
@@ -105,6 +108,7 @@ private:
   void syncMaterial(int materialIndex);
   void syncLight(int lightIndex);
   void syncCamera(int cameraIndex);
+  void syncNode(int nodeIndex);
 
   // Generic merge helper (updates tinygltf from JSON shadow - handles ANY property/extension)
   void mergeJsonIntoMaterial(const nlohmann::json& json, tinygltf::Material& mat);

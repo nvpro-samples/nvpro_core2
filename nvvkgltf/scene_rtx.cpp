@@ -324,6 +324,7 @@ void nvvkgltf::SceneRtx::cmdCreateBuildTopLevelAccelerationStructure(VkCommandBu
 
   m_tlasInstances.clear();
   m_tlasInstances.reserve(instanceCount);
+  m_numVisibleElement = 0;  // Number of visible elements
   for(const auto& object : drawObjects)
   {
     const tinygltf::Material&  mat           = materials[object.materialID];
@@ -332,6 +333,10 @@ void nvvkgltf::SceneRtx::cmdCreateBuildTopLevelAccelerationStructure(VkCommandBu
     VkDeviceAddress blasAddress = m_blasAccel[object.renderPrimID].address;
     if(!object.visible)
       blasAddress = 0;  // The instance is added, but the BLAS is set to null making it invisible
+
+    // Update the number of visible elements
+    m_numVisibleElement += object.visible ? 1 : 0;
+
 
     VkAccelerationStructureInstanceKHR asInstance{};
     asInstance.transform           = nvvk::toTransformMatrixKHR(object.worldMatrix);  // Position of the instance
@@ -412,7 +417,7 @@ void nvvkgltf::SceneRtx::updateTopLevelAS(VkCommandBuffer                cmd,
   // If the dirtyRenderNodes is empty, we do a full update, so the number of visible elements is 0.
   // Otherwise, we do a partial update, so the number of visible elements is the number of visible elements before the update
   // which can be reduced if no longer visible.
-  uint32_t numVisibleElement = dirtyRenderNodes.empty() ? 0 : m_numVisibleElement;
+  int32_t numVisibleElement = dirtyRenderNodes.empty() ? 0 : m_numVisibleElement;
 
 
   auto updateInstance = [&](int idx) {
@@ -448,14 +453,18 @@ void nvvkgltf::SceneRtx::updateTopLevelAS(VkCommandBuffer                cmd,
       if(idx < 0 || idx >= static_cast<int>(drawObjects.size()))
         continue;
 
+      // Change the number of visible elements, if needed
       auto visibility = updateInstance(idx);
-      if(visibility.first != visibility.second)
-        numVisibleElement += visibility.second ? 1 : -1;
+      if(visibility.first != visibility.second)           // Was visible != Now visible
+        numVisibleElement += visibility.second ? 1 : -1;  // Add or remove
 
       const VkDeviceSize offset = static_cast<VkDeviceSize>(idx) * sizeof(VkAccelerationStructureInstanceKHR);
       staging.appendBuffer(m_instancesBuffer, offset, std::span(&m_tlasInstances[idx], 1));
     }
   }
+
+  // Sanity check
+  assert(numVisibleElement >= 0 && numVisibleElement <= static_cast<int32_t>(drawObjects.size()));
 
   staging.cmdUploadAppended(cmd);
 

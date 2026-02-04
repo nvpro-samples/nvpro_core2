@@ -23,6 +23,7 @@
 #include <nvutils/logger.hpp>
 
 #include "animation_pointer.hpp"
+#include "tinygltf_utils.hpp"
 
 namespace nvvkgltf {
 
@@ -70,11 +71,10 @@ void AnimationPointerSystem::parseResourceInfo(const std::string& path, CachedPa
     std::string_view prefix;
     ResourceType     type;
   };
-  constexpr PrefixMapping mappings[] = {
-      {"/materials/", ResourceType::eMaterial},
-      {"/extensions/KHR_lights_punctual/lights/", ResourceType::eLight},
-      {"/cameras/", ResourceType::eCamera},
-  };
+  constexpr PrefixMapping mappings[] = {{"/materials/", ResourceType::eMaterial},
+                                        {"/extensions/KHR_lights_punctual/lights/", ResourceType::eLight},
+                                        {"/cameras/", ResourceType::eCamera},
+                                        {"/nodes/", ResourceType::eNode}};
 
   for(const auto& [prefix, type] : mappings)
   {
@@ -110,8 +110,17 @@ bool AnimationPointerSystem::applyValue(const std::string& jsonPointerPath, floa
   {
     CachedPathInfo& cached = getOrCreateCachedPath(jsonPointerPath);
 
-    // Apply value using cached pointer (nlohmann creates path automatically)
-    m_jsonModel[cached.ptr] = value;
+    // Special handling: Some properties are boolean in glTF spec but animated as floats
+    // Convert float to boolean for known boolean properties (e.g., KHR_node_visibility/visible)
+    if(jsonPointerPath.ends_with("/visible"))
+    {
+      m_jsonModel[cached.ptr] = (value != 0.0f);
+    }
+    else
+    {
+      // Apply value using cached pointer (nlohmann creates path automatically)
+      m_jsonModel[cached.ptr] = value;
+    }
 
     // Mark dirty using cached resource info (no parsing needed)
     markDirtyFromCache(cached);
@@ -192,6 +201,9 @@ void AnimationPointerSystem::markDirtyFromCache(const CachedPathInfo& cached)
     case ResourceType::eCamera:
       m_dirtyCameras.insert(cached.resourceIndex);
       break;
+    case ResourceType::eNode:
+      m_dirtyNodes.insert(cached.resourceIndex);
+      break;
     case ResourceType::eNone:
       break;
   }
@@ -213,6 +225,11 @@ void AnimationPointerSystem::syncToModel()
   for(int cameraIndex : m_dirtyCameras)
   {
     syncCamera(cameraIndex);
+  }
+
+  for(int nodeIndex : m_dirtyNodes)
+  {
+    syncNode(nodeIndex);
   }
 }
 
@@ -311,6 +328,35 @@ void AnimationPointerSystem::syncCamera(int cameraIndex)
   }
 }
 
+void AnimationPointerSystem::syncNode(int nodeIndex)
+{
+  if(nodeIndex < 0 || nodeIndex >= static_cast<int>(m_model.nodes.size()))
+    return;
+  try
+  {
+    nlohmann::json::json_pointer ptr("/nodes/" + std::to_string(nodeIndex));
+    const nlohmann::json&        nodeJson = m_jsonModel.at(ptr);
+    tinygltf::Node&              node     = m_model.nodes[nodeIndex];
+
+    // Manually merge extensions (like KHR_node_visibility)
+    if(nodeJson.contains("extensions") && nodeJson["extensions"].is_object())
+    {
+      for(auto& [extName, extValue] : nodeJson["extensions"].items())
+      {
+        node.extensions[extName] = jsonToTinyGltfValue(extValue);
+      }
+    }
+
+    // Could also handle other node properties if needed:
+    // rotation, scale, translation, matrix, weights, etc.
+  }
+  catch(const nlohmann::json::exception& e)
+  {
+    LOGW("Failed to sync node %d: %s", nodeIndex, e.what());
+  }
+}
+
+
 // Helper: Convert nlohmann::json to tinygltf::Value
 tinygltf::Value AnimationPointerSystem::jsonToTinyGltfValue(const nlohmann::json& j)
 {
@@ -393,11 +439,12 @@ void AnimationPointerSystem::clearDirty()
   m_dirtyMaterials.clear();
   m_dirtyLights.clear();
   m_dirtyCameras.clear();
+  m_dirtyNodes.clear();
 }
 
 bool AnimationPointerSystem::hasDirty() const
 {
-  return !m_dirtyMaterials.empty() || !m_dirtyLights.empty() || !m_dirtyCameras.empty();
+  return !m_dirtyMaterials.empty() || !m_dirtyLights.empty() || !m_dirtyCameras.empty() || !m_dirtyNodes.empty();
 }
 
 //--------------------------------------------------------------------------------------------------

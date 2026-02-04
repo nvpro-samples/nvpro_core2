@@ -103,7 +103,7 @@ protected:
   nvvk::Buffer m_tlasScratchBuffer;
   nvvk::Buffer m_instancesBuffer;
 
-  uint32_t m_numVisibleElement = 0;
+  int32_t m_numVisibleElement = 0;  // Keep track of the number of visible elements in the TLAS
 
   GpuMemoryTracker m_memoryTracker;  // GPU memory tracking
 };

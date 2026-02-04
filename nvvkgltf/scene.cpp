@@ -1344,6 +1344,12 @@ std::unordered_set<int> nvvkgltf::Scene::updateAnimation(uint32_t animationIndex
 
   // Sync animated properties back to tinygltf::Model (for pointer animations)
   m_animationPointer.syncToModel();
+  const auto& animDirtyNodes = m_animationPointer.getDirtyNodes();
+  for(int nodeIndex : animDirtyNodes)
+  {
+    dirtyNodeIds.insert(nodeIndex);
+    updateVisibility(nodeIndex);
+  }
 
   return dirtyNodeIds;
 }
