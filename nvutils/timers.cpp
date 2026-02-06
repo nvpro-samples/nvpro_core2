@@ -31,7 +31,7 @@
 #endif
 #include <Windows.h>
 #include <realtimeapiset.h>
-#elif defined(__unix__)
+#elif defined(__unix__) || defined(__APPLE__)
 #include <time.h>
 #else
 #include <chrono>
@@ -56,7 +56,7 @@ PerformanceTimer::TimeValue PerformanceTimer::now() const
   // so we can return the value directly.
   return {.ticks_100ns = static_cast<int64_t>(uptime)};
 
-#elif defined(__unix__)
+#elif defined(__unix__) || defined(__APPLE__)
 
   // On most Unix systems, we query CLOCK_MONOTONIC. We could do
   // CLOCK_MONOTONIC_RAW, but falling out-of-sync with real-world time is

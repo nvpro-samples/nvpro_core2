@@ -200,7 +200,12 @@ inline void parallel_batches(uint64_t numItems, F&& fn, uint32_t numThreads = 0)
     };
 
     iota_view<uint64_t> batches(0, numBatches);
+#if defined(__APPLE__)
+    // Apple clang doesn't support std::execution::par_unseq
+    std::for_each(batches.begin(), batches.end(), worker);
+#else
     std::for_each(std::execution::par_unseq, batches.begin(), batches.end(), worker);
+#endif
   }
 }
 

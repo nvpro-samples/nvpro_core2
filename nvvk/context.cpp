@@ -109,7 +109,7 @@ void nvvk::Context::deinit()
     if(m_dbgMessenger && vkDestroyDebugUtilsMessengerEXT)
     {
       vkDestroyDebugUtilsMessengerEXT(m_instance, m_dbgMessenger, contextInfo.alloc);
-      m_dbgMessenger = VK_NULL_HANDLE;
+      m_dbgMessenger = nullptr;
     }
     vkDestroyInstance(m_instance, contextInfo.alloc);
   }
@@ -136,14 +136,26 @@ VkResult nvvk::Context::createInstance()
     layers.push_back("VK_LAYER_KHRONOS_validation");
   }
 
+  // Copy instance extensions so we can add portability extension on macOS
+  std::vector<const char*> instanceExtensions = contextInfo.instanceExtensions;
+
+#ifdef __APPLE__
+  // Vulkan Portability requires this extension to enumerate non-conformant implementations
+  instanceExtensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+#endif
+
   VkInstanceCreateInfo createInfo{
       .sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
       .pNext                   = contextInfo.instanceCreateInfoExt,
+#ifdef __APPLE__
+      // Required to enumerate non-conformant Vulkan implementations (Vulkan Portability)
+      .flags                   = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,
+#endif
       .pApplicationInfo        = &appInfo,
       .enabledLayerCount       = uint32_t(layers.size()),
       .ppEnabledLayerNames     = layers.data(),
-      .enabledExtensionCount   = uint32_t(contextInfo.instanceExtensions.size()),
-      .ppEnabledExtensionNames = contextInfo.instanceExtensions.data(),
+      .enabledExtensionCount   = uint32_t(instanceExtensions.size()),
+      .ppEnabledExtensionNames = instanceExtensions.data(),
   };
 
 
@@ -718,6 +730,9 @@ void nvvk::addSurfaceExtensions(std::vector<const char*>& instanceExtensions, st
 #if defined(VK_USE_PLATFORM_MACOS_MVK)
   instanceExtensions.emplace_back(VK_MVK_MACOS_SURFACE_EXTENSION_NAME);
 #endif
+#if defined(VK_USE_PLATFORM_METAL_EXT)
+  instanceExtensions.emplace_back(VK_EXT_METAL_SURFACE_EXTENSION_NAME);
+#endif
 
   if(deviceExtensions)
   {
@@ -728,7 +743,7 @@ void nvvk::addSurfaceExtensions(std::vector<const char*>& instanceExtensions, st
 //--------------------------------------------------------------------------------------------------
 // Usage example
 //--------------------------------------------------------------------------------------------------
-[[maybe_unused]] static void usage_Context()
+static void usage_Context()
 {
   // Enable required features for ray tracing
   VkPhysicalDeviceAccelerationStructureFeaturesKHR accelFeature{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};

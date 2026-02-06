@@ -331,7 +331,7 @@ public:
     {
       return 0;
     }
-    const std::streamsize readableChars = std::min(count, m_sizeInBytes - m_nextIndex);
+    const std::streamsize readableChars = std::min<std::streamsize>(count, m_sizeInBytes - m_nextIndex);
     memcpy(s, m_data + m_nextIndex, readableChars);
     m_nextIndex += readableChars;
     return readableChars;
@@ -339,18 +339,18 @@ public:
 };
 
 // An std::istream interface for a constant, in-memory array.
-// Note that Clang emits a Wreorder-ctor warning unless the memory buffer
-// members are listed before the istream, so we use multiple inheritance
-// here to put them in the right order.
-class MemoryStream : private MemoryStreamBuffer, public std::istream
+class MemoryStream : public std::istream
 {
 public:
   MemoryStream(const char* data, std::streamsize sizeInBytes)
-      : MemoryStreamBuffer(const_cast<char*>(data), sizeInBytes)
-      , std::istream(this)
+      : m_buffer(const_cast<char*>(data), sizeInBytes)
+      , std::istream(&m_buffer)
   {
-    rdbuf(this);
+    rdbuf(&m_buffer);
   }
+
+private:
+  MemoryStreamBuffer m_buffer;
 };
 
 // Computes the size of a subresource of size `width` x `height` x `depth`, encoded
@@ -2312,7 +2312,7 @@ std::string Image::formatInfo() const
 // Sample code
 
 #include <stdio.h>
-[[maybe_unused]] static void usage_nv_dds()
+static void usage_nv_dds()
 {
   // Read a DDS file:
   nv_dds::Image         image;
