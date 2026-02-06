@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -53,21 +53,27 @@ std::vector<shaderio::EnvAccel> createEnvironmentAccel(float*& pixels, const uin
 
 
 //--------------------------------------------------------------------------------------------------
-//
+// Initialize the HdrIbl and create the descriptor set layout
+// The layout is created once and remains stable throughout the lifetime of the object
 //
 void HdrIbl::init(nvvk::ResourceAllocator* allocator, nvvk::SamplerPool* samplerPool)
 {
   m_device      = allocator->getDevice();
   m_alloc       = allocator;
   m_samplerPool = samplerPool;
+
+  // Create the descriptor set layout once - it describes the structure, not the content
+  // This layout will remain stable even when loading different HDR environments
+  createDescriptorSetLayout();
 }
 
 //--------------------------------------------------------------------------------------------------
-//
+// Clean up all resources including the descriptor set layout
 //
 void HdrIbl::deinit()
 {
   destroyEnvironment();
+  m_descPack.deinit();  // Destroy the descriptor set layout last
   m_device      = {};
   m_alloc       = nullptr;
   m_samplerPool = nullptr;
@@ -194,15 +200,14 @@ void HdrIbl::loadEnvironment(VkCommandBuffer cmd, nvvk::StagingUploader& staging
   };
   NVVK_CHECK(m_samplerPool->acquireSampler(m_texHdr.descriptor.sampler, samplerInfo));
 
-  // Create the descriptor set layout
-  createDescriptorSetLayout();
+  // Update the descriptor set to point to the new resources
+  // The layout was already created in init() and remains stable
+  updateDescriptorSet();
 }
 
 // Destroy the resources for the environment
 void HdrIbl::destroyEnvironment()
 {
-  m_descPack.deinit();
-
   if(m_alloc != nullptr)
   {
     m_samplerPool->releaseSampler(m_texHdr.descriptor.sampler);
@@ -212,7 +217,8 @@ void HdrIbl::destroyEnvironment()
 }
 
 //--------------------------------------------------------------------------------------------------
-// Descriptors of the HDR and the acceleration structure
+// Create the descriptor set layout structure
+// This is called once during init() and defines the binding structure that remains stable
 //
 void HdrIbl::createDescriptorSetLayout()
 {
@@ -223,6 +229,17 @@ void HdrIbl::createDescriptorSetLayout()
   NVVK_DBG_NAME(m_descPack.getLayout());
   NVVK_DBG_NAME(m_descPack.getPool());
   NVVK_DBG_NAME(m_descPack.getSet(0));
+}
+
+//--------------------------------------------------------------------------------------------------
+// Update the descriptor set to point to the current HDR resources
+// This is called after loading a new environment to bind the new images/buffers
+//
+void HdrIbl::updateDescriptorSet()
+{
+  nvvk::DescriptorBindings bindings;
+  bindings.addBinding(shaderio::EnvBindings::eHdr, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL);
+  bindings.addBinding(shaderio::EnvBindings::eImpSamples, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL);
 
   nvvk::WriteSetContainer writeContainer;
   writeContainer.append(bindings.getWriteSet(shaderio::EnvBindings::eHdr, m_descPack.getSet(0)), m_texHdr);
