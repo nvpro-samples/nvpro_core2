@@ -1,3 +1,4 @@
+
 /*
  * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
  *
@@ -491,10 +492,13 @@ bool nvvk::Context::filterAvailableExtensions(const std::vector<VkExtensionPrope
                       + std::to_string(desiredExtension.specVersion) + ")";
       }
       if(desiredExtension.required)
+      {
         allFound = false;
+      }
+      const char* availability = desiredExtension.required ? "Required" : "Optional";
       nvutils::Logger::getInstance().log(
           desiredExtension.required ? nvutils::Logger::LogLevel::eERROR : nvutils::Logger::LogLevel::eWARNING,
-          "Extension not available: %s %s\n", desiredExtension.extensionName, versionInfo.c_str());
+          "%s extension not available: %s %s\n", availability, desiredExtension.extensionName, versionInfo.c_str());
     }
   }
 
