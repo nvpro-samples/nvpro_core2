@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -28,9 +28,16 @@ nvslang::SlangCompiler::SlangCompiler(bool enableGLSL)
 
 void nvslang::SlangCompiler::defaultTarget()
 {
+  if(m_profileID == SLANG_PROFILE_UNKNOWN)
+  {
+    // Use SPIR-V 1.6 as the default profile for Vulkan/SPIR-V target
+    m_profileID = m_globalSession->findProfile("spirv_1_6");
+  }
+
+  m_targets.clear();
   m_targets.push_back({
       .format                      = SLANG_SPIRV,
-      .profile                     = m_globalSession->findProfile("spirv_1_6+vulkan_1_4"),
+      .profile                     = m_profileID,
       .flags                       = SLANG_TARGET_FLAG_GENERATE_SPIRV_DIRECTLY,
       .forceGLSLScalarBufferLayout = true,
   });
@@ -41,6 +48,31 @@ void nvslang::SlangCompiler::defaultOptions()
   m_options.push_back({slang::CompilerOptionName::EmitSpirvDirectly, {slang::CompilerOptionValueKind::Int, 1}});
   m_options.push_back({slang::CompilerOptionName::VulkanUseEntryPointName, {slang::CompilerOptionValueKind::Int, 1}});
   // m_options.push_back({slang::CompilerOptionName::AllowGLSL, {slang::CompilerOptionValueKind::Int, 1}});
+}
+
+bool nvslang::SlangCompiler::setProfile(const char* profileName)
+{
+  SlangProfileID profileId = m_globalSession->findProfile(profileName);
+  if(profileId == SLANG_PROFILE_UNKNOWN)
+  {
+    LOGW("Unknown profile: %s\n", profileName);
+    return false;
+  }
+  m_profileID = profileId;
+  return true;
+}
+
+bool nvslang::SlangCompiler::addCapability(const char* capabilityName)
+{
+  SlangCapabilityID capabilityId = m_globalSession->findCapability(capabilityName);
+  if(capabilityId == SLANG_CAPABILITY_UNKNOWN)
+  {
+    LOGW("Unknown capability: %s\n", capabilityName);
+    return false;
+  }
+  m_options.push_back({slang::CompilerOptionName::Capability,
+                       {slang::CompilerOptionValueKind::Int, static_cast<int32_t>(capabilityId)}});
+  return true;
 }
 
 void nvslang::SlangCompiler::addSearchPaths(const std::vector<std::filesystem::path>& searchPaths)
@@ -136,7 +168,10 @@ void nvslang::SlangCompiler::logAndAppendDiagnostics(slang::IBlob* diagnostics)
 
 bool nvslang::SlangCompiler::loadFromSourceString(const std::string& moduleName, const std::string& slangSource)
 {
-  createSession();
+  if(!createSession())
+  {
+    return false;
+  }
 
   // Clear any previous compilation
   m_spirv = nullptr;
@@ -191,10 +226,18 @@ bool nvslang::SlangCompiler::loadFromSourceString(const std::string& moduleName,
   return true;
 }
 
-void nvslang::SlangCompiler::createSession()
+
+bool nvslang::SlangCompiler::createSession()
 {
   m_session = {};
 
+  if(m_targets.empty())
+  {
+    LOGW("No targets specified, create default target.\n");
+    return false;
+  }
+
+  m_targets[0].profile = m_profileID;
   slang::SessionDesc desc{
       .targets                  = m_targets.data(),
       .targetCount              = SlangInt(m_targets.size()),
@@ -207,6 +250,8 @@ void nvslang::SlangCompiler::createSession()
       .compilerOptionEntryCount = uint32_t(m_options.size()),
   };
   m_globalSession->createSession(desc, m_session.writeRef());
+
+  return m_session != nullptr;
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -224,6 +269,10 @@ void nvslang::SlangCompiler::createSession()
   slangCompiler.addOption({slang::CompilerOptionName::DebugInformation,
                            {slang::CompilerOptionValueKind::Int, SLANG_DEBUG_INFO_LEVEL_MAXIMAL}});
   slangCompiler.addMacro({"MY_DEFINE", "1"});
+
+  // Add capabilities to the target
+  slangCompiler.addCapability("spvShaderInvocationReorderNV");
+  slangCompiler.addCapability("spvShaderClockKHR");
 
   // Compile a shader file
   bool success = slangCompiler.compileFile("shader.slang");

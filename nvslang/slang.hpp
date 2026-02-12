@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -56,7 +56,7 @@ public:
   SlangCompiler(bool enableGLSL = false);
   ~SlangCompiler() = default;
 
-  void defaultTarget();   // Default target is SPIR-V
+  void defaultTarget();   // Default target is SPIR-V with spirv_1_6 profile
   void defaultOptions();  // Default options are EmitSpirvDirectly, VulkanUseEntryPointName
 
   void addOption(const slang::CompilerOptionEntry& option) { m_options.push_back(option); }
@@ -69,12 +69,18 @@ public:
 
   void addSearchPaths(const std::vector<std::filesystem::path>& searchPaths);
   void clearSearchPaths();
-  // This is const because modifiying the search paths requires extra work.
+  // This is const because modifying the search paths requires extra work.
   const std::vector<std::filesystem::path>& searchPaths() const { return m_searchPaths; }
 
   void addMacro(const slang::PreprocessorMacroDesc& macro) { m_macros.push_back(macro); }
   void clearMacros() { m_macros.clear(); }
   std::vector<slang::PreprocessorMacroDesc>& macros() { return m_macros; }
+
+  // Set the profile by name (e.g., "sm_6_6")
+  bool setProfile(const char* profileName);
+
+  // Add a capability by name to the target (e.g., "spvShaderInvocationReorderNV")
+  bool addCapability(const char* capabilityName);
 
   // Compile a file or source
   bool compileFile(const std::filesystem::path& filename);
@@ -102,7 +108,7 @@ public:
   const std::string& getLastDiagnosticMessage() const { return m_lastDiagnosticMessage; }
 
 private:
-  void createSession();
+  bool createSession();
   void logAndAppendDiagnostics(slang::IBlob* diagnostic);
 
   Slang::ComPtr<slang::IGlobalSession>      m_globalSession;
@@ -116,6 +122,7 @@ private:
   Slang::ComPtr<slang::IComponentType>      m_linkedProgram;
   Slang::ComPtr<ISlangBlob>                 m_spirv;
   std::vector<slang::PreprocessorMacroDesc> m_macros;
+  SlangProfileID                            m_profileID{SLANG_PROFILE_UNKNOWN};
 
   std::function<void(const std::filesystem::path& sourceFile, const uint32_t* spirvCode, size_t spirvSize)> m_callback;
 

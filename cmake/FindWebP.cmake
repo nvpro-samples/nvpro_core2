@@ -99,7 +99,7 @@ if(NOT TARGET webp)
   # LibWebP tries to only build in single-configuration mode if CMAKE_BUILD_TYPE isn't defined. Try to prevent this.
   set(_PREVIOUS_CMAKE_BUILD_TYPE ${CMAKE_BUILD_TYPE})
   set(CMAKE_BUILD_TYPE "<any string works here to prevent libwebp overriding CMAKE_BUILD_TYPE>")
-  add_subdirectory(${WebP_ROOT} EXCLUDE_FROM_ALL)
+  add_subdirectory(${WebP_ROOT} ${CMAKE_BINARY_DIR}/_deps/libwebp-build EXCLUDE_FROM_ALL)
   set(CMAKE_BUILD_TYPE ${_PREVIOUS_CMAKE_BUILD_TYPE})
 
   # In VS, sort webp and the targets it defines under the ThirdParty folder.
