@@ -34,8 +34,11 @@
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #include <debugapi.h>
-#elif defined(__unix__)
+#else
+#include <unistd.h>
+#if defined(__unix__)
 #include <signal.h>
+#endif
 #endif
 
 #include <fmt/format.h>
@@ -386,7 +389,7 @@ void nvutils::Logger::outputToCallback(LogLevel level, const std::string& messag
 }
 
 
-[[maybe_unused]] static void usage_Logger()
+static void usage_Logger()
 {
   // Get the logger instance
   nvutils::Logger& logger = nvutils::Logger::getInstance();
