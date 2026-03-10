@@ -33,7 +33,7 @@ file(GLOB _SHADER_H_FILES "shaders/*.h")
 compile_slang(
   ${_SHADER_SLANG_FILES}
   ${_SHADER_OUTPUT_DIR}
-  _GENERATED_SHADER_HEADERS
+  HEADERS_VAR _GENERATED_SHADER_HEADERS
   EXTRA_FLAGS "-I${NVSHADERS_DIR}" # If your shaders import from nvshaders/
 )
 source_group("Shaders" FILES ${_SHADER_SLANG_FILES} ${_SHADER_H_FILES})

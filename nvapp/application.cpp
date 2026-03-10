@@ -19,7 +19,6 @@
 
 #include <array>
 #include <filesystem>
-
 #include <volk/volk.h>
 
 #include <GLFW/glfw3.h>
@@ -131,7 +130,7 @@ void reportSwapchainDiagnostics(VkInstance instance, nvvk::Swapchain::InitInfo& 
   // against GLFW and have nvvk::Context call glfwGetPhysicalDevicePresentationSupport.
 }
 
-void nvapp::Application::init(ApplicationCreateInfo& info)
+bool nvapp::Application::init(ApplicationCreateInfo& info)
 {
   m_instance           = info.instance;
   m_device             = info.device;
@@ -144,6 +143,7 @@ void nvapp::Application::init(ApplicationCreateInfo& info)
   m_headlessFrameCount = info.headlessFrameCount;
   m_viewportSize       = {};  // Will be set by the first viewport size
   m_maxTexturePool     = info.texturePoolSize;
+  m_useFrameBoundary   = info.useFrameBoundary;
 
   if(info.hasUndockableViewport == true)
   {
@@ -162,7 +162,11 @@ void nvapp::Application::init(ApplicationCreateInfo& info)
   // Initialize GLFW and create the window only if not headless
   if(!m_headless)
   {
-    initGlfw(info);
+    if(!initGlfw(info))
+    {
+      LOGE("Application::init - initGlfw failed\n");
+      return false;
+    }
   }
 
   // Used for creating single-time command buffers
@@ -210,9 +214,11 @@ void nvapp::Application::init(ApplicationCreateInfo& info)
 
   // Initialize Dear ImGui
   setupImGuiVulkanBackend(info.imguiConfigFlags);
+
+  return true;
 }
 
-void nvapp::Application::initGlfw(ApplicationCreateInfo& info)
+bool nvapp::Application::initGlfw(ApplicationCreateInfo& info)
 {
   glfwInit();
 
@@ -220,6 +226,11 @@ void nvapp::Application::initGlfw(ApplicationCreateInfo& info)
   glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
   glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);  // Aware of DPI scaling
   m_windowHandle = glfwCreateWindow(m_windowSize.width, m_windowSize.height, info.name.c_str(), nullptr, nullptr);
+  if(!m_windowHandle)
+  {
+    LOGE("glfwCreateWindow failed (no display? set DISPLAY env for X11)\n");
+    return false;
+  }
   glfwSetWindowSize(m_windowHandle, m_windowSize.width, m_windowSize.height);  // Sets the size of the window using the DPI scaling
   glfwSetWindowPos(m_windowHandle, m_winPos.x, m_winPos.y);
 
@@ -230,6 +241,7 @@ void nvapp::Application::initGlfw(ApplicationCreateInfo& info)
   // Set the Drop callback
   glfwSetWindowUserPointer(m_windowHandle, this);
   glfwSetDropCallback(m_windowHandle, &dropCb);
+  return true;
 }
 
 //-----------------------------------------------------------------------
@@ -238,7 +250,7 @@ void nvapp::Application::initGlfw(ApplicationCreateInfo& info)
 void nvapp::Application::deinit()
 {
   // Query the size/pos of the window, such that it get persisted
-  if(!m_headless)
+  if(!m_headless && m_windowHandle != nullptr)
   {
     glm::ivec2 winSize{};
     glfwGetWindowSize(m_windowHandle, &winSize.x, &winSize.y);
@@ -314,6 +326,12 @@ void nvapp::Application::setVsync(bool v)
   m_swapchain.requestRebuild();
 }
 
+void nvapp::Application::setPreferredSurfaceFormat(VkSurfaceFormatKHR format)
+{
+  m_swapchain.setPreferredSurfaceFormat(format);
+  m_swapchain.requestRebuild();
+}
+
 VkCommandBuffer nvapp::Application::createTempCmdBuffer() const
 {
   VkCommandBuffer cmd{};
@@ -354,6 +372,13 @@ void nvapp::Application::close()
 void nvapp::Application::run()
 {
   LOGI("Running application\n");
+
+  if(!m_headless && m_windowHandle == nullptr)
+  {
+    LOGE("Application::run - m_windowHandle is null, aborting\n");
+    return;
+  }
+
   // Re-load ImGui settings from disk, as there might be application elements with settings to restore.
   ImGui::LoadIniSettingsFromDisk(m_iniFilename.c_str());
 
@@ -375,8 +400,24 @@ void nvapp::Application::run()
     }
     glfwPollEvents();
 
-    // Skip rendering when minimized
-    if(glfwGetWindowAttrib(m_windowHandle, GLFW_ICONIFIED) == GLFW_TRUE)
+    // Check if window was resized and update m_windowSize.
+    // Skip zero-size updates: when minimized, glfwGetFramebufferSize returns (0,0).
+    // If we stored that, m_renderWhileMinimized would bypass the minimized guard and
+    // pass {0,0} to viewport/swapchain/Vulkan — invalid. Preserve last valid size.
+    {
+      int width, height;
+      glfwGetFramebufferSize(m_windowHandle, &width, &height);
+      VkExtent2D newSize = {static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
+      if(newSize.width > 0 && newSize.height > 0
+         && (newSize.width != m_windowSize.width || newSize.height != m_windowSize.height))
+      {
+        m_windowSize = newSize;
+        m_swapchain.requestRebuild();  // Request swapchain rebuild for new size
+      }
+    }
+
+    // Skip rendering when minimized (unless we need to keep rendering for external presenters)
+    if(glfwGetWindowAttrib(m_windowHandle, GLFW_ICONIFIED) == GLFW_TRUE && !m_renderWhileMinimized)
     {
       ImGui_ImplGlfw_Sleep(10);
       continue;
@@ -649,7 +690,7 @@ void nvapp::Application::endFrame(VkCommandBuffer cmd, uint32_t frameInFlights)
   m_commandBuffers.push_back({.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, .commandBuffer = cmd});
 
   // Populate the submit info to synchronize rendering and send the command buffer
-  const VkSubmitInfo2 submitInfo{
+  VkSubmitInfo2 submitInfo{
       .sType                    = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
       .waitSemaphoreInfoCount   = uint32_t(m_waitSemaphores.size()),    //
       .pWaitSemaphoreInfos      = m_waitSemaphores.data(),              // Wait for the image to be available
@@ -658,6 +699,15 @@ void nvapp::Application::endFrame(VkCommandBuffer cmd, uint32_t frameInFlights)
       .signalSemaphoreInfoCount = uint32_t(m_signalSemaphores.size()),  //
       .pSignalSemaphoreInfos    = m_signalSemaphores.data(),            // Signal when rendering is finished
   };
+
+  VkFrameBoundaryEXT frameBoundaryExt{
+      .sType = VK_STRUCTURE_TYPE_FRAME_BOUNDARY_EXT,
+      .flags = VK_FRAME_BOUNDARY_FRAME_END_BIT_EXT,
+  };
+  if(m_headless && m_useFrameBoundary)
+  {
+    submitInfo.pNext = &frameBoundaryExt;
+  }
 
   // Submit the command buffer to the GPU and signal when it's done
   NVVK_CHECK(vkQueueSubmit2(m_queues[0].queue, 1, &submitInfo, nullptr));
@@ -951,9 +1001,13 @@ void nvapp::Application::setupImGuiVulkanBackend(ImGuiConfigFlags configFlags)
     imageFormats = m_swapchain.getImageFormat();
   }
 
+  // Use the device's actual API version for ImGui — no clamping
+  VkPhysicalDeviceProperties deviceProps;
+  vkGetPhysicalDeviceProperties(m_physicalDevice, &deviceProps);
+
   // ImGui Initialization for Vulkan
   ImGui_ImplVulkan_InitInfo initInfo = {
-      .ApiVersion                  = VK_API_VERSION_1_4,
+      .ApiVersion                  = deviceProps.apiVersion,
       .Instance                    = m_instance,
       .PhysicalDevice              = m_physicalDevice,
       .Device                      = m_device,
@@ -1106,6 +1160,24 @@ void nvapp::Application::prependCommandBuffer(const VkCommandBufferSubmitInfo& c
 // Helpers
 
 
+void nvapp::Application::centerOnPrimaryMonitor(const glm::ivec2& winSize, glm::ivec2& winPos)
+{
+  GLFWmonitor* primary = glfwGetPrimaryMonitor();
+  if(primary)
+  {
+    int monX, monY;
+    glfwGetMonitorPos(primary, &monX, &monY);
+    const GLFWvidmode* mode = glfwGetVideoMode(primary);
+    winPos.x                = monX + (mode->width - winSize.x) / 2;
+    winPos.y                = monY + (mode->height - winSize.y) / 2;
+  }
+  else
+  {
+    winPos.x = 0;
+    winPos.y = 0;
+  }
+}
+
 void nvapp::Application::testAndSetWindowSizeAndPos(const glm::uvec2& winSize)
 {
   bool centerWindow = false;
@@ -1126,32 +1198,29 @@ void nvapp::Application::testAndSetWindowSizeAndPos(const glm::uvec2& winSize)
     }
     else
     {
-      // Get 80% of primary monitor
-      const GLFWvidmode* mode = glfwGetVideoMode(glfwGetPrimaryMonitor());
-      m_winSize.x             = static_cast<int>(mode->width * 0.8f);
-      m_winSize.y             = static_cast<int>(mode->height * 0.8f);
+      // Get 80% of primary monitor (may be NULL when no display / SSH / headless-like)
+      GLFWmonitor* primary = glfwGetPrimaryMonitor();
+      if(primary)
+      {
+        const GLFWvidmode* mode = glfwGetVideoMode(primary);
+        m_winSize.x             = static_cast<int>(mode->width * 0.8f);
+        m_winSize.y             = static_cast<int>(mode->height * 0.8f);
+      }
+      else
+      {
+        m_winSize = {800, 600};
+      }
     }
-    // Center the window
     if(!m_headless)
     {
-      int monX, monY;
-      glfwGetMonitorPos(glfwGetPrimaryMonitor(), &monX, &monY);
-      const GLFWvidmode* mode = glfwGetVideoMode(glfwGetPrimaryMonitor());
-      m_winPos.x              = monX + (mode->width - m_winSize.x) / 2;
-      m_winPos.y              = monY + (mode->height - m_winSize.y) / 2;
+      centerOnPrimaryMonitor(m_winSize, m_winPos);
     }
   }
   else if(!m_headless)
   {
-    // If m_winPos was retrieved, check if it is valid
     if(!isWindowPosValid(m_winPos) || centerWindow)
     {
-      // Center the window
-      int monX, monY;
-      glfwGetMonitorPos(glfwGetPrimaryMonitor(), &monX, &monY);
-      const GLFWvidmode* mode = glfwGetVideoMode(glfwGetPrimaryMonitor());
-      m_winPos.x              = monX + (mode->width - m_winSize.x) / 2;
-      m_winPos.y              = monY + (mode->height - m_winSize.y) / 2;
+      centerOnPrimaryMonitor(m_winSize, m_winPos);
     }
   }
 

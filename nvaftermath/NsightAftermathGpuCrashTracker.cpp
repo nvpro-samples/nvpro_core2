@@ -1,6 +1,6 @@
 //*********************************************************
 //
-// Copyright (c) 2019-2025, NVIDIA CORPORATION. All rights reserved.
+// Copyright (c) 2019-2026, NVIDIA CORPORATION. All rights reserved.
 //
 //  Permission is hereby granted, free of charge, to any person obtaining a
 //  copy of this software and associated documentation files (the "Software"),
@@ -125,20 +125,15 @@ void GpuCrashTracker::OnDescription(PFN_GFSDK_Aftermath_AddGpuCrashDumpDescripti
 }
 
 // Handler for app-managed marker resolve callback
-void GpuCrashTracker::OnResolveMarker(const void* pMarkerData, const uint32_t markerDataSize, void** ppResolvedMarkerData, uint32_t* pResolvedMarkerDataSize)
+void GpuCrashTracker::OnResolveMarker(const void* pMarkerData, const uint32_t markerDataSize, PFN_GFSDK_Aftermath_ResolveMarker resolveMarker)
 {
-  // Important: the pointer passed back via ppResolvedMarkerData must remain valid after this function returns
-  // using references for all of the m_markerMap accesses ensures that the pointers refer to the persistent data
   for(auto& map : m_markerMap)
   {
     const auto& foundMarker = map.find((uint64_t)pMarkerData);
     if(foundMarker != map.end())
     {
       const std::string& foundMarkerData = foundMarker->second;
-      // std::string::data() will return a valid pointer until the string is next modified
-      // we don't modify the string after calling data() here, so the pointer should remain valid
-      *ppResolvedMarkerData    = (void*)foundMarkerData.data();
-      *pResolvedMarkerDataSize = (uint32_t)foundMarkerData.length();
+      resolveMarker(foundMarkerData.data(), (uint32_t)foundMarkerData.length());
       return;
     }
   }
@@ -318,14 +313,10 @@ void GpuCrashTracker::CrashDumpDescriptionCallback(PFN_GFSDK_Aftermath_AddGpuCra
 }
 
 // Static callback wrapper for OnResolveMarker
-void GpuCrashTracker::ResolveMarkerCallback(const void*    pMarkerData,
-                                            const uint32_t markerDataSize,
-                                            void*          pUserData,
-                                            void**         ppResolvedMarkerData,
-                                            uint32_t*      pResolvedMarkerDataSize)
+void GpuCrashTracker::ResolveMarkerCallback(const void* pMarkerData, const uint32_t markerDataSize, void* pUserData, PFN_GFSDK_Aftermath_ResolveMarker resolveMarker)
 {
   GpuCrashTracker* pGpuCrashTracker = reinterpret_cast<GpuCrashTracker*>(pUserData);
-  pGpuCrashTracker->OnResolveMarker(pMarkerData, markerDataSize, ppResolvedMarkerData, pResolvedMarkerDataSize);
+  pGpuCrashTracker->OnResolveMarker(pMarkerData, markerDataSize, resolveMarker);
 }
 
 // Static callback wrapper for OnShaderDebugInfoLookup

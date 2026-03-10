@@ -39,6 +39,7 @@ VkResult nvvk::Swapchain::init(const InitInfo& info)
     m_preferredVsyncOffMode = info.preferredVsyncOffMode;
   if(info.preferredVsyncOnMode != VK_PRESENT_MODE_MAX_ENUM_KHR)
     m_preferredVsyncOnMode = info.preferredVsyncOnMode;
+  m_preferredSurfaceFormat = info.preferredFormat.surfaceFormat;
 
   VkBool32 supportsPresent = VK_FALSE;
   NVVK_FAIL_RETURN(vkGetPhysicalDeviceSurfaceSupportKHR(info.physicalDevice, info.queue.familyIndex, info.surface, &supportsPresent));
@@ -320,14 +321,36 @@ VkSurfaceFormat2KHR nvvk::Swapchain::selectSwapSurfaceFormat(const std::vector<V
     return result;
   }
 
-  const std::vector<VkSurfaceFormat2KHR> preferredFormats = {
+  // If user specified a preferred format, try to use it first
+  if(m_preferredSurfaceFormat.format != VK_FORMAT_UNDEFINED)
+  {
+    for(const auto& availableFormat : availableFormats)
+    {
+      if(availableFormat.surfaceFormat.format == m_preferredSurfaceFormat.format
+         && availableFormat.surfaceFormat.colorSpace == m_preferredSurfaceFormat.colorSpace)
+      {
+        return availableFormat;  // Return user's preferred format
+      }
+    }
+    // If exact match not found, try matching just the format (any color space)
+    for(const auto& availableFormat : availableFormats)
+    {
+      if(availableFormat.surfaceFormat.format == m_preferredSurfaceFormat.format)
+      {
+        return availableFormat;
+      }
+    }
+  }
+
+  // Fall back to default preferred formats
+  const std::vector<VkSurfaceFormat2KHR> defaultPreferredFormats = {
       VkSurfaceFormat2KHR{.sType         = VK_STRUCTURE_TYPE_SURFACE_FORMAT_2_KHR,
                           .surfaceFormat = {VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR}},
       VkSurfaceFormat2KHR{.sType         = VK_STRUCTURE_TYPE_SURFACE_FORMAT_2_KHR,
                           .surfaceFormat = {VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR}}};
 
-  // Check available formats against the preferred formats.
-  for(const auto& preferredFormat : preferredFormats)
+  // Check available formats against the default preferred formats.
+  for(const auto& preferredFormat : defaultPreferredFormats)
   {
     for(const auto& availableFormat : availableFormats)
     {

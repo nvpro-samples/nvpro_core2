@@ -45,13 +45,15 @@ public:
   Swapchain() = default;
   ~Swapchain() { assert(m_swapChain == VK_NULL_HANDLE && "Missing deinit()"); }
 
-  void        requestRebuild() { m_needRebuild = true; }
-  bool        needRebuilding() const { return m_needRebuild; }
-  VkImage     getImage() const { return m_images[m_frameImageIndex].image; }
-  VkImageView getImageView() const { return m_images[m_frameImageIndex].imageView; }
-  VkFormat    getImageFormat() const { return m_surfaceFormat.surfaceFormat.format; }
-  uint32_t    getMaxFramesInFlight() const { return m_maxFramesInFlight; }
-  VkSemaphore getImageAvailableSemaphore() const
+  void               requestRebuild() { m_needRebuild = true; }
+  bool               needRebuilding() const { return m_needRebuild; }
+  void               setPreferredSurfaceFormat(VkSurfaceFormatKHR format) { m_preferredSurfaceFormat = format; }
+  VkSurfaceFormatKHR getPreferredSurfaceFormat() const { return m_preferredSurfaceFormat; }
+  VkImage            getImage() const { return m_images[m_frameImageIndex].image; }
+  VkImageView        getImageView() const { return m_images[m_frameImageIndex].imageView; }
+  VkFormat           getImageFormat() const { return m_surfaceFormat.surfaceFormat.format; }
+  uint32_t           getMaxFramesInFlight() const { return m_maxFramesInFlight; }
+  VkSemaphore        getImageAvailableSemaphore() const
   {
     return m_frameResources[m_frameResourceIndex].imageAvailableSemaphore;
   }
@@ -183,8 +185,9 @@ private:
   VkPresentModeKHR                 m_preferredVsyncOffMode = VK_PRESENT_MODE_IMMEDIATE_KHR;  // used if available
   VkPresentModeKHR                 m_preferredVsyncOnMode  = VK_PRESENT_MODE_FIFO_KHR;       // used if available
   std::vector<VkSurfaceFormat2KHR> m_availableFormats{};  // List of formats available for this surface
-  VkSurfaceFormat2KHR              m_preferredFormat = {.sType = VK_STRUCTURE_TYPE_SURFACE_FORMAT_2_KHR,
-                                                        .surfaceFormat{VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR}};  // Optional preferred format
+  VkSurfaceFormat2KHR              m_preferredFormat        = {.sType = VK_STRUCTURE_TYPE_SURFACE_FORMAT_2_KHR,
+                                                               .surfaceFormat{VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR}};  // Optional preferred format
+  VkSurfaceFormatKHR               m_preferredSurfaceFormat = {VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
 
   // Triple buffering allows us to pipeline CPU and GPU work, which gives us
   // good throughput if their sum takes more than a frame.

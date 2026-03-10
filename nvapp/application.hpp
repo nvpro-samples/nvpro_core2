@@ -146,6 +146,7 @@ struct ApplicationCreateInfo
   VkPhysicalDevice             physicalDevice{VK_NULL_HANDLE};  // Physical device
   std::vector<nvvk::QueueInfo> queues;                          // Queue family and properties (0: Graphics)
   uint32_t                     texturePoolSize = 128U;          // Maximum number of textures in the descriptor pool
+  bool                         useFrameBoundary{false};         // Whether to emit frame boundaries in headless mode
 
   // GLFW
   glm::uvec2 windowSize{0, 0};  // Window size (width, height) or Viewport size (headless)
@@ -177,7 +178,7 @@ public:
   virtual ~Application() { assert(m_elements.empty()); }  // Forgot to call deinit
 
   // Initialization and shutdown
-  void init(ApplicationCreateInfo& info);
+  bool init(ApplicationCreateInfo& info);
   void deinit();
 
   // Application control
@@ -191,9 +192,17 @@ public:
   void submitResourceFree(std::function<void()>&& func);
 
   // Utilities
-  bool isVsync() const { return m_vsyncWanted; }  // Return true if V-Sync is on
-  void setVsync(bool v);                          // Set V-Sync on or off
-  bool isHeadless() const { return m_headless; }  // Return true if headless
+  bool isVsync() const { return m_vsyncWanted; }                        // Return true if V-Sync is on
+  void setVsync(bool v);                                                // Set V-Sync on or off
+  bool isHeadless() const { return m_headless; }                        // Return true if headless
+  void setRenderWhileMinimized(bool v) { m_renderWhileMinimized = v; }  // Continue rendering when minimized
+
+  // Swapchain format control
+  void setPreferredSurfaceFormat(VkSurfaceFormatKHR format);  // Set preferred surface format and request rebuild
+  VkSurfaceFormatKHR getPreferredSurfaceFormat() const { return m_swapchain.getPreferredSurfaceFormat(); }
+  VkFormat           getSwapchainFormat() const { return m_swapchain.getImageFormat(); }
+  void               requestSwapchainRebuild() { m_swapchain.requestRebuild(); }  // Request swapchain rebuild
+  VkSurfaceKHR       getSurface() const { return m_surface; }                     // Get the Vulkan surface
 
   // Following three functions affect the preparation of the current frame's submit info.
   // Content is appended to vectors that are reset every frame
@@ -246,7 +255,8 @@ public:
 
 
 protected:
-  void            initGlfw(ApplicationCreateInfo& info);
+  bool            initGlfw(ApplicationCreateInfo& info);
+  static void     centerOnPrimaryMonitor(const glm::ivec2& winSize, glm::ivec2& winPos);
   void            createTransientCommandPool();
   void            createFrameSubmission(uint32_t numFrames);
   void            createDescriptorPool();
@@ -319,13 +329,15 @@ protected:
   //--
   std::function<void(ImGuiID)> m_dockSetup;  // Function to setup the docking
 
-  bool                  m_headless{false};
-  bool                  m_headlessClose{false};
-  uint32_t              m_headlessFrameCount{1};
-  bool                  m_screenShotRequested = false;
-  int                   m_screenShotFrame     = 0;
-  int                   m_screenShotQuality   = 0;
+  bool     m_headless{false};
+  bool     m_headlessClose{false};
+  uint32_t m_headlessFrameCount{1};
+  bool     m_renderWhileMinimized{false};  // Continue rendering when window minimized (for external presenters)
+  bool     m_screenShotRequested = false;
+  int      m_screenShotFrame     = 0;
+  int      m_screenShotQuality   = 0;
   std::filesystem::path m_screenShotFilename;
+  bool                  m_useFrameBoundary{false};  // Enables VK_EXT_frame_boundary markers; extension must be enabled.
 
   // Use for persist the data
   nvgui::SettingsHandler m_settingsHandler;
