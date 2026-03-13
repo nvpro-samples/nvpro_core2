@@ -130,7 +130,7 @@ void reportSwapchainDiagnostics(VkInstance instance, nvvk::Swapchain::InitInfo& 
   // against GLFW and have nvvk::Context call glfwGetPhysicalDevicePresentationSupport.
 }
 
-bool nvapp::Application::init(ApplicationCreateInfo& info)
+VkResult nvapp::Application::init(ApplicationCreateInfo& info)
 {
   m_instance           = info.instance;
   m_device             = info.device;
@@ -162,18 +162,14 @@ bool nvapp::Application::init(ApplicationCreateInfo& info)
   // Initialize GLFW and create the window only if not headless
   if(!m_headless)
   {
-    if(!initGlfw(info))
-    {
-      LOGE("Application::init - initGlfw failed\n");
-      return false;
-    }
+    NVVK_FAIL_RETURN(initGlfw(info));
   }
 
   // Used for creating single-time command buffers
-  createTransientCommandPool();
+  NVVK_FAIL_RETURN(createTransientCommandPool());
 
   // Create a descriptor pool for creating descriptor set in the application
-  createDescriptorPool();
+  NVVK_FAIL_RETURN(createDescriptorPool());
 
   // Create the swapchain
   if(!m_headless)
@@ -193,20 +189,19 @@ bool nvapp::Application::init(ApplicationCreateInfo& info)
     if(VK_SUCCESS != result)
     {
       reportSwapchainDiagnostics(m_instance, swapChainInit);
-      // So that this is treated the same way as other NVVK_CHECK errors:
-      nvvk::CheckError::getInstance().check(result, "m_swapchain.init(swapChainInit)", __FILE__, __LINE__);
+      return result;
     }
     // Update the window size to the actual size of the surface
-    NVVK_CHECK(m_swapchain.initResources(m_windowSize, m_vsyncWanted));
+    NVVK_FAIL_RETURN(m_swapchain.initResources(m_windowSize, m_vsyncWanted));
 
     // Create what is needed to submit the scene for each frame in-flight
-    createFrameSubmission(m_swapchain.getMaxFramesInFlight());
+    NVVK_FAIL_RETURN(createFrameSubmission(m_swapchain.getMaxFramesInFlight()));
   }
   else
   {
     // In headless mode, there's only 2 pipeline stages (CPU and GPU, no display),
     // so we double instead of triple-buffer.
-    createFrameSubmission(2);
+    NVVK_FAIL_RETURN(createFrameSubmission(2));
   }
 
   // Set up the resource free queue
@@ -215,10 +210,10 @@ bool nvapp::Application::init(ApplicationCreateInfo& info)
   // Initialize Dear ImGui
   setupImGuiVulkanBackend(info.imguiConfigFlags);
 
-  return true;
+  return VK_SUCCESS;
 }
 
-bool nvapp::Application::initGlfw(ApplicationCreateInfo& info)
+VkResult nvapp::Application::initGlfw(ApplicationCreateInfo& info)
 {
   glfwInit();
 
@@ -229,19 +224,19 @@ bool nvapp::Application::initGlfw(ApplicationCreateInfo& info)
   if(!m_windowHandle)
   {
     LOGE("glfwCreateWindow failed (no display? set DISPLAY env for X11)\n");
-    return false;
+    return VK_ERROR_UNKNOWN;
   }
   glfwSetWindowSize(m_windowHandle, m_windowSize.width, m_windowSize.height);  // Sets the size of the window using the DPI scaling
   glfwSetWindowPos(m_windowHandle, m_winPos.x, m_winPos.y);
 
   // Create the window surface
-  NVVK_CHECK(glfwCreateWindowSurface(m_instance, m_windowHandle, nullptr, reinterpret_cast<VkSurfaceKHR*>(&m_surface)));
+  NVVK_FAIL_RETURN(glfwCreateWindowSurface(m_instance, m_windowHandle, nullptr, reinterpret_cast<VkSurfaceKHR*>(&m_surface)));
   NVVK_DBG_NAME(m_surface);
 
   // Set the Drop callback
   glfwSetWindowUserPointer(m_windowHandle, this);
   glfwSetDropCallback(m_windowHandle, &dropCb);
-  return true;
+  return VK_SUCCESS;
 }
 
 //-----------------------------------------------------------------------
@@ -861,15 +856,16 @@ void nvapp::Application::headlessRun()
 // The command pool is used to allocate command buffers.
 // In the case of this sample, we only need one command buffer, for temporary execution.
 //
-void nvapp::Application::createTransientCommandPool()
+VkResult nvapp::Application::createTransientCommandPool()
 {
   const VkCommandPoolCreateInfo commandPoolCreateInfo{
       .sType            = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
       .flags            = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,  // Hint that commands will be short-lived
       .queueFamilyIndex = m_queues[0].familyIndex,
   };
-  NVVK_CHECK(vkCreateCommandPool(m_device, &commandPoolCreateInfo, nullptr, &m_transientCmdPool));
+  NVVK_FAIL_RETURN(vkCreateCommandPool(m_device, &commandPoolCreateInfo, nullptr, &m_transientCmdPool));
   NVVK_DBG_NAME(m_transientCmdPool);
+  return VK_SUCCESS;
 }
 
 //-----------------------------------------------------------------------
@@ -877,7 +873,7 @@ void nvapp::Application::createTransientCommandPool()
 // these pools persist between frames and don't use VK_COMMAND_POOL_CREATE_TRANSIENT_BIT.
 // Each frame gets its own command buffer which records all rendering commands for that frame.
 //
-void nvapp::Application::createFrameSubmission(uint32_t numFrames)
+VkResult nvapp::Application::createFrameSubmission(uint32_t numFrames)
 {
   assert(numFrames >= 2);  // Must have at least 2 frames in flight
   VkDevice device = m_device;
@@ -897,7 +893,7 @@ void nvapp::Application::createFrameSubmission(uint32_t numFrames)
   // Create timeline semaphore for GPU-CPU synchronization
   // This ensures resources aren't overwritten while still in use by the GPU
   const VkSemaphoreCreateInfo semaphoreCreateInfo{.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, .pNext = &timelineCreateInfo};
-  NVVK_CHECK(vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &m_frameTimelineSemaphore));
+  NVVK_FAIL_RETURN(vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &m_frameTimelineSemaphore));
   NVVK_DBG_NAME(m_frameTimelineSemaphore);
 
   //Create command pools and buffers for each frame
@@ -912,7 +908,7 @@ void nvapp::Application::createFrameSubmission(uint32_t numFrames)
     m_frameData[i].frameNumber = i;  // Track frame index for synchronization
 
     // Separate pools allow independent reset/recording of commands while other frames are still in-flight
-    NVVK_CHECK(vkCreateCommandPool(device, &cmdPoolCreateInfo, nullptr, &m_frameData[i].cmdPool));
+    NVVK_FAIL_RETURN(vkCreateCommandPool(device, &cmdPoolCreateInfo, nullptr, &m_frameData[i].cmdPool));
     NVVK_DBG_NAME(m_frameData[i].cmdPool);
 
     const VkCommandBufferAllocateInfo commandBufferAllocateInfo = {
@@ -921,9 +917,11 @@ void nvapp::Application::createFrameSubmission(uint32_t numFrames)
         .level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
         .commandBufferCount = 1,
     };
-    NVVK_CHECK(vkAllocateCommandBuffers(device, &commandBufferAllocateInfo, &m_frameData[i].cmdBuffer));
+    NVVK_FAIL_RETURN(vkAllocateCommandBuffers(device, &commandBufferAllocateInfo, &m_frameData[i].cmdBuffer));
     NVVK_DBG_NAME(m_frameData[i].cmdBuffer);
   }
+
+  return VK_SUCCESS;
 }
 
 //-----------------------------------------------------------------------
@@ -932,7 +930,7 @@ void nvapp::Application::createFrameSubmission(uint32_t numFrames)
 // We allocate up to m_maxTexturePool of them so that we can display additional
 // images using ImGui_ImplVulkan_AddTexture().
 //
-void nvapp::Application::createDescriptorPool()
+VkResult nvapp::Application::createDescriptorPool()
 {
   const std::array<VkDescriptorPoolSize, 1> poolSizes{
       {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, m_maxTexturePool},
@@ -946,8 +944,10 @@ void nvapp::Application::createDescriptorPool()
       .poolSizeCount = uint32_t(poolSizes.size()),
       .pPoolSizes    = poolSizes.data(),
   };
-  NVVK_CHECK(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool));
+  NVVK_FAIL_RETURN(vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool));
   NVVK_DBG_NAME(m_descriptorPool);
+
+  return VK_SUCCESS;
 }
 
 //-----------------------------------------------------------------------
@@ -958,7 +958,6 @@ void nvapp::Application::createDescriptorPool()
 //
 void nvapp::Application::initializeImGuiContextAndSettings()
 {
-
   nvgui::setStyle(false);
 
   m_settingsHandler.setHandlerName("Application");

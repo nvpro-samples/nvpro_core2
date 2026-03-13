@@ -178,8 +178,8 @@ public:
   virtual ~Application() { assert(m_elements.empty()); }  // Forgot to call deinit
 
   // Initialization and shutdown
-  bool init(ApplicationCreateInfo& info);
-  void deinit();
+  VkResult init(ApplicationCreateInfo& info);
+  void     deinit();
 
   // Application control
   void run();    // Run indefinitely until close is requested
@@ -255,11 +255,11 @@ public:
 
 
 protected:
-  bool            initGlfw(ApplicationCreateInfo& info);
+  VkResult        initGlfw(ApplicationCreateInfo& info);
   static void     centerOnPrimaryMonitor(const glm::ivec2& winSize, glm::ivec2& winPos);
-  void            createTransientCommandPool();
-  void            createFrameSubmission(uint32_t numFrames);
-  void            createDescriptorPool();
+  VkResult        createTransientCommandPool();
+  VkResult        createFrameSubmission(uint32_t numFrames);
+  VkResult        createDescriptorPool();
   void            onViewportSizeChange(VkExtent2D size);
   void            headlessRun();
   VkCommandBuffer beginCommandRecording();
