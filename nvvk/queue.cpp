@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 *
-* SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+* SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 * SPDX-License-Identifier: Apache-2.0
 */
 
@@ -30,7 +30,7 @@ void SubmitInfo::append(const CmdPreSubmitInfo& preSubmit, VkPipelineStageFlags2
       .deviceMask    = preSubmit.deviceMask,
   };
 
-  commandBuffers.emplace_back(cmdSubmitInfo);
+  commandBuffers.push_back(cmdSubmitInfo);
   waitSemaphoreStates.insert(waitSemaphoreStates.end(), preSubmit.waitSemaphores.cbegin(), preSubmit.waitSemaphores.cend());
   signalSemaphoreStates.insert(signalSemaphoreStates.end(), preSubmit.signalSemapores.cbegin(),
                                preSubmit.signalSemapores.cend());
@@ -41,7 +41,7 @@ void SubmitInfo::append(const CmdPreSubmitInfo& preSubmit, VkPipelineStageFlags2
       .deviceIndex    = signalDeviceIndex,
   };
 
-  signalSemaphoreStates.emplace_back(selfSubmitState);
+  signalSemaphoreStates.push_back(std::move(selfSubmitState));
 }
 
 void SubmitInfo::append(VkCommandBuffer       cmd,
@@ -56,15 +56,15 @@ void SubmitInfo::append(VkCommandBuffer       cmd,
       .deviceMask    = cmdDeviceMask,
   };
 
-  commandBuffers.emplace_back(cmdSubmitInfo);
+  commandBuffers.push_back(cmdSubmitInfo);
 
   SemaphoreSubmitState selfSubmitState{
-      .semaphoreState = signalSemaphoreState,
+      .semaphoreState = std::move(signalSemaphoreState),
       .stageMask      = signalStageMask,
       .deviceIndex    = signalDeviceIndex,
   };
 
-  signalSemaphoreStates.emplace_back(selfSubmitState);
+  signalSemaphoreStates.push_back(std::move(selfSubmitState));
 }
 
 void SubmitInfo::append(VkCommandBuffer cmd, uint32_t cmdDeviceMask)

@@ -156,7 +156,7 @@ struct ApplicationCreateInfo
   bool                         useMenu{true};                 // Include a menubar
   bool                         hasUndockableViewport{false};  // Allow floating windows
   std::function<void(ImGuiID)> dockSetup;                     // Dock layout setup
-  ImGuiConfigFlags             imguiConfigFlags{ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_DockingEnable};
+  ImGuiConfigFlags imguiConfigFlags{ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad | ImGuiConfigFlags_DockingEnable};
 
   // Headless
   bool     headless{false};        // Run without a window

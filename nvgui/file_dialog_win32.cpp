@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -42,8 +42,8 @@ enum class DialogMode
 };
 
 static std::filesystem::path unifiedDialog(struct GLFWwindow*           glfwin,
-                                           std::wstring                 title,
-                                           std::wstring                 exts,
+                                           const std::wstring&          title,
+                                           const std::wstring&          exts,
                                            DialogMode                   mode,
                                            const std::filesystem::path& initialDir = {})
 {
@@ -98,8 +98,8 @@ static std::filesystem::path unifiedDialog(struct GLFWwindow*           glfwin,
           sep               = exts.find(L'|', start);
           std::wstring spec = (sep == std::wstring::npos) ? exts.substr(start) : exts.substr(start, sep - start);
           start             = (sep == std::wstring::npos) ? exts.size() : sep + 1;
-          filterNames.push_back(name);
-          filterSpecs.push_back(spec);
+          filterNames.push_back(std::move(name));
+          filterSpecs.push_back(std::move(spec));
         }
         for(size_t i = 0; i < filterNames.size(); ++i)
         {

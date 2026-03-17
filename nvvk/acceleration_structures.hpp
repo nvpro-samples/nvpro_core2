@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2014-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -22,6 +22,7 @@
 #include <string>
 #include <sstream>
 #include <queue>
+#include <utility>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -170,8 +171,11 @@ VkDeviceSize getMaxScratchSize(const std::vector<AccelerationStructureBuildData>
 class AccelerationStructureBuilder
 {
 public:
-  AccelerationStructureBuilder()                                    = default;
-  AccelerationStructureBuilder(const AccelerationStructureBuilder&) = delete;
+  AccelerationStructureBuilder()                                               = default;
+  AccelerationStructureBuilder(const AccelerationStructureBuilder&)            = delete;
+  AccelerationStructureBuilder& operator=(const AccelerationStructureBuilder&) = delete;
+  AccelerationStructureBuilder(AccelerationStructureBuilder&& other) noexcept { *this = std::move(other); }
+  AccelerationStructureBuilder& operator=(AccelerationStructureBuilder&& other) noexcept;
 
   ~AccelerationStructureBuilder() { assert(m_queryPool == VK_NULL_HANDLE); }  // Missing deinit() call
 
@@ -232,8 +236,6 @@ public:
   VkDeviceSize getScratchAlignment() const { return m_scratchAlignment; }
 
 private:
-  AccelerationStructureBuilder& operator=(const AccelerationStructureBuilder&) = default;
-
   void destroy();
   void destroyQueryPool();
   VkResult initializeQueryPoolIfNeeded(VkCommandBuffer cmd, const std::span<AccelerationStructureBuildData>& blasBuildData);

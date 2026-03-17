@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -366,13 +366,20 @@ void nvutils::Logger::outputToConsoles(LogLevel level, const std::string& messag
 
 void nvutils::Logger::outputToFile(const std::string& message) noexcept
 {
-  if(m_logToFile && m_logFile.is_open())
+  try
   {
-    m_logFile << message;
-    if(m_fileFlush)
+    if(m_logToFile && m_logFile.is_open())
     {
-      m_logFile.flush();
+      m_logFile << message;
+      if(m_fileFlush)
+      {
+        m_logFile.flush();
+      }
     }
+  }
+  catch(const std::exception& e)
+  {
+    std::cerr << "Caught exception while outputting to file: " << e.what() << std::endl;
   }
 }
 

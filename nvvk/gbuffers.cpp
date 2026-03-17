@@ -195,6 +195,16 @@ VkResult nvvk::GBuffer::initResources(VkCommandBuffer cmd)
   if(m_info.depthFormat != VK_FORMAT_UNDEFINED)
   {
     // Depth buffer
+    VkImageUsageFlags depthUsage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+                                   | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    {
+      VkFormatProperties props;
+      vkGetPhysicalDeviceFormatProperties(m_info.allocator->getPhysicalDevice(), m_info.depthFormat, &props);
+      if(props.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)
+      {
+        depthUsage |= VK_IMAGE_USAGE_STORAGE_BIT;
+      }
+    }
     const VkImageCreateInfo createInfo = {
         .sType       = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType   = VK_IMAGE_TYPE_2D,
@@ -203,8 +213,7 @@ VkResult nvvk::GBuffer::initResources(VkCommandBuffer cmd)
         .mipLevels   = 1,
         .arrayLayers = 1,
         .samples     = m_info.sampleCount,
-        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT
-                 | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        .usage       = depthUsage,
     };
     const VkImageViewCreateInfo viewInfo = {
         .sType            = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,

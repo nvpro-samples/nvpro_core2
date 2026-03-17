@@ -106,7 +106,7 @@ private:
    * The depth buffer is created with:
    * - Depth/Stencil attachment   : For depth testing
    * - Sampled bit                : For sampling in shaders
-   * - Storage bit                : For compute shader and raytracing access
+   * - Storage bit (if supported) : For compute shader and raytracing access
    * - Transfer src/dst bits      : For copying/clearing
    *
    * All images are transitioned to GENERAL layout and cleared to black.

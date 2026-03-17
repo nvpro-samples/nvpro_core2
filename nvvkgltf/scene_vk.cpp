@@ -1415,7 +1415,7 @@ void nvvkgltf::SceneVk::findSrgbImages(const tinygltf::Model& model)
   };
 
   // For images in extensions
-  auto addImageFromExtension = [&](const tinygltf::Material& mat, const std::string extName, const std::string name) {
+  auto addImageFromExtension = [&](const tinygltf::Material& mat, const std::string& extName, const std::string& name) {
     const auto& ext = mat.extensions.find(extName);
     if(ext != mat.extensions.end())
     {

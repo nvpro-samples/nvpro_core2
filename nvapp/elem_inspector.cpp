@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #ifndef IMGUI_DEFINE_MATH_OPERATORS
@@ -1100,7 +1100,7 @@ void imguiCopy(nvapp::Application* app, T& src, const std::vector<T>& existingOr
     if(buttonClicked)
     {
       buttonClicked = false;
-      strcpy(textStr, copyName.c_str());
+      snprintf(textStr, sizeof(textStr), "%s", copyName.c_str());
       ImGui::SetKeyboardFocusHere();
     }
     // Create a name that does not already exist
@@ -3344,6 +3344,7 @@ std::vector<ElementInspector::ValueFormat> ElementInspector::formatStruct(const 
 {
   std::vector<ElementInspector::ValueFormat> res;
   size_t                                     pos{};
+  // Advance to after the `{` in `struct Foo {`
   for(; pos < structure.size(); pos++)
   {
     if(structure[pos] == '{')
@@ -3352,8 +3353,10 @@ std::vector<ElementInspector::ValueFormat> ElementInspector::formatStruct(const 
       break;
     }
   }
+  // For each struct member...
   while(true)
   {
+    // Advance to next member
     for(; pos < structure.size(); pos++)
     {
       if(structure[pos] != ' ' && structure[pos] != '\n' && structure[pos] != '\t' && structure[pos] != ';')
@@ -3362,39 +3365,43 @@ std::vector<ElementInspector::ValueFormat> ElementInspector::formatStruct(const 
       }
     }
 
-    size_t typeStart = pos;
+    // Read a member type; e.g. the `float` in `float bar;`
+    const size_t typeStart = pos;
     for(; pos < structure.size(); pos++)
     {
       if(structure[pos] == ' ')
-      {
-        pos++;
         break;
-      }
     }
-    size_t typeEnd = pos - 1;
+    const size_t typeEnd = pos;
 
     ElementInspector::ValueFormat value{};
-    if(typeEnd != typeStart)
+    // Type names must be at least 2 characters long. This also lets us ignore the `}` at the end.
+    if(typeEnd >= typeStart + 2)
     {
       value.type = glslStringToType(structure.substr(typeStart, typeEnd - typeStart));
     }
 
-
+    // Advance past whitespace
     while(pos < structure.size() && (structure[pos] == ' ' || structure[pos] == '\t' || structure[pos] == '\n'))
     {
       pos++;
     }
 
-    size_t nameStart = pos;
+    // Read a member name; e.g. the `bar` in `float bar;`
+    const size_t nameStart = pos;
     for(; pos < structure.size(); pos++)
     {
-      if(structure[pos] == ' ')
+      if(structure[pos] == ' ' || structure[pos] == '\n' || structure[pos] == '\t' || structure[pos] == ';')
         break;
     }
-    size_t nameEnd = pos - 1;
+    const size_t nameEnd = pos;
 
-    value.name = structure.substr(nameStart, nameEnd - nameStart);
+    if(pos > nameStart)
+    {
+      value.name = structure.substr(nameStart, pos - nameStart);
+    }
 
+    // Only list members with both a type and a name
     if(nameStart != nameEnd && typeStart != typeEnd)
     {
       res.emplace_back(value);
@@ -3932,7 +3939,7 @@ bool ElementInspectorInternal::updateBufferFormat(uint32_t index, const std::vec
 
 void ElementInspector::appendStructToFormat(std::vector<ValueFormat>&       format,
                                             const std::vector<ValueFormat>& addedStruct,
-                                            const std::string               addedStructName,
+                                            const std::string&              addedStructName,
                                             bool                            forceHidden /*= false*/)
 {
   size_t originalSize = format.size();
@@ -3942,7 +3949,7 @@ void ElementInspector::appendStructToFormat(std::vector<ValueFormat>&       form
     if(addedStruct.size() == 1)
     {
       // Discard the input field name and only keep the struct name if the added struct has only one field
-      format[i].name = fmt::format("{}", addedStructName);
+      format[i].name = addedStructName;
     }
     else
     {

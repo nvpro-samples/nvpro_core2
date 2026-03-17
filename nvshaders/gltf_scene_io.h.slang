@@ -245,6 +245,7 @@ inline GltfShadeMaterial defaultGltfMaterial()
   m.anisotropyTexture               = 0;
   m.sheenColorTexture               = 0;
   m.sheenRoughnessTexture           = 0;
+  m.occlusionTexture                = 0;
   m.pbrDiffuseTexture               = 0;
   m.pbrSpecularGlossinessTexture    = 0;
   m.diffuseTransmissionTexture      = 0;

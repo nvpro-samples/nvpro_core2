@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2014-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -161,6 +161,26 @@ void AccelerationStructureBuildData::cmdUpdateAccelerationStructure(VkCommandBuf
 }
 
 //////////////////////////////////////////////////////////////////////////
+
+AccelerationStructureBuilder& AccelerationStructureBuilder::operator=(AccelerationStructureBuilder&& other) noexcept
+{
+  // We can't default this because C++'s default move constructors copy
+  // primitive types, like pointers, instead of exchanging them.
+  if(this != &other)
+  {
+    assert(!m_queryPool);  // Did you forget to deinitialize before moving into this object?
+    std::swap(m_alloc, other.m_alloc);
+    std::swap(m_device, other.m_device);
+    std::swap(m_queryPool, other.m_queryPool);
+    std::swap(m_currentBlasIdx, other.m_currentBlasIdx);
+    std::swap(m_currentQueryIdx, other.m_currentQueryIdx);
+    std::swap(m_scratchAlignment, other.m_scratchAlignment);
+    std::swap(m_batches, other.m_batches);
+    std::swap(m_cleanupBlasAccel, other.m_cleanupBlasAccel);
+    std::swap(m_stats, other.m_stats);
+  }
+  return *this;
+}
 
 void AccelerationStructureBuilder::init(ResourceAllocator* allocator)
 {
@@ -381,7 +401,7 @@ VkResult AccelerationStructureBuilder::cmdCompactBlas(VkCommandBuffer           
   }
 
   // Process the first batch of BLAS for compaction
-  auto& batch = m_batches.front();
+  auto batch = std::move(m_batches.front());
   m_batches.pop();
   {
     if(batch.queryPool == VK_NULL_HANDLE)

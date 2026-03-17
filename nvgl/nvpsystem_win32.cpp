@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2019-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 //--------------------------------------------------------------------
@@ -200,7 +200,7 @@ void NVPSystem::windowClear(struct GLFWwindow* glfwin, uint32_t r, uint32_t g, u
   DeleteBrush(hbr);
 }
 
-static std::filesystem::path fileDialog(struct GLFWwindow* glfwin, std::wstring title, std::wstring exts, bool openToLoad)
+static std::filesystem::path fileDialog(struct GLFWwindow* glfwin, const std::wstring& title, const std::wstring& exts, bool openToLoad)
 {
   if(!glfwin)
   {
@@ -224,11 +224,10 @@ static std::filesystem::path fileDialog(struct GLFWwindow* glfwin, std::wstring 
   extsfixed.push_back(0);
   extsfixed.push_back(0);
 
-  OPENFILENAMEW ofn;             // common dialog box structure
+  OPENFILENAMEW ofn{};           // common dialog box structure
   wchar_t       szFile[1024]{};  // buffer for file name
 
   // Initialize OPENFILENAME
-  ZeroMemory(&ofn, sizeof(ofn));
   ofn.lStructSize     = sizeof(ofn);
   ofn.hwndOwner       = hwnd;
   ofn.lpstrFile       = szFile;

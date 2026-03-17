@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2014-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2025 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -241,12 +241,12 @@ ProgramID ProgramManager::createProgram(const std::vector<ProgramManager::Defini
   {
     if(m_programs[i].definitions.empty())
     {
-      m_programs[i] = prog;
+      m_programs[i] = std::move(prog);
       return i;
     }
   }
 
-  m_programs.emplace_back(prog);
+  m_programs.push_back(std::move(prog));
   return m_programs.size() - 1;
 }
 

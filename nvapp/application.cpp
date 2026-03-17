@@ -1006,22 +1006,26 @@ void nvapp::Application::setupImGuiVulkanBackend(ImGuiConfigFlags configFlags)
 
   // ImGui Initialization for Vulkan
   ImGui_ImplVulkan_InitInfo initInfo = {
-      .ApiVersion                  = deviceProps.apiVersion,
-      .Instance                    = m_instance,
-      .PhysicalDevice              = m_physicalDevice,
-      .Device                      = m_device,
-      .QueueFamily                 = m_queues[0].familyIndex,
-      .Queue                       = m_queues[0].queue,
-      .DescriptorPool              = m_descriptorPool,
-      .MinImageCount               = 2U,
-      .ImageCount                  = std::max(m_swapchain.getMaxFramesInFlight(), 2U),
-      .UseDynamicRendering         = true,
-      .PipelineRenderingCreateInfo =  // Dynamic rendering
-      {
-          .sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
-          .colorAttachmentCount    = 1,
-          .pColorAttachmentFormats = &imageFormats,
-      },
+      .ApiVersion     = deviceProps.apiVersion,
+      .Instance       = m_instance,
+      .PhysicalDevice = m_physicalDevice,
+      .Device         = m_device,
+      .QueueFamily    = m_queues[0].familyIndex,
+      .Queue          = m_queues[0].queue,
+      .DescriptorPool = m_descriptorPool,
+      .MinImageCount  = 2U,
+      .ImageCount     = std::max(m_swapchain.getMaxFramesInFlight(), 2U),
+      // Customize swapchain format for main window
+      .PipelineInfoMain =
+          {
+              .PipelineRenderingCreateInfo =
+                  {
+                      .sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+                      .colorAttachmentCount    = 1,
+                      .pColorAttachmentFormats = &imageFormats,
+                  },
+          },
+      .UseDynamicRendering = true,  // Dynamic rendering
   };
   ImGui_ImplVulkan_Init(&initInfo);
 }
