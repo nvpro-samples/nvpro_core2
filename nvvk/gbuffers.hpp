@@ -83,6 +83,7 @@ public:
   //--- Getters for the GBuffer resources -------------------------
   VkDescriptorSet              getDescriptorSet(uint32_t i = 0) const;  // Can be use as ImTextureID for ImGui
   VkExtent2D                   getSize() const;
+  float                        getAspectRatio() const;
   VkImage                      getColorImage(uint32_t i = 0) const;
   VkImage                      getDepthImage() const;
   VkImageView                  getColorImageView(uint32_t i = 0) const;
@@ -91,7 +92,10 @@ public:
   VkFormat                     getColorFormat(uint32_t i = 0) const;
   VkFormat                     getDepthFormat() const;
   VkSampleCountFlagBits        getSampleCount() const;
-  float                        getAspectRatio() const;
+
+  // nvvk::Image variants of the getters
+  const nvvk::Image& getColorNvvkImage(uint32_t i = 0) const;
+  const nvvk::Image& getDepthNvvkImage() const;
 
 private:
   /*--

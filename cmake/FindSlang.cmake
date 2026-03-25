@@ -23,7 +23,7 @@
 #   ...
 # )
 
-set(Slang_VERSION "2026.3.1" CACHE STRING "Slang version. If you change this and ran CMake before, you will need to delete the other Slang_* cache variables")
+set(Slang_VERSION "2026.5" CACHE STRING "Slang version. If you change this and ran CMake before, you will need to delete the other Slang_* cache variables")
 
 if(NOT Slang_ROOT)
   string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" ARCH_PROC)

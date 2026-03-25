@@ -129,6 +129,16 @@ VkSampleCountFlagBits nvvk::GBuffer::getSampleCount() const
   return m_info.sampleCount;
 }
 
+const nvvk::Image& nvvk::GBuffer::getColorNvvkImage(uint32_t i /*= 0*/) const
+{
+  return m_res.gBufferColor[i];
+}
+
+const nvvk::Image& nvvk::GBuffer::getDepthNvvkImage() const
+{
+  return m_res.gBufferDepth;
+}
+
 float nvvk::GBuffer::getAspectRatio() const
 {
   if(m_size.height == 0)
