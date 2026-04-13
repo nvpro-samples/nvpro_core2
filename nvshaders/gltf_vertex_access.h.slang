@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -108,6 +108,16 @@ float2 getInterpolatedVertexTexCoord1(GltfRenderPrimitive renderPrim, uint3 idx,
   uv[2] = texcoords[idx.z];
 
   return mixBary(uv[0], uv[1], uv[2], barycentrics);
+}
+
+float2 getInterpolatedVertexTexCoord(GltfRenderPrimitive renderPrim, int texCoord, uint3 idx, float3 barycentrics)
+{
+  if(texCoord == 0)
+    return getInterpolatedVertexTexCoord0(renderPrim, idx, barycentrics);
+  else if(texCoord == 1)
+    return getInterpolatedVertexTexCoord1(renderPrim, idx, barycentrics);
+  else
+    return float2(0.0f, 0.0f);  // Invalid texCoord index
 }
 
 
