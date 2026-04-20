@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 *
-* SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+* SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 * SPDX-License-Identifier: Apache-2.0
 */
 
@@ -95,37 +95,43 @@ public:
   // if buffer.mapping is valid, then we directly write to it
   // else staging space is acquired and a copy command appended
   // for later execution via `cmdUploadAppended`.
-  // `dataSize` can be `0` does return VK_SUCCESS
+  // If `dataSize` is `0`, returns VK_SUCCESS
+  // `data` must be valid if `dataSize` is non zero, and is copied linearly into staging memory with this call.
+  // `semaphoreState` can be used to track the completion of this upload.
   VkResult appendBuffer(const nvvk::Buffer&   buffer,
                         VkDeviceSize          bufferOffset,
                         VkDeviceSize          dataSize,
                         const void*           data,
                         const SemaphoreState& semaphoreState = {});
 
-  // same as above but infers `bufferOffset` from `bufferRange.offset` and `dataSize` from `bufferRange.range`
-  VkResult appendBufferRange(const nvvk::BufferRange& bufferRange, const void* data, const SemaphoreState& semaphoreState = {});
-
-
-  // buffer.buffer, buffer.bufferSize and buffer.mapping are used
-  // if buffer.mapping is valid, then we return it as `uploadMapping`
-  // else staging space is acquired its mapping is returned in `uploadMapping`
-  // and a copy command is appended for later execution via `cmdUploadAppended`
-  // `dataSize` can be `0` does return VK_SUCCESS and sets `uploadMapping` to nullptr
-  VkResult appendBufferMapping(const nvvk::Buffer&   buffer,
-                               VkDeviceSize          bufferOffset,
-                               VkDeviceSize          dataSize,
-                               void*&                uploadMapping,
-                               const SemaphoreState& semaphoreState = {});
-
-
-  // same as above but infers `bufferOffset` from `bufferRange.offset` and `dataSize` from `bufferRange.range`
-  VkResult appendBufferRangeMapping(const nvvk::BufferRange& bufferRange, void*& uploadMapping, const SemaphoreState& semaphoreState = {});
-
   template <typename T>
   inline VkResult appendBuffer(const nvvk::Buffer& buffer, size_t bufferOffset, std::span<T> data, const SemaphoreState& semaphoreState = {})
   {
     return appendBuffer(buffer, bufferOffset, data.size_bytes(), data.data(), semaphoreState);
   }
+
+  // same as above but infers `bufferOffset` from `bufferRange.offset` and `dataSize` from `bufferRange.range`
+  VkResult appendBufferRange(const nvvk::BufferRange& bufferRange, const void* data, const SemaphoreState& semaphoreState = {});
+
+  template <typename T>
+  inline VkResult appendBufferRange(const nvvk::BufferRange& bufferRange, std::span<T> data, const SemaphoreState& semaphoreState = {})
+  {
+    assert(bufferRange.range == data.size_bytes());
+    return appendBufferRange(bufferRange, data.data(), semaphoreState);
+  }
+
+  // `buffer.buffer`, `buffer.bufferSize` and `buffer.mapping` are used
+  // if `buffer.mapping` is valid, then we return it as `uploadMapping`
+  // else staging space is acquired its mapping is returned in `uploadMapping`
+  // and a copy command is appended for later execution via `cmdUploadAppended`.
+  // The pointer is valid until the next `cmdUploadAppended` or `cancelAppended` call.
+  // If `dataSize` is `0`, returns VK_SUCCESS and sets `uploadMapping` to nullptr
+  // `semaphoreState` can be used to track the completion of this upload.
+  VkResult appendBufferMapping(const nvvk::Buffer&   buffer,
+                               VkDeviceSize          bufferOffset,
+                               VkDeviceSize          dataSize,
+                               void*&                uploadMapping,
+                               const SemaphoreState& semaphoreState = {});
 
   template <typename T>
   inline VkResult appendBufferMapping(const nvvk::Buffer&   buffer,
@@ -137,12 +143,8 @@ public:
     return appendBufferMapping(buffer, bufferOffset, dataSize, (void*&)uploadMapping, semaphoreState);
   }
 
-  template <typename T>
-  inline VkResult appendBufferRange(const nvvk::BufferRange& bufferRange, std::span<T> data, const SemaphoreState& semaphoreState = {})
-  {
-    assert(bufferRange.range == data.size_bytes());
-    return appendBufferRange(bufferRange, data.data(), semaphoreState);
-  }
+  // same as `appendBufferMapping` but infers `bufferOffset` from `bufferRange.offset` and `dataSize` from `bufferRange.range`
+  VkResult appendBufferRangeMapping(const nvvk::BufferRange& bufferRange, void*& uploadMapping, const SemaphoreState& semaphoreState = {});
 
   template <typename T>
   inline VkResult appendBufferRangeMapping(const nvvk::BufferRange& bufferRange,
@@ -152,7 +154,11 @@ public:
     return appendBufferRangeMapping(bufferRange, (void*&)uploadMapping, semaphoreState);
   }
 
-  // Large buffer support - uploads via chunked staging allocations to avoid 4GB allocation limits
+
+  // For Large buffers the uploads are using chunked staging allocations to avoid 4GB allocation limits.
+  // If `dataSize` is `0`, returns VK_SUCCESS
+  // `data` must be valid if `dataSize` is non zero, and is copied linearly into staging memory with this call.
+  // `semaphoreState` can be used to track the completion of this upload.
   VkResult appendLargeBuffer(const nvvk::LargeBuffer& buffer,
                              VkDeviceSize             bufferOffset,
                              VkDeviceSize             dataSize,
@@ -170,7 +176,11 @@ public:
     return appendLargeBuffer(buffer, bufferOffset, data.size_bytes(), data.data(), semaphoreState, chunkSize);
   }
 
-  // dataSize should be kept <= 1GB to be safe to acquire
+  // `dataSize` should be kept <= 1GB to be safe to acquire
+  // If `dataSize` is `0`, returns VK_SUCCESS
+  // `uploadMapping` is returned on success, user is expected to write the data into the staging buffer
+  // linearly. The pointer is valid until the next `cmdUploadAppended` or `cancelAppended` call.
+  // `semaphoreState` can be used to track the completion of this upload.
   VkResult appendLargeBufferMapping(const nvvk::LargeBuffer& buffer,
                                     VkDeviceSize             bufferOffset,
                                     VkDeviceSize             dataSize,
@@ -200,8 +210,13 @@ public:
   // by providing `newLayout != VK_IMAGE_LAYOUT_UNDEFINED` through the post operation barriers.
 
 
-  // all image textures must only use the color aspect
-  // this uploads mip 0/layer 0 only
+  // All image textures must only use the color aspect.
+  // This uploads mip 0/layer 0 only
+  // `newLayout` may be transitioned into after the copy operations are completed depending
+  // on the behavior the StagingUploader was set to, as described in the comment section above.
+  // If `dataSize` is `0`, returns VK_SUCCESS
+  // `data` must be valid if `dataSize` is non zero, and is copied linearly into staging memory with this call.
+  // `semaphoreState` can be used to track the completion of this upload.
   VkResult appendImage(nvvk::Image&          image,
                        size_t                dataSize,
                        const void*           data,
@@ -217,7 +232,24 @@ public:
     return appendImage(image, data.size_bytes(), data.data(), newLayout, semaphoreState);
   }
 
-  // subresource variant
+  // Similar as function above.
+  // `uploadMapping` is returned on success, user is expected to write the data into the staging buffer
+  // linearly. The pointer is valid until the next `cmdUploadAppended` or `cancelAppended` call.
+  VkResult appendImageMapping(nvvk::Image&          image,
+                              size_t                dataSize,
+                              void*&                uploadMapping,
+                              VkImageLayout         newLayout      = VK_IMAGE_LAYOUT_UNDEFINED,
+                              const SemaphoreState& semaphoreState = {});
+
+  // Upload partial image data within an individual mip and/or multiple layers
+  // `offset` within the target subresource
+  // `extent` within the target subresource
+  // `subresource` target within the image
+  // `newLayout` may be transitioned into after the copy operations are completed depending
+  // on the behavior the StagingUploader was set to, as described in the comment section above.
+  // If `dataSize` is `0`, returns VK_SUCCESS
+  // `data` must be valid if `dataSize` is non zero, and is copied linearly into staging memory with this call.
+  // `semaphoreState` can be used to track the completion of this upload.
   VkResult appendImageSub(nvvk::Image&                    image,
                           const VkOffset3D&               offset,
                           const VkExtent3D&               extent,
@@ -238,6 +270,18 @@ public:
   {
     return appendImageSub(image, offset, extent, subresource, data.size_bytes(), data.data(), newLayout, semaphoreState);
   }
+
+  // Variant of `appendImageSub`, in which we retrieve a pointer to write the image data to.
+  // `uploadMapping` is returned on success, user is expected to write the data into the staging buffer
+  // linearly. The pointer is valid until the next `cmdUploadAppended` or `cancelAppended` call.
+  VkResult appendImageSubMapping(nvvk::Image&                    image,
+                                 const VkOffset3D&               offset,
+                                 const VkExtent3D&               extent,
+                                 const VkImageSubresourceLayers& subresource,
+                                 size_t                          dataSize,
+                                 void*&                          uploadMapping,
+                                 VkImageLayout                   newLayout      = VK_IMAGE_LAYOUT_UNDEFINED,
+                                 const SemaphoreState&           semaphoreState = {});
 
   // returns true if the sum of staging resources used in pending operations
   // and the added size is beyond the limit

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 *
-* SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+* SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 * SPDX-License-Identifier: Apache-2.0
 */
 
@@ -371,9 +371,12 @@ VkResult StagingUploader::appendLargeBuffer(const nvvk::LargeBuffer& buffer,
                                             const SemaphoreState&    semaphoreState,
                                             VkDeviceSize             chunkSize)
 {
-  if(!data || dataSize == 0)
+  if(dataSize == 0)
+  {
     return VK_SUCCESS;
+  }
 
+  assert(data);
   const uint8_t* srcData   = static_cast<const uint8_t*>(data);
   VkDeviceSize   remaining = dataSize;
   VkDeviceSize   srcOffset = 0;
@@ -420,8 +423,12 @@ VkResult StagingUploader::appendLargeBufferMapping(const nvvk::LargeBuffer& buff
                                                    void*&                   uploadMapping,
                                                    const SemaphoreState&    semaphoreState)
 {
+  uploadMapping = nullptr;
+
   if(dataSize == 0)
+  {
     return VK_SUCCESS;
+  }
 
   nvvk::BufferRange stagingSpace;
   NVVK_FAIL_RETURN(acquireStagingSpace(stagingSpace, dataSize, nullptr, semaphoreState));
@@ -452,6 +459,13 @@ VkResult StagingUploader::appendLargeBufferMapping(const nvvk::LargeBuffer& buff
 
 VkResult StagingUploader::appendImage(nvvk::Image& image, size_t dataSize, const void* data, VkImageLayout newLayout, const SemaphoreState& semaphoreState)
 {
+  if(dataSize == 0)
+  {
+    return VK_SUCCESS;
+  }
+
+  assert(data);
+
   BufferRange stagingSpace;
   NVVK_FAIL_RETURN(acquireStagingSpace(stagingSpace, dataSize, data, semaphoreState));
 
@@ -514,6 +528,82 @@ VkResult StagingUploader::appendImage(nvvk::Image& image, size_t dataSize, const
   return VK_SUCCESS;
 }
 
+VkResult StagingUploader::appendImageMapping(nvvk::Image&          image,
+                                             size_t                dataSize,
+                                             void*&                uploadMapping,
+                                             VkImageLayout         newLayout /*= VK_IMAGE_LAYOUT_UNDEFINED*/,
+                                             const SemaphoreState& semaphoreState /*= {}*/)
+{
+  uploadMapping = nullptr;
+
+  if(dataSize == 0)
+  {
+    return VK_SUCCESS;
+  }
+
+  BufferRange stagingSpace;
+  NVVK_FAIL_RETURN(acquireStagingSpace(stagingSpace, dataSize, nullptr, semaphoreState));
+
+  uploadMapping = stagingSpace.mapping;
+
+  bool layoutAllowsCopy = image.descriptor.imageLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+                          || image.descriptor.imageLayout == VK_IMAGE_LAYOUT_GENERAL
+                          || image.descriptor.imageLayout == VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR;
+
+  VkImageLayout dstImageLayout = image.descriptor.imageLayout;
+
+  if(m_enableLayoutBarriers && !layoutAllowsCopy)
+  {
+    VkImageMemoryBarrier2 barrier = makeImageMemoryBarrier(
+        {.image = image.image, .oldLayout = image.descriptor.imageLayout, .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL});
+    modifyImageBarrier(barrier);
+
+    dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+
+    m_batch.pre.imageBarriers.push_back(barrier);
+  }
+
+  const VkBufferImageCopy2 copyBufferImageRegion{
+      .sType             = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
+      .bufferOffset      = stagingSpace.offset,
+      .bufferRowLength   = 0,  // tightly packed
+      .bufferImageHeight = 0,  // tightly packed
+      .imageSubresource  = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .layerCount = 1},
+      .imageOffset       = {0, 0, 0},
+      .imageExtent       = image.extent,
+  };
+
+  VkCopyBufferToImageInfo2 copyBufferToImageInfo{
+      .sType          = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2,
+      .srcBuffer      = stagingSpace.buffer,
+      .dstImage       = image.image,
+      .dstImageLayout = dstImageLayout,
+      .regionCount    = 1,
+      .pRegions       = nullptr,  // set when calling `cmdUploadAppended`
+  };
+
+  m_batch.stagingSize += dataSize;
+  m_batch.copyBufferImageRegions.emplace_back(copyBufferImageRegion);
+  m_batch.copyBufferImageInfos.emplace_back(copyBufferToImageInfo);
+
+  if(m_enableLayoutBarriers && (!layoutAllowsCopy || newLayout != VK_IMAGE_LAYOUT_UNDEFINED))
+  {
+    if(newLayout != VK_IMAGE_LAYOUT_UNDEFINED)
+    {
+      image.descriptor.imageLayout = newLayout;
+    }
+
+    VkImageMemoryBarrier2 barrier =
+        makeImageMemoryBarrier({.image = image.image, .oldLayout = dstImageLayout, .newLayout = image.descriptor.imageLayout});
+
+    modifyImageBarrier(barrier);
+
+    m_batch.post.imageBarriers.push_back(barrier);
+  }
+
+  return VK_SUCCESS;
+}
+
 VkResult StagingUploader::appendImageSub(nvvk::Image&                    image,
                                          const VkOffset3D&               offset,
                                          const VkExtent3D&               extent,
@@ -523,6 +613,13 @@ VkResult StagingUploader::appendImageSub(nvvk::Image&                    image,
                                          VkImageLayout                   newLayout /*= VK_IMAGE_LAYOUT_UNDEFINED*/,
                                          const SemaphoreState&           semaphoreState /*= {}*/)
 {
+  if(dataSize == 0)
+  {
+    return VK_SUCCESS;
+  }
+
+  assert(data);
+
   BufferRange stagingSpace;
   NVVK_FAIL_RETURN(acquireStagingSpace(stagingSpace, dataSize, data, semaphoreState));
 
@@ -544,6 +641,85 @@ VkResult StagingUploader::appendImageSub(nvvk::Image&                    image,
   }
 
   // Copy buffer data to the image
+  const VkBufferImageCopy2 copyBufferImageRegion{
+      .sType             = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
+      .bufferOffset      = stagingSpace.offset,
+      .bufferRowLength   = 0,  // tightly packed
+      .bufferImageHeight = 0,  // tightly packed
+      .imageSubresource  = subresource,
+      .imageOffset       = offset,
+      .imageExtent       = extent,
+  };
+
+  VkCopyBufferToImageInfo2 copyBufferToImageInfo{
+      .sType          = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2,
+      .srcBuffer      = stagingSpace.buffer,
+      .dstImage       = image.image,
+      .dstImageLayout = dstImageLayout,
+      .regionCount    = 1,
+      .pRegions       = nullptr,  // set when calling `cmdUploadAppended`
+  };
+
+  m_batch.stagingSize += dataSize;
+  m_batch.copyBufferImageRegions.emplace_back(copyBufferImageRegion);
+  m_batch.copyBufferImageInfos.emplace_back(copyBufferToImageInfo);
+
+  if(m_enableLayoutBarriers && (!layoutAllowsCopy || newLayout != VK_IMAGE_LAYOUT_UNDEFINED))
+  {
+    if(newLayout != VK_IMAGE_LAYOUT_UNDEFINED)
+    {
+      image.descriptor.imageLayout = newLayout;
+    }
+
+    VkImageMemoryBarrier2 barrier =
+        makeImageMemoryBarrier({.image = image.image, .oldLayout = dstImageLayout, .newLayout = image.descriptor.imageLayout});
+
+    modifyImageBarrier(barrier);
+
+    m_batch.post.imageBarriers.push_back(barrier);
+  }
+
+  return VK_SUCCESS;
+}
+
+VkResult StagingUploader::appendImageSubMapping(nvvk::Image&                    image,
+                                                const VkOffset3D&               offset,
+                                                const VkExtent3D&               extent,
+                                                const VkImageSubresourceLayers& subresource,
+                                                size_t                          dataSize,
+                                                void*&                          uploadMapping,
+                                                VkImageLayout         newLayout /*= VK_IMAGE_LAYOUT_UNDEFINED*/,
+                                                const SemaphoreState& semaphoreState /*= {}*/)
+{
+  uploadMapping = nullptr;
+
+  if(dataSize == 0)
+  {
+    return VK_SUCCESS;
+  }
+
+  BufferRange stagingSpace;
+  NVVK_FAIL_RETURN(acquireStagingSpace(stagingSpace, dataSize, nullptr, semaphoreState));
+
+  uploadMapping = stagingSpace.mapping;
+
+  bool layoutAllowsCopy = image.descriptor.imageLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+                          || image.descriptor.imageLayout == VK_IMAGE_LAYOUT_GENERAL
+                          || image.descriptor.imageLayout == VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR;
+
+  VkImageLayout dstImageLayout = image.descriptor.imageLayout;
+
+  if(m_enableLayoutBarriers && !layoutAllowsCopy)
+  {
+    VkImageMemoryBarrier2 barrier = makeImageMemoryBarrier(
+        {.image = image.image, .oldLayout = image.descriptor.imageLayout, .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL});
+    modifyImageBarrier(barrier);
+
+    dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+
+    m_batch.pre.imageBarriers.push_back(barrier);
+  }
+
   const VkBufferImageCopy2 copyBufferImageRegion{
       .sType             = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
       .bufferOffset      = stagingSpace.offset,

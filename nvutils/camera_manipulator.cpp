@@ -227,11 +227,14 @@ void CameraManipulator::startAnimationTo(const Camera& camera)
   m_isAnimating = true;
   findBezierPoints();
 
-  // Calculate the Dolly-zoom style FOV: keep apparent size consistent from start to end. (Vertigo effect)
+  // Dolly-zoom (vertigo effect): adjust FOV during a move to keep apparent size consistent.
+  // Only enabled when FOV actually changes; otherwise the dolly-zoom formula fights the
+  // Bezier eye path and causes FOV oscillations.
   const float d0   = glm::length(m_snapshot->eye - m_snapshot->ctr);
   const float d1   = glm::length(m_goal.eye - m_goal.ctr);
   m_animDollyZoom0 = d0 * std::tan(glm::radians(m_snapshot->fov * 0.5f));
   m_animDollyZoom1 = d1 * std::tan(glm::radians(m_goal.fov * 0.5f));
+  m_vertigoEffect  = std::abs(m_snapshot->fov - m_goal.fov) > 0.001f;
 }
 
 void CameraManipulator::applyUserChange(bool updateMatrix)
@@ -408,11 +411,11 @@ void CameraManipulator::updateAnim(double currentTimeMs)
   m_current.up  = glm::mix(m_snapshot->up, m_goal.up, t);
   m_current.eye = computeBezier(t, m_bezier[0], m_bezier[1], m_bezier[2]);
 
-  // Dolly-zoom style FOV: keep apparent size consistent from start to end. (Vertigo effect)
+  // Dolly-zoom style FOV: keep apparent size consistent from start to end (vertigo effect).
   const float distance = glm::length(m_current.eye - m_current.ctr);
-  const float k        = glm::mix(m_animDollyZoom0, m_animDollyZoom1, t);
-  if(distance > CameraConstants::EPSILON && k > 0.0f)
+  if(m_vertigoEffect && distance > CameraConstants::EPSILON)
   {
+    const float k = glm::mix(m_animDollyZoom0, m_animDollyZoom1, t);
     m_current.fov = glm::degrees(2.0f * std::atan(k / distance));
     m_current.fov = glm::clamp(m_current.fov, CameraConstants::MIN_FOV, CameraConstants::MAX_FOV);
   }

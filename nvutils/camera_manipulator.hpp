@@ -381,6 +381,7 @@ protected:
   std::array<glm::vec3, 3> m_bezier         = {};
   float                    m_animDollyZoom0 = 0.0f;
   float                    m_animDollyZoom1 = 0.0f;
+  bool                     m_vertigoEffect  = false;
   double                   m_startTime      = 0;
   double                   m_duration       = CameraConstants::DEFAULT_ANIMATION_DURATION;
   bool                     m_isAnimating    = false;
