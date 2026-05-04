@@ -99,7 +99,7 @@ public:
   ~Context() { assert(m_instance == VK_NULL_HANDLE); }  // Forgot to call deinit ?
 
   // All-in-one instance and device creation.
-  // Returns `true` on success.
+  // Returns VK_SUCCESS on success.
   [[nodiscard]] VkResult init(const ContextInitInfo& contextInitInfo);
   void                   deinit();
 

@@ -28,16 +28,17 @@ namespace nvvk {
 
 //--- Swapchain ------------------------------------------------------------------------------------------------------------
 /*--
- * Swapchain: The swapchain is responsible for presenting rendered images to the screen.
- * It consists of multiple images (frames) that are cycled through for rendering and display.
- * The swapchain is created with a surface and optional vSync setting, with the
- * window size determined during its setup.
- * "Frames in flight" refers to the number of images being processed concurrently (e.g., double buffering = 2, triple buffering = 3).
- * vSync enabled (FIFO mode) uses double buffering, while disabling vSync  (MAILBOX mode) uses triple buffering.
+ * Swapchain: presents rendered images to the screen.
  *
- * The "current frame" is the frame currently being processed.
- * The "next image index" points to the swapchain image that will be rendered next, which might differ from the current frame's index.
- * If the window is resized or certain conditions are met, the swapchain needs to be recreated (`needRebuild` flag).
+ * There are two distinct counts; do not mix them up.
+ *   - imageCount      : swapchain images (presentation parallelism, default 3).
+ *   - framesInFlight  : CPU frame slots recorded ahead of the GPU (default 2).
+ *
+ * `presentSemaphore` is per-image (acquire can return images out of order, notably under MAILBOX)
+ * `acquireSemaphore` is per in-flight slot (consumed by acquire).
+ *
+ * On window resize or surface loss, `needRebuild` is set and the caller must
+ * call `reinitResources()`.
 -*/
 class Swapchain
 {
@@ -52,12 +53,19 @@ public:
   VkImage            getImage() const { return m_images[m_frameImageIndex].image; }
   VkImageView        getImageView() const { return m_images[m_frameImageIndex].imageView; }
   VkFormat           getImageFormat() const { return m_surfaceFormat.surfaceFormat.format; }
-  uint32_t           getMaxFramesInFlight() const { return m_maxFramesInFlight; }
-  VkSemaphore        getImageAvailableSemaphore() const
-  {
-    return m_frameResources[m_frameResourceIndex].imageAvailableSemaphore;
-  }
-  VkSemaphore getRenderFinishedSemaphore() const { return m_frameResources[m_frameImageIndex].renderFinishedSemaphore; }
+
+  // Number of swapchain images (presentation parallelism).
+  uint32_t getImageCount() const { return m_imageCount; }
+
+  // Number of CPU frame slots (= concurrent frames in flight).
+  uint32_t getFramesInFlight() const { return m_framesInFlight; }
+
+  // acquireSemaphore is per in-flight slot (consumed by acquire).
+  VkSemaphore getAcquireSemaphore() const { return m_frameResources[m_frameResourceIndex].acquireSemaphore; }
+
+  // presentSemaphore is per *image* (consumed by present, must follow
+  // the image because acquire can return images out of order).
+  VkSemaphore         getPresentSemaphore() const { return m_images[m_frameImageIndex].presentSemaphore; }
   VkSurfaceFormat2KHR getSurfaceFormat() const { return m_surfaceFormat; }
 
   struct InitInfo
@@ -72,6 +80,17 @@ public:
     // If provided , use this surface format. Make sure to select one of the formats returned by getAvailableFormats().
     VkSurfaceFormat2KHR preferredFormat = {.sType         = VK_STRUCTURE_TYPE_SURFACE_FORMAT_2_KHR,
                                            .surfaceFormat = {VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR}};
+
+    // Preferred swapchain image count (presentation parallelism). Clamped at
+    // runtime to the surface's [minImageCount, maxImageCount] (with a floor of
+    // 2 so ImGui's MinImageCount invariant holds); the driver may also return
+    // more images than requested (we honour whatever the swapchain reports).
+    // 3 is a good default for low-latency triple buffering.
+    uint32_t preferredImageCount = 3;
+
+    // Preferred number of CPU frame slots recorded ahead of the GPU. Clamped
+    // at runtime to `[2, actualImageCount]`.
+    uint32_t preferredFramesInFlight = 2;
   };
 
   // Initialize the swapchain with the provided context and surface, then we can create and re-create it
@@ -133,20 +152,26 @@ public:
 
 
 private:
-  // Represents an image within the swapchain that can be rendered to.
+  /*-- Per-swapchain-image resources -------------------------------------------
+   * One entry per image returned by vkGetSwapchainImagesKHR. The
+   * presentSemaphore lives here (not on the in-flight slot) because
+   * vkQueuePresentKHR consumes it for a specific image, and the presentation
+   * engine may hand images back out of order.
+  -*/
   struct Image
   {
-    VkImage     image{};      // Image to render to
-    VkImageView imageView{};  // Image view to access the image
+    VkImage     image{};             // Swapchain image (owned by the swapchain)
+    VkImageView imageView{};         // 2D view of the image
+    VkSemaphore presentSemaphore{};  // Binary semaphore: signaled when rendering done, waited on by present
   };
-  /*--
-   * Resources associated with each frame being processed.
-   * Each frame has its own set of resources, mainly synchronization primitives
+  /*-- Per-in-flight-slot resources --------------------------------------------
+   * One entry per "frame in flight" -- typically 2, regardless of the image
+   * count. Holds resources tied to the CPU's submission cadence rather than
+   * the displayed image. The acquireSemaphore is recycled here.
   -*/
   struct FrameResources
   {
-    VkSemaphore imageAvailableSemaphore{};  // Signals when the image is ready for rendering
-    VkSemaphore renderFinishedSemaphore{};  // Signals when rendering is finished
+    VkSemaphore acquireSemaphore{};  // Binary semaphore signaled by vkAcquireNextImageKHR
   };
 
   // We choose the format that is the most common, and that is supported by* the physical device.
@@ -195,7 +220,15 @@ private:
   // workloads are < 1 frame, then work can be waiting for multiple frames for
   // the swapchain image to be available, increasing latency. For this reason,
   // it's good to use a frame pacer with the swapchain.
-  uint32_t m_maxFramesInFlight = 3;
+
+  // User-requested preferences (set by init(), sticky across reinitResources).
+  uint32_t m_preferredImageCount     = 0;
+  uint32_t m_preferredFramesInFlight = 0;
+
+  // Actual runtime values, derived in initResources() from the preferences
+  // clamped to the surface's capabilities and the swapchain's actual image count.
+  uint32_t m_imageCount     = 0;  // From vkGetSwapchainImagesKHR
+  uint32_t m_framesInFlight = 0;  // <= m_imageCount
 };
 
 

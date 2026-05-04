@@ -174,14 +174,18 @@ VkResult nvapp::Application::init(ApplicationCreateInfo& info)
   // Create the swapchain
   if(!m_headless)
   {
-    nvvk::Swapchain::InitInfo swapChainInit{.physicalDevice        = m_physicalDevice,
-                                            .device                = m_device,
-                                            .queue                 = m_queues[0],
-                                            .surface               = m_surface,
-                                            .cmdPool               = m_transientCmdPool,
-                                            .preferredVsyncOffMode = info.preferredVsyncOffMode,
-                                            .preferredVsyncOnMode  = info.preferredVsyncOnMode,
-                                            .preferredFormat       = info.preferredSurfaceFormat};
+    nvvk::Swapchain::InitInfo swapChainInit{
+        .physicalDevice          = m_physicalDevice,
+        .device                  = m_device,
+        .queue                   = m_queues[0],
+        .surface                 = m_surface,
+        .cmdPool                 = m_transientCmdPool,
+        .preferredVsyncOffMode   = info.preferredVsyncOffMode,
+        .preferredVsyncOnMode    = info.preferredVsyncOnMode,
+        .preferredFormat         = info.preferredSurfaceFormat,
+        .preferredImageCount     = info.preferredImageCount,
+        .preferredFramesInFlight = info.preferredFramesInFlight,
+    };
 
     // We do some custom error-handling here to provide additional information
     // about the reason creating the swapchain failed.
@@ -195,7 +199,7 @@ VkResult nvapp::Application::init(ApplicationCreateInfo& info)
     NVVK_FAIL_RETURN(m_swapchain.initResources(m_windowSize, m_vsyncWanted));
 
     // Create what is needed to submit the scene for each frame in-flight
-    NVVK_FAIL_RETURN(createFrameSubmission(m_swapchain.getMaxFramesInFlight()));
+    NVVK_FAIL_RETURN(createFrameSubmission(m_swapchain.getFramesInFlight()));
   }
   else
   {
@@ -355,7 +359,7 @@ void nvapp::Application::close()
   }
   else
   {
-    glfwSetWindowShouldClose(m_windowHandle, true);
+    glfwSetWindowShouldClose(m_windowHandle, GLFW_TRUE);
   }
 }
 
@@ -466,20 +470,20 @@ void nvapp::Application::run()
       freeResourcesQueue();
 
       // Prepare Frame Synchronization
-      prepareFrameToSignal(m_swapchain.getMaxFramesInFlight());
+      prepareFrameToSignal(m_swapchain.getFramesInFlight());
 
       // Record Commands
       VkCommandBuffer cmd = beginCommandRecording();
       drawFrame(cmd);            // Call onUIRender() and onRender() for each element
       renderToSwapchain(cmd);    // Render ImGui to swapchain
       addSwapchainSemaphores();  // Setup synchronization
-      endFrame(cmd, m_swapchain.getMaxFramesInFlight());
+      endFrame(cmd, m_swapchain.getFramesInFlight());
 
       // Present Frame
       presentFrame();  // This can also trigger swapchain rebuild
 
       // Advance Frame
-      advanceFrame(m_swapchain.getMaxFramesInFlight());
+      advanceFrame(m_swapchain.getFramesInFlight());
     }
 
     // End ImGui frame
@@ -642,23 +646,23 @@ VkCommandBuffer nvapp::Application::beginCommandRecording()
 //
 void nvapp::Application::addSwapchainSemaphores()
 {
-  // Prepare to submit the current frame for rendering
-  // First add the swapchain semaphore to wait for the image to be available.
+  // Prepare to submit the current frame for rendering.
+  // Wait on the acquire semaphore, signal the present semaphore.
   m_waitSemaphores.push_back({
       .sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-      .semaphore = m_swapchain.getImageAvailableSemaphore(),
+      .semaphore = m_swapchain.getAcquireSemaphore(),
       .stageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
   });
   m_signalSemaphores.push_back({
       .sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-      .semaphore = m_swapchain.getRenderFinishedSemaphore(),
+      .semaphore = m_swapchain.getPresentSemaphore(),
       .stageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,  // Ensure everything is done before presenting
   });
 }
 
 //-----------------------------------------------------------------------
 // End the frame by submitting the command buffer to the GPU
-// Adds binary semaphores to wait for the image to be available and signal when rendering is done.
+// Adds the acquire/present binary semaphores for swapchain synchronization.
 // Adds the timeline semaphore to signal when the frame is completed.
 // Moves to the next frame.
 //
@@ -1014,7 +1018,7 @@ void nvapp::Application::setupImGuiVulkanBackend(ImGuiConfigFlags configFlags)
       .Queue          = m_queues[0].queue,
       .DescriptorPool = m_descriptorPool,
       .MinImageCount  = 2U,
-      .ImageCount     = std::max(m_swapchain.getMaxFramesInFlight(), 2U),
+      .ImageCount     = m_headless ? 2U : m_swapchain.getImageCount(),
       // Customize swapchain format for main window
       .PipelineInfoMain =
           {
@@ -1074,7 +1078,7 @@ void nvapp::Application::requestScreenShot(const std::filesystem::path& filename
   m_screenShotRequested = true;
   m_screenShotFilename  = filename;
   // Making sure the screenshot is taken after the swapchain loop (remove the menu after click)
-  m_screenShotFrame = (m_frameRingCurrent - 1 + m_swapchain.getMaxFramesInFlight()) % m_swapchain.getMaxFramesInFlight();
+  m_screenShotFrame   = (m_frameRingCurrent - 1 + m_swapchain.getFramesInFlight()) % m_swapchain.getFramesInFlight();
   m_screenShotQuality = quality;
 }
 

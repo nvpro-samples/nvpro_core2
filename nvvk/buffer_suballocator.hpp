@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 *
-* SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+* SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 * SPDX-License-Identifier: Apache-2.0
 */
 
@@ -37,6 +37,9 @@ public:
 
   operator bool() const { return allocation.offset != OffsetAllocator::Allocation::NO_SPACE; }
 
+  // useful for sorting by buffer binds
+  uint16_t getBlockIndex() const { return block; }
+
 private:
   friend class BufferSubAllocator;
 
@@ -53,7 +56,7 @@ private:
   uint16_t alignmentMinusOne{};
 
   uint16_t block{};
-#ifndef NDEBUG
+#if !defined(NDEBUG) && !defined(NVVK_DISABLE_BUFFER_SUB_ALLOCATOR_DEBUG_POINTER)
   class BufferSubAllocator* allocator{};
 #endif
 };
@@ -106,8 +109,13 @@ public:
     // 0 will default to blockSize * MAX_TOTAL_BLOCKS
     VkDeviceSize maxAllocatedSize = 0;
 
-    // to avoid freeing and allocating blocks in succession
-    bool keepLastBlock = true;
+    // Set this to avoid freeing and allocating blocks in succession.
+    // If greater than 0, one block is pre-allocated at init time.
+    // When an empty block would otherwise be destroyed, it is kept as long as
+    // the total active block count does not exceed this value.
+    // Allocations that are greater than the blockSize will get their own allocation
+    // that isn't counted against this limit.
+    uint32_t keepBlockCount = 1;
   };
 
   VkResult     init(const InitInfo& createInfo);
@@ -141,6 +149,9 @@ public:
   // Passing an invalid suballocation (bool(subAllocation) == false) is valid
   // and will just return a zeroed output
   BufferRange subRange(const BufferSubAllocation& subAllocation) const;
+
+  // get full block buffer
+  const nvvk::Buffer& getBlockBuffer(const uint16_t blockIndex) const;
 
 protected:
   static constexpr uint32_t INVALID_BLOCK_INDEX = ~0u;

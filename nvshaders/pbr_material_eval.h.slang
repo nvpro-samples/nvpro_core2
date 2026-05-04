@@ -29,13 +29,27 @@ which is used by the BSDF functions to evaluate and sample the material.
 #include "pbr_material_types.h.slang"
 #include "gltf_scene_io.h.slang"
 
+
+/*-------------------------------------------------------------------------------------------------
+# `MAT_EVAL_MESH_STATE_MAX_TEXCOORDS` Define
+> The number of texture coordinate sets that are stored
+> in the MeshState struct
+
+Defaults to two.
+-------------------------------------------------------------------------------------------------*/
+#ifndef MAT_EVAL_MESH_STATE_MAX_TEXCOORDS
+#define MAT_EVAL_MESH_STATE_MAX_TEXCOORDS 2
+#endif
+
 struct MeshState
 {
-  float3 N;      // Normal
-  float3 T;      // Tangent
-  float3 B;      // Bitangent
-  float3 Ng;     // Geometric normal
-  float2 tc[2];  // Texture coordinates
+  float3 N;   // Normal
+  float3 T;   // Tangent
+  float3 B;   // Bitangent
+  float3 Ng;  // Geometric normal
+
+  float2 tc[MAT_EVAL_MESH_STATE_MAX_TEXCOORDS];  // Texture coordinates
+
   bool   isInside = false;
   float  texGrad  = 0.0f;  // Ray footprint for SampleGrad; 0 -> Sample() (mip 0 in RT, proper mips in fragment)
 };
@@ -65,7 +79,7 @@ to use textures from a different array name.
 texGrad > 0: SampleGrad (path trace ray footprint). texGrad == 0: Sample() — fragment gets real mips;
 in ray trace / compute implicit LOD is undefined and effectively samples like mip 0, same as needed there.
 */
-float4 getTexture(Sampler2D textures[], in GltfTextureInfo textureInfo, in float2 texCoords[2], float texGrad)
+float4 getTexture(Sampler2D textures[], in GltfTextureInfo textureInfo, in float2 texCoords[MAT_EVAL_MESH_STATE_MAX_TEXCOORDS], float texGrad)
 {
 #ifdef USE_TEXTURES
   // KHR_texture_transform
@@ -278,10 +292,12 @@ PbrMaterial evaluateMaterial(in GltfShadeMaterial material, MeshState state, Sam
     pbrMat.transmission *= getTexture(textures, texInfos[material.transmissionTexture], state.tc, state.texGrad).r;
   }
 
-  // KHR_materials_volume
+  // KHR_materials_volume. Note: this evaluator does not sample the thicknessTexture; the
+  // per-fragment value is just the factor. Apps that need texture-modulated thickness (like
+  // vk_gltf_renderer) use their own evaluator. thickness == 0 is the thin-walled case.
   pbrMat.attenuationColor    = material.attenuationColor;
   pbrMat.attenuationDistance = material.attenuationDistance;
-  pbrMat.isThinWalled        = (material.thicknessFactor == 0.0);
+  pbrMat.thickness           = material.thicknessFactor;
 
   // KHR_materials_volume_scatter
   // Compute scattering coefficient from multi-scatter albedo and attenuation
@@ -421,7 +437,7 @@ PbrMaterial evaluateMaterial(in GltfShadeMaterial material,
                              Sampler2D            textures[],
                              GltfTextureInfo*     texInfos)
 {
-  float2    tcoords[2] = { texCoord, float2(0.0F) };
+  float2    tcoords[MAT_EVAL_MESH_STATE_MAX_TEXCOORDS] = { texCoord, };
   MeshState mesh       = MeshState(normal, tangent, bitangent, normal, tcoords, false, 0.0f);
   return evaluateMaterial(material, mesh, textures, texInfos);
 }

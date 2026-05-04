@@ -28,9 +28,10 @@ StagingUploader::StagingUploader(StagingUploader&& other) noexcept
 {
   {
     std::swap(m_batch, other.m_batch);
+    std::swap(m_base, other.m_base);
     std::swap(m_resourceAllocator, other.m_resourceAllocator);
-    std::swap(m_stagingResourcesSize, other.m_stagingResourcesSize);
     std::swap(m_stagingResources, other.m_stagingResources);
+    std::swap(m_batchStagingCount, other.m_batchStagingCount);
   }
 }
 
@@ -41,9 +42,10 @@ nvvk::StagingUploader& StagingUploader::operator=(StagingUploader&& other) noexc
     assert(m_resourceAllocator == nullptr && "deinit not called prior move assignment");
 
     std::swap(m_batch, other.m_batch);
+    std::swap(m_base, other.m_base);
     std::swap(m_resourceAllocator, other.m_resourceAllocator);
-    std::swap(m_stagingResourcesSize, other.m_stagingResourcesSize);
     std::swap(m_stagingResources, other.m_stagingResources);
+    std::swap(m_batchStagingCount, other.m_batchStagingCount);
   }
   return *this;
 }
@@ -51,8 +53,8 @@ nvvk::StagingUploader& StagingUploader::operator=(StagingUploader&& other) noexc
 void StagingUploader::init(ResourceAllocator* resourceAllocator, bool enableLayoutBarriers)
 {
   assert(m_resourceAllocator == nullptr);
-  m_resourceAllocator    = resourceAllocator;
-  m_enableLayoutBarriers = enableLayoutBarriers;
+  m_resourceAllocator         = resourceAllocator;
+  m_base.enableLayoutBarriers = enableLayoutBarriers;
 }
 
 void StagingUploader::deinit()
@@ -60,14 +62,23 @@ void StagingUploader::deinit()
   if(m_resourceAllocator != nullptr)
   {
     releaseStaging(true);
-    assert(m_stagingResources.empty() && m_stagingResourcesSize == 0);  // must have released all staged uploads
+    assert(m_stagingResources.empty() && m_base.stagingResourcesSize == 0);  // must have released all staged uploads
   }
   m_resourceAllocator = nullptr;
+  m_batchStagingCount = 0;
+  resetBatch();
 }
 
-void StagingUploader::setEnableLayoutBarriers(bool enableLayoutBarriers)
+void StagingUploaderBase::setEnableLayoutBarriers(bool enableLayoutBarriers)
 {
-  m_enableLayoutBarriers = enableLayoutBarriers;
+  m_base.enableLayoutBarriers = enableLayoutBarriers;
+}
+
+void StagingUploaderBase::setEnableOwnerBarriers(bool enableOwnerBarriers, uint32_t srcQueueFamilyIndex, uint32_t dstQueueFamilyIndex)
+{
+  m_base.enableOwnerBarriers = enableOwnerBarriers;
+  m_base.srcQueueFamilyIndex = srcQueueFamilyIndex;
+  m_base.dstQueueFamilyIndex = dstQueueFamilyIndex;
 }
 
 nvvk::ResourceAllocator* StagingUploader::getResourceAllocator()
@@ -125,8 +136,9 @@ VkResult StagingUploader::acquireStagingSpace(BufferRange& stagingSpace, size_t 
     memcpy(stagingResource.buffer.mapping, data, dataSize);
   }
 
-  m_stagingResourcesSize += dataSize;
+  m_base.stagingResourcesSize += dataSize;
   m_stagingResources.emplace_back(stagingResource);
+  m_batchStagingCount++;
 
   stagingSpace.buffer  = stagingResource.buffer.buffer;
   stagingSpace.offset  = 0;
@@ -137,36 +149,36 @@ VkResult StagingUploader::acquireStagingSpace(BufferRange& stagingSpace, size_t 
   return VK_SUCCESS;
 }
 
-void StagingUploader::cancelAppended()
+void StagingUploaderBase::resetBatch()
 {
   // let's use clear rather than m_batch = {};
   // to avoid heap allocations
-
   m_batch.copyBufferImageInfos.clear();
   m_batch.copyBufferImageRegions.clear();
   m_batch.copyBufferInfos.clear();
   m_batch.copyBufferRegions.clear();
   m_batch.pre.clear();
   m_batch.post.clear();
+  m_batch.acquire.clear();
   m_batch.stagingSize  = 0;
   m_batch.transferOnly = false;
 }
 
-bool StagingUploader::isAppendedEmpty() const
+bool StagingUploaderBase::isAppendedEmpty() const
 {
   return m_batch.copyBufferImageInfos.empty() && m_batch.copyBufferInfos.empty();
 }
 
-void StagingUploader::beginTransferOnly()
+void StagingUploaderBase::beginTransferOnly()
 {
   m_batch.transferOnly = true;
 }
 
-VkResult StagingUploader::appendBuffer(const nvvk::Buffer&   buffer,
-                                       VkDeviceSize          bufferOffset,
-                                       VkDeviceSize          dataSize,
-                                       const void*           data,
-                                       const SemaphoreState& semaphoreState)
+VkResult StagingUploaderBase::appendBuffer(const nvvk::Buffer&   buffer,
+                                           VkDeviceSize          bufferOffset,
+                                           VkDeviceSize          dataSize,
+                                           const void*           data,
+                                           const SemaphoreState& semaphoreState)
 {
   // allow empty without throwing error
   if(dataSize == 0)
@@ -210,12 +222,16 @@ VkResult StagingUploader::appendBuffer(const nvvk::Buffer&   buffer,
     m_batch.stagingSize += dataSize;
     m_batch.copyBufferRegions.emplace_back(copyRegionInfo);
     m_batch.copyBufferInfos.emplace_back(copyBufferInfo);
+    if(m_base.enableOwnerBarriers)
+    {
+      insertOwnerBufferBarrier(buffer.buffer, bufferOffset, dataSize);
+    }
   }
 
   return VK_SUCCESS;
 }
 
-VkResult StagingUploader::appendBufferRange(const nvvk::BufferRange& bufferRange, const void* data, const SemaphoreState& semaphoreState)
+VkResult StagingUploaderBase::appendBufferRange(const nvvk::BufferRange& bufferRange, const void* data, const SemaphoreState& semaphoreState)
 {
   // allow empty without throwing error
   if(bufferRange.range == 0)
@@ -253,16 +269,20 @@ VkResult StagingUploader::appendBufferRange(const nvvk::BufferRange& bufferRange
     m_batch.stagingSize += bufferRange.range;
     m_batch.copyBufferRegions.emplace_back(copyRegionInfo);
     m_batch.copyBufferInfos.emplace_back(copyBufferInfo);
+    if(m_base.enableOwnerBarriers)
+    {
+      insertOwnerBufferBarrier(bufferRange.buffer, bufferRange.offset, bufferRange.range);
+    }
   }
 
   return VK_SUCCESS;
 }
 
-VkResult StagingUploader::appendBufferMapping(const nvvk::Buffer&   buffer,
-                                              VkDeviceSize          bufferOffset,
-                                              VkDeviceSize          dataSize,
-                                              void*&                uploadMapping,
-                                              const SemaphoreState& semaphoreState)
+VkResult StagingUploaderBase::appendBufferMapping(const nvvk::Buffer&   buffer,
+                                                  VkDeviceSize          bufferOffset,
+                                                  VkDeviceSize          dataSize,
+                                                  void*&                uploadMapping,
+                                                  const SemaphoreState& semaphoreState)
 {
   uploadMapping = nullptr;
 
@@ -312,11 +332,16 @@ VkResult StagingUploader::appendBufferMapping(const nvvk::Buffer&   buffer,
     m_batch.copyBufferRegions.emplace_back(copyRegionInfo);
     m_batch.copyBufferInfos.emplace_back(copyBufferInfo);
 
+    if(m_base.enableOwnerBarriers)
+    {
+      insertOwnerBufferBarrier(buffer.buffer, bufferOffset, dataSize);
+    }
+
     return VK_SUCCESS;
   }
 }
 
-VkResult StagingUploader::appendBufferRangeMapping(const nvvk::BufferRange& bufferRange, void*& uploadMapping, const SemaphoreState& semaphoreState)
+VkResult StagingUploaderBase::appendBufferRangeMapping(const nvvk::BufferRange& bufferRange, void*& uploadMapping, const SemaphoreState& semaphoreState)
 {
   uploadMapping = nullptr;
 
@@ -360,16 +385,21 @@ VkResult StagingUploader::appendBufferRangeMapping(const nvvk::BufferRange& buff
     m_batch.copyBufferRegions.emplace_back(copyRegionInfo);
     m_batch.copyBufferInfos.emplace_back(copyBufferInfo);
 
+    if(m_base.enableOwnerBarriers)
+    {
+      insertOwnerBufferBarrier(bufferRange.buffer, bufferRange.offset, bufferRange.range);
+    }
+
     return VK_SUCCESS;
   }
 }
 
-VkResult StagingUploader::appendLargeBuffer(const nvvk::LargeBuffer& buffer,
-                                            VkDeviceSize             bufferOffset,
-                                            VkDeviceSize             dataSize,
-                                            const void*              data,
-                                            const SemaphoreState&    semaphoreState,
-                                            VkDeviceSize             chunkSize)
+VkResult StagingUploaderBase::appendLargeBuffer(const nvvk::LargeBuffer& buffer,
+                                                VkDeviceSize             bufferOffset,
+                                                VkDeviceSize             dataSize,
+                                                const void*              data,
+                                                const SemaphoreState&    semaphoreState,
+                                                VkDeviceSize             chunkSize)
 {
   if(dataSize == 0)
   {
@@ -414,14 +444,19 @@ VkResult StagingUploader::appendLargeBuffer(const nvvk::LargeBuffer& buffer,
     remaining -= currentChunkSize;
   }
 
+  if(m_base.enableOwnerBarriers)
+  {
+    insertOwnerBufferBarrier(buffer.buffer, bufferOffset, dataSize);
+  }
+
   return VK_SUCCESS;
 }
 
-VkResult StagingUploader::appendLargeBufferMapping(const nvvk::LargeBuffer& buffer,
-                                                   VkDeviceSize             bufferOffset,
-                                                   VkDeviceSize             dataSize,
-                                                   void*&                   uploadMapping,
-                                                   const SemaphoreState&    semaphoreState)
+VkResult StagingUploaderBase::appendLargeBufferMapping(const nvvk::LargeBuffer& buffer,
+                                                       VkDeviceSize             bufferOffset,
+                                                       VkDeviceSize             dataSize,
+                                                       void*&                   uploadMapping,
+                                                       const SemaphoreState&    semaphoreState)
 {
   uploadMapping = nullptr;
 
@@ -454,10 +489,15 @@ VkResult StagingUploader::appendLargeBufferMapping(const nvvk::LargeBuffer& buff
   m_batch.copyBufferRegions.emplace_back(copyRegionInfo);
   m_batch.copyBufferInfos.emplace_back(copyBufferInfo);
 
+  if(m_base.enableOwnerBarriers)
+  {
+    insertOwnerBufferBarrier(buffer.buffer, bufferOffset, dataSize);
+  }
+
   return VK_SUCCESS;
 }
 
-VkResult StagingUploader::appendImage(nvvk::Image& image, size_t dataSize, const void* data, VkImageLayout newLayout, const SemaphoreState& semaphoreState)
+VkResult StagingUploaderBase::appendImage(nvvk::Image& image, size_t dataSize, const void* data, VkImageLayout newLayout, const SemaphoreState& semaphoreState)
 {
   if(dataSize == 0)
   {
@@ -475,10 +515,11 @@ VkResult StagingUploader::appendImage(nvvk::Image& image, size_t dataSize, const
 
   VkImageLayout dstImageLayout = image.descriptor.imageLayout;
 
-  if(m_enableLayoutBarriers && !layoutAllowsCopy)
+  if(m_base.enableLayoutBarriers && !layoutAllowsCopy)
   {
     VkImageMemoryBarrier2 barrier = makeImageMemoryBarrier(
         {.image = image.image, .oldLayout = image.descriptor.imageLayout, .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL});
+
     modifyImageBarrier(barrier);
 
     dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -510,7 +551,7 @@ VkResult StagingUploader::appendImage(nvvk::Image& image, size_t dataSize, const
   m_batch.copyBufferImageRegions.emplace_back(copyBufferImageRegion);
   m_batch.copyBufferImageInfos.emplace_back(copyBufferToImageInfo);
 
-  if(m_enableLayoutBarriers && (!layoutAllowsCopy || newLayout != VK_IMAGE_LAYOUT_UNDEFINED))
+  if(m_base.enableOwnerBarriers || (m_base.enableLayoutBarriers && (!layoutAllowsCopy || newLayout != VK_IMAGE_LAYOUT_UNDEFINED)))
   {
     if(newLayout != VK_IMAGE_LAYOUT_UNDEFINED)
     {
@@ -520,19 +561,17 @@ VkResult StagingUploader::appendImage(nvvk::Image& image, size_t dataSize, const
     VkImageMemoryBarrier2 barrier =
         makeImageMemoryBarrier({.image = image.image, .oldLayout = dstImageLayout, .newLayout = image.descriptor.imageLayout});
 
-    modifyImageBarrier(barrier);
-
-    m_batch.post.imageBarriers.push_back(barrier);
+    insertPostImageBarrier(barrier);
   }
 
   return VK_SUCCESS;
 }
 
-VkResult StagingUploader::appendImageMapping(nvvk::Image&          image,
-                                             size_t                dataSize,
-                                             void*&                uploadMapping,
-                                             VkImageLayout         newLayout /*= VK_IMAGE_LAYOUT_UNDEFINED*/,
-                                             const SemaphoreState& semaphoreState /*= {}*/)
+VkResult StagingUploaderBase::appendImageMapping(nvvk::Image&          image,
+                                                 size_t                dataSize,
+                                                 void*&                uploadMapping,
+                                                 VkImageLayout         newLayout /*= VK_IMAGE_LAYOUT_UNDEFINED*/,
+                                                 const SemaphoreState& semaphoreState /*= {}*/)
 {
   uploadMapping = nullptr;
 
@@ -552,7 +591,7 @@ VkResult StagingUploader::appendImageMapping(nvvk::Image&          image,
 
   VkImageLayout dstImageLayout = image.descriptor.imageLayout;
 
-  if(m_enableLayoutBarriers && !layoutAllowsCopy)
+  if(m_base.enableLayoutBarriers && !layoutAllowsCopy)
   {
     VkImageMemoryBarrier2 barrier = makeImageMemoryBarrier(
         {.image = image.image, .oldLayout = image.descriptor.imageLayout, .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL});
@@ -586,7 +625,7 @@ VkResult StagingUploader::appendImageMapping(nvvk::Image&          image,
   m_batch.copyBufferImageRegions.emplace_back(copyBufferImageRegion);
   m_batch.copyBufferImageInfos.emplace_back(copyBufferToImageInfo);
 
-  if(m_enableLayoutBarriers && (!layoutAllowsCopy || newLayout != VK_IMAGE_LAYOUT_UNDEFINED))
+  if(m_base.enableOwnerBarriers || (m_base.enableLayoutBarriers && (!layoutAllowsCopy || newLayout != VK_IMAGE_LAYOUT_UNDEFINED)))
   {
     if(newLayout != VK_IMAGE_LAYOUT_UNDEFINED)
     {
@@ -596,22 +635,20 @@ VkResult StagingUploader::appendImageMapping(nvvk::Image&          image,
     VkImageMemoryBarrier2 barrier =
         makeImageMemoryBarrier({.image = image.image, .oldLayout = dstImageLayout, .newLayout = image.descriptor.imageLayout});
 
-    modifyImageBarrier(barrier);
-
-    m_batch.post.imageBarriers.push_back(barrier);
+    insertPostImageBarrier(barrier);
   }
 
   return VK_SUCCESS;
 }
 
-VkResult StagingUploader::appendImageSub(nvvk::Image&                    image,
-                                         const VkOffset3D&               offset,
-                                         const VkExtent3D&               extent,
-                                         const VkImageSubresourceLayers& subresource,
-                                         size_t                          dataSize,
-                                         const void*                     data,
-                                         VkImageLayout                   newLayout /*= VK_IMAGE_LAYOUT_UNDEFINED*/,
-                                         const SemaphoreState&           semaphoreState /*= {}*/)
+VkResult StagingUploaderBase::appendImageSub(nvvk::Image&                    image,
+                                             const VkOffset3D&               offset,
+                                             const VkExtent3D&               extent,
+                                             const VkImageSubresourceLayers& subresource,
+                                             size_t                          dataSize,
+                                             const void*                     data,
+                                             VkImageLayout                   newLayout /*= VK_IMAGE_LAYOUT_UNDEFINED*/,
+                                             const SemaphoreState&           semaphoreState /*= {}*/)
 {
   if(dataSize == 0)
   {
@@ -629,10 +666,14 @@ VkResult StagingUploader::appendImageSub(nvvk::Image&                    image,
 
   VkImageLayout dstImageLayout = image.descriptor.imageLayout;
 
-  if(m_enableLayoutBarriers && !layoutAllowsCopy)
+  if(m_base.enableLayoutBarriers && !layoutAllowsCopy)
   {
     VkImageMemoryBarrier2 barrier = makeImageMemoryBarrier(
-        {.image = image.image, .oldLayout = image.descriptor.imageLayout, .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL});
+        {.image     = image.image,
+         .oldLayout = image.descriptor.imageLayout,
+         .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+         .subresourceRange = {subresource.aspectMask, subresource.mipLevel, 1, subresource.baseArrayLayer, subresource.layerCount}});
+
     modifyImageBarrier(barrier);
 
     dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -664,32 +705,33 @@ VkResult StagingUploader::appendImageSub(nvvk::Image&                    image,
   m_batch.copyBufferImageRegions.emplace_back(copyBufferImageRegion);
   m_batch.copyBufferImageInfos.emplace_back(copyBufferToImageInfo);
 
-  if(m_enableLayoutBarriers && (!layoutAllowsCopy || newLayout != VK_IMAGE_LAYOUT_UNDEFINED))
+  if(m_base.enableOwnerBarriers || (m_base.enableLayoutBarriers && (!layoutAllowsCopy || newLayout != VK_IMAGE_LAYOUT_UNDEFINED)))
   {
     if(newLayout != VK_IMAGE_LAYOUT_UNDEFINED)
     {
       image.descriptor.imageLayout = newLayout;
     }
 
-    VkImageMemoryBarrier2 barrier =
-        makeImageMemoryBarrier({.image = image.image, .oldLayout = dstImageLayout, .newLayout = image.descriptor.imageLayout});
+    VkImageMemoryBarrier2 barrier = makeImageMemoryBarrier(
+        {.image     = image.image,
+         .oldLayout = dstImageLayout,
+         .newLayout = image.descriptor.imageLayout,
+         .subresourceRange = {subresource.aspectMask, subresource.mipLevel, 1, subresource.baseArrayLayer, subresource.layerCount}});
 
-    modifyImageBarrier(barrier);
-
-    m_batch.post.imageBarriers.push_back(barrier);
+    insertPostImageBarrier(barrier);
   }
 
   return VK_SUCCESS;
 }
 
-VkResult StagingUploader::appendImageSubMapping(nvvk::Image&                    image,
-                                                const VkOffset3D&               offset,
-                                                const VkExtent3D&               extent,
-                                                const VkImageSubresourceLayers& subresource,
-                                                size_t                          dataSize,
-                                                void*&                          uploadMapping,
-                                                VkImageLayout         newLayout /*= VK_IMAGE_LAYOUT_UNDEFINED*/,
-                                                const SemaphoreState& semaphoreState /*= {}*/)
+VkResult StagingUploaderBase::appendImageSubMapping(nvvk::Image&                    image,
+                                                    const VkOffset3D&               offset,
+                                                    const VkExtent3D&               extent,
+                                                    const VkImageSubresourceLayers& subresource,
+                                                    size_t                          dataSize,
+                                                    void*&                          uploadMapping,
+                                                    VkImageLayout         newLayout /*= VK_IMAGE_LAYOUT_UNDEFINED*/,
+                                                    const SemaphoreState& semaphoreState /*= {}*/)
 {
   uploadMapping = nullptr;
 
@@ -709,10 +751,13 @@ VkResult StagingUploader::appendImageSubMapping(nvvk::Image&                    
 
   VkImageLayout dstImageLayout = image.descriptor.imageLayout;
 
-  if(m_enableLayoutBarriers && !layoutAllowsCopy)
+  if(m_base.enableLayoutBarriers && !layoutAllowsCopy)
   {
     VkImageMemoryBarrier2 barrier = makeImageMemoryBarrier(
-        {.image = image.image, .oldLayout = image.descriptor.imageLayout, .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL});
+        {.image     = image.image,
+         .oldLayout = image.descriptor.imageLayout,
+         .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+         .subresourceRange = {subresource.aspectMask, subresource.mipLevel, 1, subresource.baseArrayLayer, subresource.layerCount}});
     modifyImageBarrier(barrier);
 
     dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -743,32 +788,33 @@ VkResult StagingUploader::appendImageSubMapping(nvvk::Image&                    
   m_batch.copyBufferImageRegions.emplace_back(copyBufferImageRegion);
   m_batch.copyBufferImageInfos.emplace_back(copyBufferToImageInfo);
 
-  if(m_enableLayoutBarriers && (!layoutAllowsCopy || newLayout != VK_IMAGE_LAYOUT_UNDEFINED))
+  if(m_base.enableOwnerBarriers || (m_base.enableLayoutBarriers && (!layoutAllowsCopy || newLayout != VK_IMAGE_LAYOUT_UNDEFINED)))
   {
     if(newLayout != VK_IMAGE_LAYOUT_UNDEFINED)
     {
       image.descriptor.imageLayout = newLayout;
     }
 
-    VkImageMemoryBarrier2 barrier =
-        makeImageMemoryBarrier({.image = image.image, .oldLayout = dstImageLayout, .newLayout = image.descriptor.imageLayout});
+    VkImageMemoryBarrier2 barrier = makeImageMemoryBarrier(
+        {.image     = image.image,
+         .oldLayout = dstImageLayout,
+         .newLayout = image.descriptor.imageLayout,
+         .subresourceRange = {subresource.aspectMask, subresource.mipLevel, 1, subresource.baseArrayLayer, subresource.layerCount}});
 
-    modifyImageBarrier(barrier);
-
-    m_batch.post.imageBarriers.push_back(barrier);
+    insertPostImageBarrier(barrier);
   }
 
   return VK_SUCCESS;
 }
 
-bool StagingUploader::checkAppendedSize(size_t limitInBytes, size_t addedSize) const
+bool StagingUploaderBase::checkAppendedSize(size_t limitInBytes, size_t addedSize) const
 {
   return m_batch.stagingSize && (m_batch.stagingSize + addedSize) > limitInBytes;
 }
 
-void StagingUploader::cmdUploadAppended(VkCommandBuffer cmd)
+void StagingUploaderBase::cmdUploadAppended(VkCommandBuffer cmd)
 {
-  if(m_enableLayoutBarriers)
+  if(m_base.enableLayoutBarriers)
   {
     m_batch.pre.cmdPipelineBarrier(cmd, 0);
   }
@@ -785,16 +831,23 @@ void StagingUploader::cmdUploadAppended(VkCommandBuffer cmd)
     vkCmdCopyBufferToImage2(cmd, &m_batch.copyBufferImageInfos[i]);
   }
 
-  if(m_enableLayoutBarriers)
+  if(m_base.enableLayoutBarriers || m_base.enableOwnerBarriers)
   {
     m_batch.post.cmdPipelineBarrier(cmd, 0);
   }
 
   // reset
-  cancelAppended();
+  resetBatch();
+  resetStaging(false);
 }
 
-void StagingUploader::modifyImageBarrier(VkImageMemoryBarrier2& barrier)
+void StagingUploaderBase::cancelAppended()
+{
+  resetBatch();
+  resetStaging(true);
+}
+
+void StagingUploaderBase::modifyImageBarrier(VkImageMemoryBarrier2& barrier)
 {
   if(m_batch.transferOnly)
   {
@@ -803,6 +856,62 @@ void StagingUploader::modifyImageBarrier(VkImageMemoryBarrier2& barrier)
     barrier.dstStageMask &= VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
     barrier.srcStageMask &= VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
     assert(barrier.dstAccessMask && barrier.srcStageMask);
+  }
+}
+
+void StagingUploaderBase::insertOwnerBufferBarrier(VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size)
+{
+  VkBufferMemoryBarrier2 bufferBarrier = {
+      .sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+      .srcStageMask        = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+      .srcAccessMask       = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+      .srcQueueFamilyIndex = m_base.srcQueueFamilyIndex,
+      .dstQueueFamilyIndex = m_base.dstQueueFamilyIndex,
+      .buffer              = buffer,
+      .offset              = offset,
+      .size                = size,
+  };
+
+  // release barrier
+  m_batch.post.bufferBarriers.push_back(bufferBarrier);
+
+  bufferBarrier.srcStageMask  = VK_PIPELINE_STAGE_2_NONE;
+  bufferBarrier.srcAccessMask = VK_ACCESS_2_NONE;
+  bufferBarrier.dstStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+  bufferBarrier.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT;
+
+  // acquire barrier
+  m_batch.acquire.bufferBarriers.push_back(bufferBarrier);
+}
+
+void StagingUploaderBase::insertPostImageBarrier(VkImageMemoryBarrier2& barrier)
+{
+  if(m_base.enableOwnerBarriers)
+  {
+    barrier.srcQueueFamilyIndex = m_base.srcQueueFamilyIndex;
+    barrier.dstQueueFamilyIndex = m_base.dstQueueFamilyIndex;
+
+    VkImageMemoryBarrier2 releaseBarrier = barrier;
+    VkImageMemoryBarrier2 acquireBarrier = barrier;
+
+    releaseBarrier.srcStageMask  = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+    releaseBarrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    releaseBarrier.dstStageMask  = VK_PIPELINE_STAGE_2_NONE;
+    releaseBarrier.dstAccessMask = VK_ACCESS_2_NONE;
+    // handle layout change at acquisition / on destination queue
+    releaseBarrier.newLayout = releaseBarrier.oldLayout;
+
+    acquireBarrier.srcStageMask  = VK_PIPELINE_STAGE_2_NONE;
+    acquireBarrier.srcAccessMask = VK_ACCESS_2_NONE;
+
+    m_batch.post.imageBarriers.push_back(releaseBarrier);
+    m_batch.acquire.imageBarriers.push_back(acquireBarrier);
+  }
+  else
+  {
+    modifyImageBarrier(barrier);
+
+    m_batch.post.imageBarriers.push_back(barrier);
   }
 }
 
@@ -816,6 +925,8 @@ void StagingUploader::releaseStaging(bool forceAll)
 
   // compact as we iterate
 
+  SemaphoreStateSignalCache signalCache;
+
   for(size_t readIdx = 0; readIdx < m_stagingResources.size(); readIdx++)
   {
     StagingResource& stagingResource = m_stagingResources[readIdx];
@@ -823,12 +934,12 @@ void StagingUploader::releaseStaging(bool forceAll)
     // always release with forceAll,
     // also if semaphoreState is invalid,
     // otherwise test if it was signaled
-    bool canRelease =
-        forceAll || (!stagingResource.semaphoreState.isValid()) || stagingResource.semaphoreState.testSignaled(device);
+    bool canRelease = forceAll || (!stagingResource.semaphoreState.isValid())
+                      || signalCache.testSignaled(device, stagingResource.semaphoreState);
 
     if(canRelease)
     {
-      m_stagingResourcesSize -= stagingResource.buffer.bufferSize;
+      m_base.stagingResourcesSize -= stagingResource.buffer.bufferSize;
       m_resourceAllocator->destroyBuffer(stagingResource.buffer);
 
       stagingResource.semaphoreState = {};
@@ -844,6 +955,29 @@ void StagingUploader::releaseStaging(bool forceAll)
   }
 
   m_stagingResources.resize(writeIdx);
+}
+
+void StagingUploader::resetStaging(bool isCancel)
+{
+  if(isCancel)
+  {
+    size_t count = m_stagingResources.size();
+
+    // Resources are always appended to end of vector,
+    // therefore we only need to remove last.
+    for(size_t i = 0; i < m_batchStagingCount; i++)
+    {
+      StagingResource& stagingResource = m_stagingResources[count - 1 - i];
+
+      m_base.stagingResourcesSize -= stagingResource.buffer.bufferSize;
+      m_resourceAllocator->destroyBuffer(stagingResource.buffer);
+
+      stagingResource.semaphoreState = {};
+    };
+
+    m_stagingResources.resize(count - m_batchStagingCount);
+  }
+  m_batchStagingCount = 0;
 }
 
 }  // namespace nvvk
@@ -992,5 +1126,45 @@ void StagingUploader::releaseStaging(bool forceAll)
       // next frame uses new timelineValue
       timelineValue++;
     }
+  }
+
+  //////////////////////////////////////////////////////////////////////////
+  // queue ownership transfer
+
+  {
+    // We want to do an async transfer on a dedicated transfer queue.
+    uint32_t transferQueueFamilyIndex = 0;
+    uint32_t graphicsQueueFamilyIndex = 1;
+
+    // And our resources are using the default `VK_SHARING_MODE_EXCLUSIVE`
+    nvvk::Buffer          myBuffer;
+    std::vector<uint32_t> myData;
+
+    // track transfer completion through a timeline semaphore
+    VkSemaphore transferTimelineSemaphore{};
+    uint64_t    transferTimelineValue = 1;
+    nvvk::SemaphoreState transferSemaphoreState = nvvk::SemaphoreState::makeFixed(transferTimelineSemaphore, transferTimelineValue);
+
+    // by usual means acquire the command buffers.
+    VkCommandBuffer transferCmd{};
+    VkCommandBuffer graphicsCmd{};
+
+    // we want the uploader to handle the required barriers for us.
+    stagingUploader.setEnableLayoutBarriers(true);
+    stagingUploader.setEnableOwnerBarriers(true, transferQueueFamilyIndex, graphicsQueueFamilyIndex);
+    // also some automatism so it knows we are on a transfer queue (only relevant to image layout transition handling)
+    stagingUploader.beginTransferOnly();
+
+    result = stagingUploader.appendBuffer(myBuffer, 0, std::span(myData), transferSemaphoreState);
+
+    // The graphics queue acquires the ownership of myBuffer.
+    stagingUploader.getOwnerAcquisitionBarriers().cmdPipelineBarrier(graphicsCmd, 0);
+
+    // Enqueues the actual copy commands (if applicable).
+    // this command resets the staging uploader's internal state,
+    //
+    stagingUploader.cmdUploadAppended(transferCmd);
+
+    // must ensure the the submit of `graphicsCmd` waits for `transferSemaphoreState`
   }
 }

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 *
-* SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+* SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 * SPDX-License-Identifier: Apache-2.0
 */
 
@@ -109,9 +109,16 @@ public:
 
   QueueInfo getQueueInfo() const { return m_queueInfo; }
 
+#ifndef NVVK_DISABLE_DYNAMIC_SEMAPHORE_STATE
   // Create fresh semaphore state for any submission you might want to make at a later time.
-  // Can create as many as needed, but must be part of `submitInfo.signalSemaphoreStates`
+  // Can create as many as needed, but must be part of `submitInfo.signalSemaphoreStates`.
+  // The actual time line value is patched when this semaphore state is signaled.
   SemaphoreState createDynamicSemaphoreState() const;
+#endif
+
+  // This assumes strict ordering of submits, it will provide
+  // the timeline value of the next submit.
+  SemaphoreState createNextFixedSemaphoreState() const;
 
   // returns semaphore state of submit
   VkResult submit(SubmitInfo& info, SemaphoreState& submitState, VkFence fence = nullptr);

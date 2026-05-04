@@ -47,6 +47,8 @@ endmacro()
 # * LOCAL_DIRS: List of directories to copy to INSTALL_DIR/TARGET_NAME_files. Tree structure will be preserved.
 # * FILES: List of files to copy to the build directory and INSTALL_DIR.
 # * PROGRAMS: Same as FILES except it uses install(PROGRAMS), which sets a+x on Linux.
+# * SUBDIRECTORY: Subdirectory where FILES and PROGRAMS will be placed.
+#     Defaults to empty (no subdirectory); useful for placing D3D12 Agility SDK DLLs in a subdirectory.
 # * NVSHADERS_FILES: List of files to copy to INSTALL_DIR/nvshaders.
 # * AUTO: Copies all shared libraries CMake knows the target links with to the build directory and INSTALL_DIR.
 #
@@ -65,7 +67,7 @@ endmacro()
 function(copy_to_runtime_and_install TARGET_NAME)
     # Parse the arguments
     set(options AUTO)
-    set(oneValueArgs INSTALL_DIR)
+    set(oneValueArgs INSTALL_DIR SUBDIRECTORY)
     set(multiValueArgs DIRECTORIES FILES PROGRAMS LOCAL_DIRS NVSHADERS_FILES)
     cmake_parse_arguments(COPY "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
@@ -118,6 +120,15 @@ function(copy_to_runtime_and_install TARGET_NAME)
     endforeach()
 
 
+    # Make the subdirectory if we have anything to copy
+    if(COPY_FILES OR COPY_SUBDIRECTORY)
+        add_custom_command(
+            TARGET ${TARGET_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${TARGET_NAME}>/${COPY_SUBDIRECTORY}"
+            VERBATIM
+        )
+    endif()
+
     # Handle individual files
     foreach(_FILETYPE "FILES" "PROGRAMS")
         foreach(_FILE ${COPY_${_FILETYPE}})
@@ -130,13 +141,14 @@ function(copy_to_runtime_and_install TARGET_NAME)
             # Copy for runtime (post-build)
             add_custom_command(
                 TARGET ${TARGET_NAME} POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_FILE} "$<TARGET_FILE_DIR:${TARGET_NAME}>" VERBATIM
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_FILE} "$<TARGET_FILE_DIR:${TARGET_NAME}>/${COPY_SUBDIRECTORY}"
+                VERBATIM
             )
 
             # Copy for installation
             install(
                 ${_FILETYPE} ${_FILE}
-                DESTINATION ${COPY_INSTALL_DIR}
+                DESTINATION ${COPY_INSTALL_DIR}/${COPY_SUBDIRECTORY}
             )
         endforeach()
     endforeach()

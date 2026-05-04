@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,62 +13,59 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 
-// This shader computes a glossy IBL map to be used with the Unreal 4 PBR shading model as
-// described in
+// GGX split-sum IBL prefilter (Karis / Unreal).
 //
-// "Real Shading in Unreal Engine 4" by Brian Karis
-// http://blog.selfshadow.com/publications/s2013-shading-course/karis/s2013_pbs_epic_notes_v2.pdf
+//   filtered(R, α) = ∫ L(ω)·(n·l) D(α) dω  /  ∫ (n·l) D(α) dω
+//                  ≈ Σ L(ω_i)·(n·l_i)  /  Σ (n·l_i)        with samples drawn from D(α).
 //
-// As an extension to the original it uses multiple importance sampling weighted BRDF importance
-// sampling and environment map importance sampling to yield good results for high dynamic range
-// lighting.
+// Direct port of Khronos `glTF-Sample-Renderer/source/shaders/ibl_filtering.frag`, adapted
+// to our equirectangular HDR input (the reference uses a cubemap).
+//
+// Conventions (matches glTF / Khronos):
+//   * `pc.roughness` is perceptualRoughness ∈ [0, 1].
+//   * Internal GGX α = perceptualRoughness² (squared here).
+//   * Consumers sample at lod = perceptualRoughness · (mipCount - 1)
+//     (see `gltf_khronos_pbr.h.slang::khr_getIBLRadianceGGX`).
+//
+// Variance reduction:
+//   * Samples read a mip of the HDR chosen via the Krivanek & Colbert formula (GPU Gems 3,
+//     Ch. 20). Low-pdf samples (wide cones / rare directions) read blurrier mips, which
+//     averages bright HDR texels over neighbors and kills fireflies on environments with
+//     concentrated peaks (sun, windows). The HDR mip chain is generated up front by the
+//     host (see `vk_gltf_renderer/src/renderer.cpp` around `cmdGenerateMipmaps`).
 
 #include "hdr_io.h.slang"
 #include "constants.h.slang"
 #include "functions.h.slang"
-#include "random.h.slang"
-#include "hdr_env_sampling.h.slang"
 
 // clang-format off
-[[vk::binding(EnvDomeDraw::eHdrImage, 0)]]      RWTexture2D<float4> g_outColor;
-[[vk::binding(EnvBindings::eHdr, 1)]]           Sampler2D hdrIBL;
-[[vk::binding(EnvBindings::eImpSamples, 1)]]    StructuredBuffer<EnvAccel> envSamplingData;
+[[vk::binding(EnvDomeDraw::eHdrImage, 0)]]      RWTexture2D<float4>          g_outColor;
+[[vk::binding(EnvBindings::eHdr, 1)]]           Sampler2D                    hdrIBL;
 [[vk::push_constant]]                           ConstantBuffer<HdrPushBlock> pc;
 // clang-format on
 
 
-// Importance sample a GGX microfacet distribution.
+// Inverse CDF of D(α) in solid angle (no n·h weighting). Karis-style GGX importance sample.
 float3 ggxSample(float2 xi, float alpha)
 {
   float phi       = 2.0F * M_PI * xi.x;
   float cos_theta = sqrt((1.0F - xi.y) / (1.0F + (alpha * alpha - 1.0F) * xi.y));
   float sin_theta = sqrt(1.0F - cos_theta * cos_theta);
-
   return float3(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
 }
 
-// Evaluate a GGX microfacet distribution.
-float ggxEval(float alpha, float nh)
+// Filament-style compact GGX NDF.
+float ggxEval(float n_dot_h, float alpha)
 {
-  float a2   = alpha * alpha;
-  float nh2  = nh * nh;
-  float tan2 = (1.0f - nh2) / nh2;
-  float f    = a2 + tan2;
-  return a2 / (f * f * M_PI * nh2 * nh);
+  float a = n_dot_h * alpha;
+  float k = alpha / (1.0F - n_dot_h * n_dot_h + a * a);
+  return k * k * (1.0F / M_PI);
 }
-
-
-struct EnvmapSampleValue
-{
-  float3 dir;
-  float3 value;
-  float  pdf;
-};
 
 [shader("compute")]
 [numthreads(HDR_WORKGROUP_SIZE, HDR_WORKGROUP_SIZE, 1)]
@@ -86,72 +83,48 @@ void main(uint3 threadIdx: SV_DispatchThreadID)
   float3 normal = normalize(float3(direction.x, -direction.y, direction.z));  // Flipping Y
   orthonormalBasis(normal, tangent, bitangent);
 
-  float alpha    = pc.roughness;
-  uint  nsamples = alpha > 0.0F ? 512u : 1u;
+  // perceptualRoughness in pc.roughness; α is squared per Khronos / glTF convention.
+  const float alpha    = pc.roughness * pc.roughness;
+  const uint  nsamples = alpha > 0.0F ? 1024u : 1u;
 
-  uint state = xxhash32(uint3(threadIdx.xy, uint(pc.roughness * 10.0F)));
+  // Equirect texel count for Krivanek–Colbert LOD (cube uses 6·W², we use W·H).
+  uint envW, envH, envMips;
+  hdrIBL.GetDimensions(0, envW, envH, envMips);
+  const float texel_count = float(envW) * float(envH);
 
-  // The integrals are additionally weighted by the cosine and normalized using the average cosine of
-  // the importance sampled BRDF directions (as in the Unreal publication).
-  float weight_sum = 0.0f;
+  float3 result     = float3(0.0F);
+  float  weight_sum = 0.0F;
 
-  float3 result       = float3(0.0F);
-  float  inv_nsamples = 1.0F / float(nsamples);
   for(uint i = 0u; i < nsamples; ++i)
   {
-    // Importance sample BRDF.
+    float2 xi = hammersley2D(i, nsamples);
+    float3 h0 = alpha > 0.0F ? ggxSample(xi, alpha) : float3(0.0F, 0.0F, 1.0F);
+    float3 h  = tangent * h0.x + bitangent * h0.y + normal * h0.z;
+
+    // Karis assumes V == N for the prefilter (the "split" in split-sum).
+    float3 l = normalize(2.0F * dot(normal, h) * h - normal);
+
+    float n_dot_l = dot(normal, l);
+    if(n_dot_l > 0.0F)
     {
-      float xi0 = (float(i) + 0.5F) * inv_nsamples;
-      float xi1 = rand(state);
+      // Solid-angle pdf of l. Starting from the half-vector pdf D(α, n·h)·n·h and applying
+      // the reflection Jacobian 1/(4·v·h), with V == N ⇒ v·h = n·h, this reduces to D(α, n·h)/4.
+      float pdf = ggxEval(h0.z, alpha) * 0.25F;
 
-      float3 h0 = alpha > 0.0f ? ggxSample(float2(xi0, xi1), alpha) : float3(0.0F, 0.0F, 1.0F);
-      float3 h  = tangent * h0.x + bitangent * h0.y + normal * h0.z;
+      // Krivanek & Colbert, GPU Gems 3 Ch. 20. Low-pdf samples fetch a blurrier mip.
+      float lod = (pc.roughness == 0.0F) ? 0.0F :
+                  0.5F * log2(texel_count / (float(nsamples) * max(pdf, 1e-8F)));
 
-      float3 direction = normalize(2.0 * dot(normal, h) * h - normal);
+      float2 uv = getSphericalUv(l);
+      float3 L  = hdrIBL.SampleLevel(uv, lod).rgb;
 
-      float cos_theta = dot(normal, direction);
-      if(cos_theta > 0.0F)
-      {
-        float2 uv = getSphericalUv(direction);
-        float  w  = 1.0F;
-        if(alpha > 0.0F)
-        {
-          float pdf_brdf_sqr = ggxEval(alpha, h0.z) * 0.25F / dot(direction, h);
-          pdf_brdf_sqr *= pdf_brdf_sqr;
-          float pdf_env = hdrIBL.Sample(uv).a;
-          w             = pdf_brdf_sqr / (pdf_brdf_sqr + pdf_env * pdf_env);
-        }
-        result += w * hdrIBL.Sample(uv).rgb * cos_theta;
-        weight_sum += cos_theta;
-      }
-    }
-
-    // Importance sample environment.
-    if(alpha > 0.0f)
-    {
-      float3 randVal = float3(rand(state), rand(state), rand(state));
-
-      EnvmapSampleValue val;
-      float4            radPdf = environmentSample(hdrIBL, envSamplingData, randVal, val.dir);
-      val.pdf                  = radPdf.a;
-      val.value                = radPdf.rgb / val.pdf;
-
-
-      float3 h  = normalize(normal + val.dir);
-      float  nh = dot(h, normal);
-      float  kh = dot(val.dir, h);
-      float  nk = dot(val.dir, normal);
-      if(kh > 0.0F && nh > 0.0F && nk > 0.0F)
-      {
-        float pdf_env_sqr = val.pdf * val.pdf;
-        float pdf_brdf    = ggxEval(alpha, nh) * 0.25F / kh;
-
-        float w = pdf_env_sqr / (pdf_env_sqr + pdf_brdf * pdf_brdf);
-        result += w * val.value * pdf_brdf * nk * nk;
-      }
+      result     += L * n_dot_l;
+      weight_sum += n_dot_l;
     }
   }
 
-  float4 result_color            = float4(result / float(weight_sum), 1.0F);
+  // weight_sum > 0 is guaranteed for the mirror path (n_dot_l = 1); for non-mirror, at least
+  // some Hammersley samples land in the upper hemisphere.
+  float4 result_color            = float4(result / max(weight_sum, 1e-8F), 1.0F);
   g_outColor[int2(threadIdx.xy)] = result_color;
 }

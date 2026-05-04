@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 *
-* SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+* SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 * SPDX-License-Identifier: Apache-2.0
 */
 
@@ -80,7 +80,7 @@ VkResult BufferSubAllocator::init(const InitInfo& info)
   m_state.maxBlocks = static_cast<uint32_t>(maxBlocks);
   m_state.internalBlockUnits = static_cast<uint32_t>((m_info.blockSize + m_info.minAlignment - 1) / m_info.minAlignment);
 
-  if(m_info.keepLastBlock)
+  if(m_info.keepBlockCount)
   {
     Block block;
     block.offsetAllocator = std::make_unique<OffsetAllocator::Allocator>(m_state.internalBlockUnits, m_info.perBlockAllocations);
@@ -210,7 +210,7 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
     subAllocation.size                = static_cast<uint32_t>(size);
     subAllocation.alignmentMinusOne   = alignment - 1;
     subAllocation.block               = uint16_t(freeBlockIndex);
-#ifndef NDEBUG
+#if !defined(NDEBUG) && !defined(NVVK_DISABLE_BUFFER_SUB_ALLOCATOR_DEBUG_POINTER)
     subAllocation.allocator = this;
 #endif
 
@@ -257,7 +257,7 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
       subAllocation.size              = static_cast<uint32_t>(size);
       subAllocation.alignmentMinusOne = alignment - 1;
       subAllocation.block             = uint16_t(activeBlockIndex);
-#ifndef NDEBUG
+#if !defined(NDEBUG) && !defined(NVVK_DISABLE_BUFFER_SUB_ALLOCATOR_DEBUG_POINTER)
       subAllocation.allocator = this;
 #endif
 
@@ -308,7 +308,7 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
       subAllocation.size              = static_cast<uint32_t>(size);
       subAllocation.alignmentMinusOne = alignment - 1;
       subAllocation.block             = uint16_t(freeBlockIndex);
-#ifndef NDEBUG
+#if !defined(NDEBUG) && !defined(NVVK_DISABLE_BUFFER_SUB_ALLOCATOR_DEBUG_POINTER)
       subAllocation.allocator = this;
 #endif
 
@@ -329,7 +329,7 @@ void BufferSubAllocator::subFree(BufferSubAllocation& subAllocation)
     return;
   }
 
-#ifndef NDEBUG
+#if !defined(NDEBUG) && !defined(NVVK_DISABLE_BUFFER_SUB_ALLOCATOR_DEBUG_POINTER)
   assert(subAllocation.allocator == this);
 #endif
 
@@ -347,8 +347,8 @@ void BufferSubAllocator::subFree(BufferSubAllocation& subAllocation)
   if(!offsetAllocator || offsetAllocator->storageReport().totalFreeSpace == m_state.internalBlockUnits)
   {
     // always free if dedicated
-    // and maybe depending if we are the last one
-    if(!offsetAllocator || (m_state.activeBlockCount > 1 || !m_info.keepLastBlock))
+    // and maybe depending on how many blocks to keep
+    if(!offsetAllocator || (m_state.activeBlockCount > m_info.keepBlockCount))
     {
       m_info.resourceAllocator->destroyBuffer(m_blocks[subAllocation.block].buffer);
 
@@ -398,7 +398,7 @@ BufferRange BufferSubAllocator::subRange(const BufferSubAllocation& subAllocatio
     return {};
   }
 
-#ifndef NDEBUG
+#if !defined(NDEBUG) && !defined(NVVK_DISABLE_BUFFER_SUB_ALLOCATOR_DEBUG_POINTER)
   assert(subAllocation.allocator == this);
 #endif
 
@@ -434,6 +434,12 @@ BufferRange BufferSubAllocator::subRange(const BufferSubAllocation& subAllocatio
   }
 
   return info;
+}
+
+const nvvk::Buffer& BufferSubAllocator::getBlockBuffer(const uint16_t blockIndex) const
+{
+  assert(m_blocks[blockIndex].buffer.buffer && "invalid blockIndex");
+  return m_blocks[blockIndex].buffer;
 }
 
 VkResult BufferSubAllocator::createNewBuffer(nvvk::Buffer& buffer, VkDeviceSize size, uint32_t alignment, uint32_t blockIndex)

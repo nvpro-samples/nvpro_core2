@@ -307,7 +307,7 @@ public:
   std::vector<VkImageMemoryBarrier2>  imageBarriers;
 
   // Submits all barriers. Does not clear vectors.
-  void cmdPipelineBarrier(VkCommandBuffer cmd, VkDependencyFlags dependencyFlags);
+  void cmdPipelineBarrier(VkCommandBuffer cmd, VkDependencyFlags dependencyFlags) const;
 
   // Overwrites imageBarrier::image with `image.image`.
   // Detects if imageBarrier.newLayout is actually new, skips if not; note that

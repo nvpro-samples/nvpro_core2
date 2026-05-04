@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -112,7 +112,11 @@ private:
   void createDescriptorSetLayout();
   void createDrawPipeline(const std::span<const uint32_t>& spirvDrawDome);
   void integrateBrdf(uint32_t dimension, nvvk::Image& target, const std::span<const uint32_t>& spirvIntegrateBrdf);
-  void prefilterHdr(uint32_t dim, nvvk::Image& target, const std::span<const uint32_t>& spirvCode, bool doMipmap);
+  // `lowestMipLevel` (only relevant when doMipmap=true) caps the mip chain at
+  // `floor(log2(dim)) + 1 - lowestMipLevel`, mirroring the Khronos glTF-Sample-Renderer
+  // convention -- the smallest baked mip is `dim >> (mipCount - 1)`. 0 = no cap (full chain).
+  // 4 matches Khronos for 256-pix cubes (= 5 mips, smallest = 16x16).
+  void prefilterHdr(uint32_t dim, nvvk::Image& target, const std::span<const uint32_t>& spirvCode, bool doMipmap, uint32_t lowestMipLevel = 0);
   void renderToCube(const VkCommandBuffer& cmd, nvvk::Image& target, nvvk::Image& scratch, VkPipelineLayout pipelineLayout, uint32_t dim, uint32_t numMips);
 };
 

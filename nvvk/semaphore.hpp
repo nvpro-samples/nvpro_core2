@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 *
-* SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+* SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 * SPDX-License-Identifier: Apache-2.0
 */
 
@@ -61,12 +61,14 @@ public:
     return semState;
   }
 
+#ifndef NVVK_DISABLE_DYNAMIC_SEMAPHORE_STATE
   static inline SemaphoreState makeDynamic(VkSemaphore semaphore)
   {
     SemaphoreState semState;
     semState.initDynamic(semaphore);
     return semState;
   }
+#endif
 
   SemaphoreState() {}
 
@@ -74,11 +76,14 @@ public:
   {
     assert(m_semaphore == VK_NULL_HANDLE);
     assert(timelineValue && semaphore);
-    m_semaphore    = semaphore;
-    m_fixedValue   = timelineValue;
+    m_semaphore  = semaphore;
+    m_fixedValue = timelineValue;
+#ifndef NVVK_DISABLE_DYNAMIC_SEMAPHORE_STATE
     m_dynamicValue = nullptr;
+#endif
   }
 
+#ifndef NVVK_DISABLE_DYNAMIC_SEMAPHORE_STATE
   inline void initDynamic(VkSemaphore semaphore)
   {
     assert(m_semaphore == VK_NULL_HANDLE);
@@ -87,10 +92,21 @@ public:
     m_fixedValue   = 0;
     m_dynamicValue = std::make_shared<std::atomic_uint64_t>(0);
   }
+#endif
 
-  inline bool isValid() const { return m_semaphore && (m_fixedValue != 0 || m_dynamicValue); }
+  inline bool isValid() const
+  {
+    return m_semaphore
+           && (m_fixedValue != 0
+#ifndef NVVK_DISABLE_DYNAMIC_SEMAPHORE_STATE
+               || m_dynamicValue
+#endif
+           );
+  }
   inline bool isFixed() const { return m_semaphore && (m_fixedValue != 0); }
+#ifndef NVVK_DISABLE_DYNAMIC_SEMAPHORE_STATE
   inline bool isDynamic() const { return m_semaphore && (m_dynamicValue); }
+#endif
 
   inline VkSemaphore getSemaphore() const { return m_semaphore; }
   inline uint64_t    getTimelineValue() const
@@ -99,16 +115,19 @@ public:
     {
       return m_fixedValue;
     }
+#ifndef NVVK_DISABLE_DYNAMIC_SEMAPHORE_STATE
     else if(m_dynamicValue)
     {
       return m_dynamicValue->load();
     }
+#endif
     else
     {
       return 0;
     }
   }
 
+#ifndef NVVK_DISABLE_DYNAMIC_SEMAPHORE_STATE
   // this function can be called only once and is only legal for
   // dynamic semaphore state
   void setDynamicValue(uint64_t value)
@@ -123,7 +142,7 @@ public:
     // and decouple it
     fixate();
   }
-
+#endif
   // for dynamic values waiting and testing will always return false
   // if the m_dynamicValue->load() returns zero, meaning
   // the SemaphoreState wasn't part of a `QueueTimeline::submit` where it was
@@ -140,22 +159,36 @@ public:
 
   inline bool canWait() const
   {
-    return m_semaphore && (m_fixedValue != 0 || (m_dynamicValue && m_dynamicValue->load() != 0));
+    return m_semaphore
+           && (m_fixedValue != 0
+#ifndef NVVK_DISABLE_DYNAMIC_SEMAPHORE_STATE
+               || (m_dynamicValue && m_dynamicValue->load() != 0)
+#endif
+           );
   }
+#ifndef NVVK_DISABLE_DYNAMIC_SEMAPHORE_STATE
   inline bool canWait()
   {
     fixate();
     return static_cast<const SemaphoreState*>(this)->canWait();
   }
-
+#endif
 
 private:
+#ifndef NVVK_DISABLE_DYNAMIC_SEMAPHORE_STATE
   // attempts to convert dynamic to fixed value if possible,
   // can speed up future waits.
   void fixate();
+#endif
 
   VkSemaphore m_semaphore{};
 
+  // stores either the fixed value, or is updated to have
+  // a local cache of the dynamic value.
+  // By design a dynamic value can only once be changed from 0 to its real value.
+  uint64_t m_fixedValue{};
+
+#ifndef NVVK_DISABLE_DYNAMIC_SEMAPHORE_STATE
   // Holds the timeline value of a semaphore.
   //
   // We are using a shared_ptr as this struct can be used to encode
@@ -167,11 +200,47 @@ private:
 
   // doesn't exist for "fixed" value semaphore state
   std::shared_ptr<std::atomic_uint64_t> m_dynamicValue;
+#endif
+};
 
-  // stores either the fixed value, or is updated to have
-  // a local cache of the dynamic value.
-  // By design a dynamic value can only once be changed from 0 to its real value.
-  uint64_t m_fixedValue{};
+// Simple utility class to avoid querying semaphore state.
+// Typically we enqueue many semaphore states of the same submit in
+// arrays and test accordingly.
+struct SemaphoreStateSignalCache
+{
+  VkSemaphore semaphore{};
+  uint64_t    timelineValue = ~0;
+  bool        signaled      = false;
+
+  inline bool testSignaled(VkDevice device, const SemaphoreState& semaphoreState)
+  {
+    if(semaphore == semaphoreState.getSemaphore() && timelineValue == semaphoreState.getTimelineValue())
+    {
+      return signaled;
+    }
+
+    semaphore     = semaphoreState.getSemaphore();
+    timelineValue = semaphoreState.getTimelineValue();
+    signaled      = semaphoreState.testSignaled(device);
+
+    return signaled;
+  }
+#ifndef NVVK_DISABLE_DYNAMIC_SEMAPHORE_STATE
+  // semaphore state has an optimization for non-const testing
+  inline bool testSignaled(VkDevice device, SemaphoreState& semaphoreState)
+  {
+    if(semaphore == semaphoreState.getSemaphore() && timelineValue == semaphoreState.getTimelineValue())
+    {
+      return signaled;
+    }
+
+    semaphore     = semaphoreState.getSemaphore();
+    timelineValue = semaphoreState.getTimelineValue();
+    signaled      = semaphoreState.testSignaled(device);
+
+    return signaled;
+  }
+#endif
 };
 
 struct SemaphoreSubmitState

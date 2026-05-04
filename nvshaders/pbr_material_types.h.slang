@@ -53,7 +53,7 @@ struct PbrMaterial
 
   float3 attenuationColor;     // KHR_materials_volume
   float  attenuationDistance;  //
-  bool   isThinWalled;         // Replace for isThinWalled?
+  float  thickness;            // KHR_materials_volume thicknessFactor * thicknessTexture (object-space)
 
   float3 scatterCoefficient;   // KHR_materials_volume_scatter: σ_s (scattering coefficient)
   float  scatterAnisotropy;    // KHR_materials_volume_scatter: g parameter for Henyey-Greenstein
@@ -101,7 +101,7 @@ PbrMaterial defaultPbrMaterial()
 
   mat.attenuationColor    = float3(1.0F);
   mat.attenuationDistance = 1.0F;
-  mat.isThinWalled        = true;
+  mat.thickness           = 0.0F;
 
   mat.scatterCoefficient = float3(0.0F);
   mat.scatterAnisotropy  = 0.0F;

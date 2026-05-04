@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -151,6 +151,25 @@ inline float3 cosineSampleHemisphere(float r1, float r2)
   dir.y = r * sin(phi);
   dir.z = sqrt(max(0.F, 1.F - dir.x * dir.x - dir.y * dir.y));
   return dir;
+}
+
+//-----------------------------------------------------------------------
+// Hammersley low-discrepancy sequence — stable convergence, no per-pixel RNG state.
+// See http://holger.dammertz.org/stuff/notes_HammersleyOnHemisphere.html
+//-----------------------------------------------------------------------
+inline float radinv(uint bits)
+{
+  bits = (bits << 16u) | (bits >> 16u);
+  bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+  bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+  bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+  bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+  return float(bits) * 2.3283064365386963e-10f;
+}
+
+inline float2 hammersley2D(uint i, uint N)
+{
+  return float2(float(i) / float(N), radinv(i));
 }
 
 // Converts an integer to a color.

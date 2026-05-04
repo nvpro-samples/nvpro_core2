@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 *
-* SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+* SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 * SPDX-License-Identifier: Apache-2.0
 */
 
@@ -22,6 +22,7 @@
 
 namespace nvvk {
 
+#ifndef NVVK_DISABLE_DYNAMIC_SEMAPHORE_STATE
 void SemaphoreState::fixate()
 {
   if(m_fixedValue == 0 && m_dynamicValue)
@@ -37,6 +38,7 @@ void SemaphoreState::fixate()
     }
   }
 }
+#endif
 
 VkResult SemaphoreState::wait(VkDevice device, uint64_t timeout) const
 {
@@ -55,11 +57,13 @@ VkResult SemaphoreState::wait(VkDevice device, uint64_t timeout) const
   return vkWaitSemaphores(device, &waitInfo, timeout);
 }
 
+#ifndef NVVK_DISABLE_DYNAMIC_SEMAPHORE_STATE
 VkResult SemaphoreState::wait(VkDevice device, uint64_t timeout)
 {
   fixate();
   return static_cast<const SemaphoreState*>(this)->wait(device, timeout);
 }
+#endif
 
 bool SemaphoreState::testSignaled(VkDevice device) const
 {
@@ -74,11 +78,13 @@ bool SemaphoreState::testSignaled(VkDevice device) const
   return false;
 }
 
+#ifndef NVVK_DISABLE_DYNAMIC_SEMAPHORE_STATE
 bool SemaphoreState::testSignaled(VkDevice device)
 {
   fixate();
   return static_cast<const SemaphoreState*>(this)->testSignaled(device);
 }
+#endif
 
 VkResult createTimelineSemaphore(VkDevice device, uint64_t initialValue, VkSemaphore& semaphore)
 {

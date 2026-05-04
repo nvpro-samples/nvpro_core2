@@ -350,9 +350,14 @@ size_t ParameterParser::parse(std::span<const char* const> args,
             break;
         }
 
-        if(success && parameter.info.callbackSuccess)
+        if(success)
         {
-          parameter.info.callbackSuccess(&parameter);
+          m_wasParsed.insert(parameter.info.name);
+
+          if(parameter.info.callbackSuccess)
+          {
+            parameter.info.callbackSuccess(&parameter);
+          }
         }
 
         if(m_verbose && success)
@@ -403,9 +408,14 @@ size_t ParameterParser::parse(std::span<const char* const> args,
           assert(0 && "invalid parameter type for extension case");
         }
 
-        if(success && parameter->info.callbackSuccess)
+        if(success)
         {
-          parameter->info.callbackSuccess(parameter);
+          m_wasParsed.insert(parameter->info.name);
+
+          if(parameter->info.callbackSuccess)
+          {
+            parameter->info.callbackSuccess(parameter);
+          }
         }
         if(m_verbose)
         {

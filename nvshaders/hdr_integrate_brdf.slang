@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -27,29 +27,12 @@
 
 
 #include "hdr_io.h.slang"
+#include "functions.h.slang"
 
 // clang-format off
 [[vk::binding(EnvDomeDraw::eHdrImage, 0)]]  RWTexture2D<float4> gOutColor;
 // clang-format on
 
-
-static const float M_PI = 3.14159265359F;
-
-// See http://holger.dammertz.org/stuff/notes_HammersleyOnHemisphere.html
-float radinv(uint bits)
-{
-  bits = (bits << 16u) | (bits >> 16u);
-  bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
-  bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
-  bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
-  bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
-  return float(bits) * 2.3283064365386963e-10;  // / 0x100000000
-}
-
-float2 hammersley2D(uint i, uint N)
-{
-  return float2(float(i) / float(N), radinv(i));
-}
 
 float3 ggxSample(float2 xi, float3 normal, float alpha)
 {

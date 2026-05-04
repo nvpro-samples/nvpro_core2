@@ -26,7 +26,8 @@
 #include "resource_allocator.hpp"
 
 //-----------------------------------------------------------------
-// StagingUploader is a class that allows to upload data to the GPU.
+// StagingUploader is a class that allows to upload data to the GPU,
+// it implements the StagingUploaderBase interface.
 //
 // Usage:
 //      see usage_StagingUploader in staging.cpp
@@ -34,62 +35,79 @@
 
 namespace nvvk {
 
-class StagingUploader
+
+// Primary interface for staging uploader.
+// This is a base class for all staging uploaders.
+// It provides the basic functionality for staging uploader.
+// It is not meant to be used directly, but rather to be derived from.
+// The derived classes must implement the acquireStagingSpace, releaseStaging and resetStaging functions.
+class StagingUploaderBase
 {
 public:
   static constexpr VkDeviceSize DEFAULT_LARGE_CHUNK_SIZE = 256ull * 1024 * 1024;
 
-  StagingUploader()                                  = default;
-  StagingUploader(const StagingUploader&)            = delete;
-  StagingUploader& operator=(const StagingUploader&) = delete;
-  StagingUploader(StagingUploader&& other) noexcept;
-  StagingUploader& operator=(StagingUploader&& other) noexcept;
-  ~StagingUploader()
-  {
-    assert(isAppendedEmpty() && "Did you forget cmdUploadAppended() or cancelAppended()");
-    assert(m_resourceAllocator == nullptr && "Missing deinit()");
-  }
+  // Returns staging buffer information that can be used for any manual copy operations.
+  // If data is non-null it will be copied to bufferMapping automatically.
+  // The returned `stagingSpace` is valid until `cmdUploadAppended` or `cancelAppended`.
+  // Pure virtual function, derived classes must implement this by different means.
+  virtual VkResult acquireStagingSpace(BufferRange&          stagingSpace,
+                                       size_t                dataSize,
+                                       const void*           data,
+                                       const SemaphoreState& semaphoreState = {}) = 0;
 
-  // explicit lifetime of resourceAllocator must be ensured externally
-  void init(ResourceAllocator* resourceAllocator, bool enableLayoutBarriers = false);
+  // Releases temporary staging resources based on SemaphoreState.
+  // If a resources `!SemaphoreState.isValid()` then it is immediately released,
+  // otherwise runs `SemaphoreState.testSignaled`.
+  // If `forceAll` is true, then we assume it's safe delete all resources, which
+  // typically requires a device wait idle in advance.
+  // Pure virtual function, derived classes must implement staging space management by different means.
+  virtual void releaseStaging(bool forceAll = false) = 0;
 
-  // deinit implicitly calls `releaseStaging(true)`
-  void deinit();
+  // Records pending operations (copy & relevant layout transitions) into the command buffer
+  // and then resets the internal state for appended / acquired staging space.
+  // When ownership transfers are active, don't forget to copy/run the `getOwnerDestinationBarriers`
+  // at the acquiring queue before calling this function.
+  // Triggers `resetBatch(); resetStaging(false);`
+  virtual void cmdUploadAppended(VkCommandBuffer cmd);
 
-  void setEnableLayoutBarriers(bool enableLayoutBarriers);
-
-  ResourceAllocator* getResourceAllocator();
-
-  // All temporary staging resources are associated with the provided SemaphoreState.
-
-  // releases temporary staging resources based on SemaphoreState
-  // if `!SemaphoreState.isValid ` then immediately released
-  // otherwise runs `SemaphoreState.testSignaled`
-  // if `forceAll` is true, then we assume it's safe delete all resources
-  // this typically requires a device wait idle in advance.
-  // virtual so derived classes can implement staging space management by different means.
-  virtual void releaseStaging(bool forceAll = false);
-
-  // get size of all staging resources
-  size_t getStagingUsage() const { return m_stagingResourcesSize; }
-
-
-  // returns staging buffer information that can be used for any manual copy operations.
-  // if data is non-null it will be copied to bufferMapping automatically
-  // virtual so that derived classes can implement this by different means.
-  virtual VkResult acquireStagingSpace(BufferRange& stagingSpace, size_t dataSize, const void* data, const SemaphoreState& semaphoreState = {});
-
-  // clear all pending copy operations.
-  // this does NOT release resources of such operations and
-  // `releaseStaging` is still required.
+  // Clears all pending copy operations and their
+  // acquired staging spaces.
+  // Triggers `resetBatch(); resetStaging(true);`
   void cancelAppended();
 
-  // check if no operations were appended
-  bool isAppendedEmpty() const;
+  //////////////////////////////////////////////////////////////////////////
 
   // start operations that are only on transfer queue
   // state is reset on `cancelAppended` or `cmdUploadAppended`
   void beginTransferOnly();
+
+  // Handles layout transitions for images on a VkImageSubresourceRange level.
+  // Note that image sub updates that don't expand the full sub resource are not allowed.
+  void setEnableLayoutBarriers(bool enableLayoutBarriers);
+
+  // Enables resource ownership transfer barriers.
+  // Implicitly enables the "post" image layout barriers.
+  void setEnableOwnerBarriers(bool enableOwnerBarriers, uint32_t srcQueueFamilyIndex, uint32_t dstQueueFamilyIndex);
+
+  // Must execute these barriers on the destination queue.
+  // Must copy /execute content of this container before calling `cmdUploadAppended`.
+  const BarrierContainer& getOwnerAcquisitionBarriers() const { return m_batch.acquire; }
+
+  //////////////////////////////////////////////////////////////////////////
+
+  // check if no operations were appended
+  bool isAppendedEmpty() const;
+
+  // get size of all staging resources
+  size_t getStagingUsage() const { return m_base.stagingResourcesSize; }
+
+  // returns true if the sum of staging resources used in pending operations
+  // and the added size is beyond the limit
+  bool checkAppendedSize(size_t limitInBytes, size_t addedSize = 0) const;
+
+  //////////////////////////////////////////////////////////////////////////
+
+  // All temporary staging resources are associated with the provided SemaphoreState.
 
   // buffer.buffer, buffer.bufferSize and buffer.mapping are used
   // if buffer.mapping is valid, then we directly write to it
@@ -283,16 +301,15 @@ public:
                                  VkImageLayout                   newLayout      = VK_IMAGE_LAYOUT_UNDEFINED,
                                  const SemaphoreState&           semaphoreState = {});
 
-  // returns true if the sum of staging resources used in pending operations
-  // and the added size is beyond the limit
-  bool checkAppendedSize(size_t limitInBytes, size_t addedSize = 0) const;
-
-  // records pending operations (copy & relevant layout transitions) into the command buffer
-  // and then resets the internal state for appended.
-  void cmdUploadAppended(VkCommandBuffer cmd);
-
 protected:
+  // if `isCancel` is true then implementation must
+  // release all staging resources from the current batch
+  virtual void resetStaging(bool isCancel) = 0;
+
+  void resetBatch();
   void modifyImageBarrier(VkImageMemoryBarrier2& barrier);
+  void insertOwnerBufferBarrier(VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size);
+  void insertPostImageBarrier(VkImageMemoryBarrier2& barrier);
 
   struct Batch
   {
@@ -305,7 +322,53 @@ protected:
     std::vector<VkCopyBufferToImageInfo2> copyBufferImageInfos;
     BarrierContainer                      pre;
     BarrierContainer                      post;
+    BarrierContainer                      acquire;
   };
+
+  struct Base
+  {
+    size_t   stagingResourcesSize = 0;
+    bool     enableLayoutBarriers = false;
+    bool     enableOwnerBarriers  = false;
+    uint32_t srcQueueFamilyIndex  = VK_QUEUE_FAMILY_IGNORED;
+    uint32_t dstQueueFamilyIndex  = VK_QUEUE_FAMILY_IGNORED;
+  };
+
+  Batch m_batch{};
+  Base  m_base{};
+};
+
+// A basic implementation of the StagingUploaderBase interface.
+// Use the provided resource alloctor to acquire staging resources
+// as individual buffers.
+class StagingUploader : public StagingUploaderBase
+{
+public:
+  StagingUploader()                                  = default;
+  StagingUploader(const StagingUploader&)            = delete;
+  StagingUploader& operator=(const StagingUploader&) = delete;
+  StagingUploader(StagingUploader&& other) noexcept;
+  StagingUploader& operator=(StagingUploader&& other) noexcept;
+  ~StagingUploader()
+  {
+    assert(isAppendedEmpty() && "Did you forget cmdUploadAppended() or cancelAppended()");
+    assert(m_resourceAllocator == nullptr && "Missing deinit()");
+  }
+
+  // explicit lifetime of resourceAllocator must be ensured externally
+  void init(ResourceAllocator* resourceAllocator, bool enableLayoutBarriers = false);
+
+  // deinit implicitly calls `releaseStaging(true)`
+  void deinit();
+
+  VkResult acquireStagingSpace(BufferRange& stagingSpace, size_t dataSize, const void* data, const SemaphoreState& semaphoreState = {}) override;
+
+  void releaseStaging(bool forceAll = false) override;
+
+  ResourceAllocator* getResourceAllocator();
+
+protected:
+  void resetStaging(bool isCancel) override;
 
   struct StagingResource
   {
@@ -313,12 +376,9 @@ protected:
     SemaphoreState semaphoreState;
   };
 
-  ResourceAllocator* m_resourceAllocator    = nullptr;
-  size_t             m_stagingResourcesSize = 0;
-  bool               m_enableLayoutBarriers = false;
-
+  ResourceAllocator*           m_resourceAllocator = nullptr;
   std::vector<StagingResource> m_stagingResources;
-  Batch                        m_batch{};
+  size_t                       m_batchStagingCount = 0;
 };
 
 }  // namespace nvvk

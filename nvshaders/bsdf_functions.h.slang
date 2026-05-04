@@ -645,7 +645,7 @@ float3 wavelengthToRGB(float x)
 // Evaluates the transmission lobe.
 void btdf_ggx_smith_eval(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data, PbrMaterial mat, float3 tint)
 {
-  bool isThinWalled = (mat.isThinWalled);
+  bool isThinWalled = (mat.thickness == 0.0F);
 
   float2 ior = float2(mat.ior1, mat.ior2);
   if(mat.dispersion > 0.0f)
@@ -737,7 +737,7 @@ void btdf_ggx_smith_eval(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data, PbrMateria
 // Samples the transmission lobe.
 void btdf_ggx_smith_sample(NVSHADERS_INOUT_TYPE(BsdfSampleData) data, PbrMaterial mat, float3 tint)
 {
-  bool isThinWalled = (mat.isThinWalled);
+  bool isThinWalled = (mat.thickness == 0.0F);
 
   // When the sampling returns eventType = BSDF_EVENT_ABSORB, the path ends inside the ray generation program.
   // Make sure the returned values are valid numbers when manipulating the PRD.

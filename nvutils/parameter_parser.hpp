@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 *
-* SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+* SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 * SPDX-License-Identifier: Apache-2.0
 */
 
@@ -100,6 +100,9 @@ public:
     return int(parse(std::span((const char**)argv, argc), skipExe, filenameBasePath));
   }
 
+  // Returning whether a parameter with the given `name` was successfully parsed by this parser
+  bool wasParsed(const std::string& name) const { return m_wasParsed.find(name) != m_wasParsed.end(); }
+
   static std::filesystem::path getFilename(const std::filesystem::path& filenameBasePath, const std::filesystem::path& arg);
 
   // Utility class to load a text file into a tokenized list of arguments that can be parsed.
@@ -145,6 +148,9 @@ private:
   std::unordered_set<const ParameterBase*> m_parsedParameterSet;
   // linear list of added parameters used for printing the help in order
   std::vector<const ParameterBase*> m_parsedParameters;
+
+  // names of parameters successfully parsed during this parser's lifetime (see `wasParsed()`)
+  std::unordered_set<std::string> m_wasParsed;
 
   // used for the built-in parameters (configfile,help)
   ParameterRegistry m_builtinRegistry;

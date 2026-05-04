@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -93,7 +93,10 @@ void HdrEnvDome::create(VkDescriptorSet                  dstSet,
   createDrawPipeline(spirvDrawDome);
   integrateBrdf(512, m_textures.lutBrdf, spirvIntegrateBrdf);
   prefilterHdr(128, m_textures.diffuse, spirvPrefilterDiffuse, false);
-  prefilterHdr(512, m_textures.glossy, spirvPrefilterGlossy, true);
+  // GGX cube: cap the chain at lowestMipLevel=4 so the smallest baked mip is 16x16 (rather
+  // than 1x1, which is degenerate for the prefilter integral). Matches the Khronos
+  // ibl_filtering pipeline convention.
+  prefilterHdr(512, m_textures.glossy, spirvPrefilterGlossy, true, 4);
   createDescriptorSetLayout();
 
   NVVK_DBG_NAME(m_textures.lutBrdf.image);
@@ -323,11 +326,14 @@ void HdrEnvDome::integrateBrdf(uint32_t dimension, nvvk::Image& target, const st
 //--------------------------------------------------------------------------------------------------
 //
 //
-void HdrEnvDome::prefilterHdr(uint32_t dim, nvvk::Image& target, const std::span<const uint32_t>& spirvData, bool doMipmap)
+void HdrEnvDome::prefilterHdr(uint32_t dim, nvvk::Image& target, const std::span<const uint32_t>& spirvData, bool doMipmap, uint32_t lowestMipLevel)
 {
   const VkExtent2D size{dim, dim};
-  VkFormat         format     = VK_FORMAT_R16G16B16A16_SFLOAT;
-  const uint32_t   numMipmaps = doMipmap ? static_cast<uint32_t>(floor(::log2(dim))) + 1 : 1;
+  VkFormat         format = VK_FORMAT_R16G16B16A16_SFLOAT;
+  // Full chain = floor(log2(dim)) + 1. With lowestMipLevel > 0 we trim that many levels off
+  // the high-roughness end, matching Khronos glTF-Sample-Renderer (lowestMipLevel = 4).
+  const uint32_t fullChain  = static_cast<uint32_t>(floor(::log2(dim))) + 1;
+  const uint32_t numMipmaps = doMipmap ? std::max(1u, fullChain - std::min(lowestMipLevel, fullChain - 1)) : 1;
 
   nvutils::ScopedTimer st("%s: %u", __FUNCTION__, numMipmaps);
 

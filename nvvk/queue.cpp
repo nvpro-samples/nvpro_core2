@@ -140,9 +140,16 @@ void QueueTimeline::deinit()
   m_device            = nullptr;
 }
 
+#ifndef NVVK_DISABLE_DYNAMIC_SEMAPHORE_STATE
 nvvk::SemaphoreState QueueTimeline::createDynamicSemaphoreState() const
 {
   return SemaphoreState::makeDynamic(m_timelineSemaphore);
+}
+#endif
+
+nvvk::SemaphoreState QueueTimeline::createNextFixedSemaphoreState() const
+{
+  return SemaphoreState::makeFixed(m_timelineSemaphore, m_timelineValue);
 }
 
 VkResult QueueTimeline::submit(SubmitInfo& submitInfo, SemaphoreState& submitState, VkFence fence)
@@ -178,7 +185,6 @@ VkResult QueueTimeline::submit(SubmitInfo& submitInfo, SemaphoreState& submitSta
     }
   }
 
-
   VkResult submitResult        = VK_SUCCESS;
   uint64_t submitTimeLineValue = 0;
   {
@@ -186,18 +192,33 @@ VkResult QueueTimeline::submit(SubmitInfo& submitInfo, SemaphoreState& submitSta
 
     submitTimeLineValue = m_timelineValue++;
 
+    bool wasAdded = false;
     for(SemaphoreSubmitState& it : submitInfo.signalSemaphoreStates)
     {
       // the semaphore state is from our queue, patch in the actual
       // submit value
       if(it.semaphoreState.getSemaphore() == m_timelineSemaphore)
       {
-        assert(!submitState.isValid() && "must not use submitInfo.signalSemaphoreState using queue timelineSemaphore more than once");
+        assert(!wasAdded && "must not use submitInfo.signalSemaphoreState using queue timelineSemaphore more than once");
 
-        it.semaphoreState.setDynamicValue(submitTimeLineValue);
+#ifndef NVVK_DISABLE_DYNAMIC_SEMAPHORE_STATE
+        if(it.semaphoreState.isDynamic())
+        {
+          it.semaphoreState.setDynamicValue(submitTimeLineValue);
+        }
+        else
+#endif
+        {
+          assert(it.semaphoreState.getTimelineValue() == submitTimeLineValue && "unexpected timeline value");
+        }
 
         signalSemaphores.push_back(makeSemaphoreSubmitInfo(it));
       }
+    }
+    submitState.initFixed(m_timelineSemaphore, submitTimeLineValue);
+    if(!wasAdded)
+    {
+      signalSemaphores.push_back(makeSemaphoreSubmitInfo(submitState, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT));
     }
 
     submitInfo2.signalSemaphoreInfoCount = static_cast<uint32_t>(signalSemaphores.size());
@@ -207,8 +228,6 @@ VkResult QueueTimeline::submit(SubmitInfo& submitInfo, SemaphoreState& submitSta
 
     submitResult = vkQueueSubmit2(m_queueInfo.queue, 1, &submitInfo2, fence);
   }
-
-  submitState.initFixed(m_timelineSemaphore, submitTimeLineValue);
 
   return submitResult;
 }
@@ -237,11 +256,68 @@ VkResult QueueTimeline::submit(SubmitInfo& submitInfo, SemaphoreState& submitSta
   queueTimelineA.init(device, queueInfoA);
   queueTimelineB.init(device, queueInfoB);
 
+  // basic fixed operations
+  {
+    nvvk::SubmitInfo submitInfoA;
+    nvvk::SubmitInfo submitInfoB;
 
-  // basic operations
+    // per-frame loop
+    {
+      // The main purpose of the `nvvk::QueueTimeline` object is to wrap its timeline semaphore
+      // that is incremented with each submit.
+
+      // Using the fixed version of the `nvvk::SemaphoreState` object, we assume a simple usage of the
+      // QueueTimeline where we know that there is a strict ordering of submits.
+
+      VkCommandBuffer cmdA{};
+      VkCommandBuffer cmdB{};
+
+      // we now assume that there are no other submits to the queueTimelineA, meaning this state
+      // is really the "next" one we care about.
+      nvvk::SemaphoreState semaphoreNextStateA = queueTimelineA.createNextFixedSemaphoreState();
+
+
+      {
+        // let's say we want B to wait on A's completion but for some reason are kicking the B submit off before
+        // we do A. In that case it's useful to know the semaphore state of the next submit of A.
+        submitInfoB.clear();
+        submitInfoB.append(cmdB);
+        submitInfoB.waitSemaphoreStates.push_back({semaphoreNextStateA, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT});
+
+        nvvk::SemaphoreState semaphoreSubmittedStateB;
+        VkResult             result = queueTimelineB.submit(submitInfoB, semaphoreSubmittedStateB);
+      }
+
+      {
+        // or we have some sort of garbage collector (see example later) and want to delete a buffer
+        // that is last used in the upcoming submit.
+        // registerForDeletion(myBuffer, semaphoreNextStateA);
+      }
+
+      // the submits to the `QueueTimeline` object are done through a wrapper struct
+      // similar to `VkSubmitInfo2`
+
+      submitInfoA.clear();
+      submitInfoA.append(cmdA);
+
+      // don't forget to insert the dynamic semaphore state from this frame to be signaled with the submit.
+      submitInfoA.signalSemaphoreStates.push_back({semaphoreNextStateA, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT});
+
+      // The submit process returns a fixed semaphore state, as now the timeline value is known.
+      nvvk::SemaphoreState semaphoreSubmittedStateA;
+      VkResult             result = queueTimelineA.submit(submitInfoA, semaphoreSubmittedStateA);
+      // In this simple usage scheme the state is actually identical to the `semaphoreNextState`
+      assert(semaphoreSubmittedStateA.getTimelineValue() == semaphoreNextStateA.getTimelineValue()
+             && semaphoreSubmittedStateA.getSemaphore() == semaphoreNextStateA.getSemaphore());
+    }
+  }
+
+
+#ifndef NVVK_DISABLE_DYNAMIC_SEMAPHORE_STATE
+  // basic dynamic operations
   {
     nvvk::SemaphoreState semaphoreStateTest;
-    nvvk::SubmitInfo     submitInfo;
+    nvvk::SubmitInfo     submitInfoA;
 
     // per-frame loop
     /* while(!glfwWindowShouldClose()) */
@@ -249,15 +325,15 @@ VkResult QueueTimeline::submit(SubmitInfo& submitInfo, SemaphoreState& submitSta
       // The main purpose of the `nvvk::QueueTimeline` object is to wrap its timeline semaphore
       // that is incremented with each submit.
       //
-      // The `nvvk::SemaphoreState` object can be used to get information about a future submit,
-      // in such a way that it can be stored and queried safely at a later time.
+      // The dynamic version of the `nvvk::SemaphoreState` object can be used to get information about,
+      // a future submit in such a way that it can be stored and queried safely at a later time.
       //
-      // This can be useful when there is more users of a `nvvk::QueueTimeline` and it isn't as easy
+      // This can be useful when there is multiple users of a `nvvk::QueueTimeline` and it isn't as easy
       // to figure out the order of submits done to it (and therefore the corresponding timeline values).
       // The `nvvk::SemaphoreState` acts as a `future` to a pending signal operation.
 
       // In this basic sample we get a command buffer every frame
-      VkCommandBuffer cmd{};
+      VkCommandBuffer cmdA{};
 
       // Also get a semaphore state, so that we detect the completion of the command buffer.
       // Note at this point in time we haven't submitted the command buffer yet, but this object is safe to use
@@ -265,13 +341,13 @@ VkResult QueueTimeline::submit(SubmitInfo& submitInfo, SemaphoreState& submitSta
       //
       // Until it was signaled, this semaphoreState is `dynamic` with an unknown timeline value.
 
-      nvvk::SemaphoreState semaphoreState = queueTimelineA.createDynamicSemaphoreState();
+      nvvk::SemaphoreState semaphoreStateA = queueTimelineA.createDynamicSemaphoreState();
 
       // let's fake actually caring for the completion of cmd
       if(!semaphoreStateTest.isValid())
       {
         // copy this frame's semaphore state, even if it hasn't been signaled/submitted yet
-        semaphoreStateTest = semaphoreState;
+        semaphoreStateTest = semaphoreStateA;
       }
       else
       {
@@ -286,20 +362,20 @@ VkResult QueueTimeline::submit(SubmitInfo& submitInfo, SemaphoreState& submitSta
       // the submits to the `QueueTimeline` object are done through a wrapper struct
       // similar to `VkSubmitInfo2`
 
-      submitInfo.clear();
-      submitInfo.append(cmd);
+      submitInfoA.clear();
+      submitInfoA.append(cmdA);
 
       // don't forget to insert the dynamic semaphore state from this frame to be signaled with the submit.
-      submitInfo.signalSemaphoreStates.push_back({std::move(semaphoreState), VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT});
+      submitInfoA.signalSemaphoreStates.push_back({std::move(semaphoreStateA), VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT});
 
       // the submit process returns a fixed semaphore state, as now the timeline value is known.
-      nvvk::SemaphoreState semaphoreSubmittedState;
-      VkResult             result = queueTimelineA.submit(submitInfo, semaphoreSubmittedState);
+      nvvk::SemaphoreState semaphoreSubmittedStateA;
+      VkResult             result = queueTimelineA.submit(submitInfoA, semaphoreSubmittedStateA);
     }
   }
 
 
-  // more complex scenario implementing a garbage collector for a secondary queue
+  // more complex dynamic scenario implementing a garbage collector for a secondary queue
   {
 
     struct GarbageEntry
@@ -383,4 +459,5 @@ VkResult QueueTimeline::submit(SubmitInfo& submitInfo, SemaphoreState& submitSta
       queueTimelineA.submit(submitA, semaphoreStateA);
     }
   }
+#endif
 }

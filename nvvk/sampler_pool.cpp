@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -67,7 +67,7 @@ void nvvk::SamplerPool::deinit()
   m_device = VK_NULL_HANDLE;
 }
 
-VkResult nvvk::SamplerPool::acquireSampler(VkSampler& sampler, const VkSamplerCreateInfo& createInfo)
+nvvk::SamplerState nvvk::SamplerState::fromCreateInfo(const VkSamplerCreateInfo& createInfo)
 {
   SamplerState samplerState;
   samplerState.createInfo = createInfo;
@@ -89,10 +89,17 @@ VkResult nvvk::SamplerPool::acquireSampler(VkSampler& sampler, const VkSamplerCr
     }
     ext = ext->pNext;
   }
+
   // always remove pointers for comparison lookup
   samplerState.createInfo.pNext = nullptr;
   samplerState.reduction.pNext  = nullptr;
   samplerState.ycbr.pNext       = nullptr;
+  return samplerState;
+}
+
+VkResult nvvk::SamplerPool::acquireSampler(VkSampler& sampler, const VkSamplerCreateInfo& createInfo)
+{
+  SamplerState samplerState = SamplerState::fromCreateInfo(createInfo);
 
   assert(m_device && "Initialization was missing");
 

@@ -164,10 +164,12 @@ struct ApplicationCreateInfo
 
   // Swapchain
   // VK_PRESENT_MODE_MAX_ENUM_KHR means no preference
-  VkPresentModeKHR    preferredVsyncOffMode  = VK_PRESENT_MODE_MAX_ENUM_KHR;
-  VkPresentModeKHR    preferredVsyncOnMode   = VK_PRESENT_MODE_MAX_ENUM_KHR;
-  VkSurfaceFormat2KHR preferredSurfaceFormat = {.sType = VK_STRUCTURE_TYPE_SURFACE_FORMAT_2_KHR,
-                                                .surfaceFormat{VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR}};
+  VkPresentModeKHR    preferredVsyncOffMode   = VK_PRESENT_MODE_MAX_ENUM_KHR;
+  VkPresentModeKHR    preferredVsyncOnMode    = VK_PRESENT_MODE_MAX_ENUM_KHR;
+  VkSurfaceFormat2KHR preferredSurfaceFormat  = {.sType = VK_STRUCTURE_TYPE_SURFACE_FORMAT_2_KHR,
+                                                 .surfaceFormat{VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR}};
+  uint32_t            preferredImageCount     = 3;  // Triple buffering for presentation
+  uint32_t            preferredFramesInFlight = 2;  // CPU-side double buffering
 };
 
 
