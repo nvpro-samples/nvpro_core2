@@ -35,11 +35,13 @@
 #   CAPABILITIES <cap1> <cap2>...  - SPIR-V capabilities (joined with + for slangc)
 #
 # Build settings:
-#   DEBUG_LEVEL <0-3>              - Debug information level (default: 1)
+#   DEBUG_LEVEL <0-3>              - Debug information level (default: 3)
 #                                      0 = no debug info
-#                                      1 = embeds shader source for Nsight and other tools
-#                                      2 = standard debug info
-#                                      3 = full debug info
+#                                      1 = minimal amount required for stack traces
+#                                      2 = standard debug info (notably, this currently
+#                                          embeds source when emitting SPIR-V directly)
+#                                      3 = as much debug info as possible (currently,
+#                                          also embeds source when using the glslang backend)
 #   OPTIMIZATION_LEVEL <0-3>       - Optimization level (default: 0)
 #                                      0 = no optimization (faster builds; also avoids spirv-opt
 #                                          bugs that have broken some of our shaders)
@@ -198,9 +200,8 @@ function(compile_slang SHADER_FILES OUTPUT_DIR)
     set(COMPILE_SHADER_TARGET "spirv")
   endif()
 
-  # Default to debug info level 1, which embeds shader source for Nsight and other tools
   if(NOT DEFINED COMPILE_SHADER_DEBUG_LEVEL)
-    set(COMPILE_SHADER_DEBUG_LEVEL 1)
+    set(COMPILE_SHADER_DEBUG_LEVEL 3)
   endif()
 
   # Default to no optimization for faster builds, and to avoid spirv-opt bugs that have
