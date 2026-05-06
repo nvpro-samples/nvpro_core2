@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -28,6 +28,7 @@ includes Fresnel, shadowing-masking, sheen, and thin-film functions as well.
 -------------------------------------------------------------------------------------------------*/
 
 #include "constants.h.slang"
+#include "pbr_material_types.h.slang"  // PbrMaterial (used by the Khronos analytic helpers below)
 #include "slang_types.h"
 
 
@@ -453,6 +454,203 @@ float3 flip(const float3 h, const float3 k, float xi)
   //}
 
   return (xi < p_flip) ? float3(-h.x, -h.y, h.z) : h;
+}
+
+
+// =================================================================================================
+// Khronos analytic helpers (deterministic per-light / IBL evaluators)
+// =================================================================================================
+//
+// Everything below mirrors the per-lobe BRDF math in the glTF Sample Renderer
+// (`pbr.frag` / `brdf.glsl` / `punctual.glsl` / `ibl.glsl`) so the rasterizer-side evaluators
+// in `pbr_direct_eval.h.slang` and `pbr_ibl_eval.h.slang` can match the reference renderer
+// pixel-for-pixel.
+//
+// These primitives use a different mathematical model than the Monte Carlo PT helpers above:
+//   * Smith G is height-correlated `V_GGX` (Heitz 2014), not uncorrelated `G1*G2`.
+//   * The NDF is given in non-projected form (`D_GGX(NdotH, alpha)`), not the VNDF projected form
+//     that pairs with `hvd_ggx_sample_vndf`.
+//   * Sheen uses Estevez & Kulla 2017's `D_Charlie` / `lambdaSheen` / `V_Sheen` family rather
+//     than v-cavities + `hvd_sheen_eval`.
+//
+// They are NOT used by the Monte Carlo path tracer's `bsdfEvaluate` / `bsdfSample` -- those keep
+// the MC-friendly approximations above so MIS PDFs cancel correctly.
+
+// -------------------------------------------------------------------------------------------------
+// Microfacet primitives (Khronos `brdf.glsl` ports)
+// -------------------------------------------------------------------------------------------------
+
+// GGX/Trowbridge-Reitz NDF (non-projected hemisphere).
+float D_GGX(float NdotH, float alphaRoughness)
+{
+  float alphaRoughnessSq = alphaRoughness * alphaRoughness;
+  float f                = (NdotH * NdotH) * (alphaRoughnessSq - 1.0F) + 1.0F;
+  return alphaRoughnessSq / (M_PI * f * f);
+}
+
+// Smith-GGX height-correlated visibility term `Vis = G / (4 NdotL NdotV)` (Heitz 2014).
+float V_GGX(float NdotL, float NdotV, float alphaRoughness)
+{
+  float alphaRoughnessSq = alphaRoughness * alphaRoughness;
+  float GGXV             = NdotL * sqrt(NdotV * NdotV * (1.0F - alphaRoughnessSq) + alphaRoughnessSq);
+  float GGXL             = NdotV * sqrt(NdotL * NdotL * (1.0F - alphaRoughnessSq) + alphaRoughnessSq);
+  float GGX              = GGXV + GGXL;
+  return (GGX > 0.0F) ? (0.5F / GGX) : 0.0F;
+}
+
+// Anisotropic GGX NDF (Disney/Burley addenda).
+float D_GGX_anisotropic(float NdotH, float TdotH, float BdotH, float at, float ab)
+{
+  float  a2 = at * ab;
+  float3 f  = float3(ab * TdotH, at * BdotH, a2 * NdotH);
+  float  w2 = a2 / dot(f, f);
+  return a2 * w2 * w2 / M_PI;
+}
+
+// Anisotropic GGX height-correlated visibility (Heitz).
+float V_GGX_anisotropic(float NdotL, float NdotV, float BdotV, float TdotV, float TdotL, float BdotL, float at, float ab)
+{
+  float GGXV = NdotL * length(float3(at * TdotV, ab * BdotV, NdotV));
+  float GGXL = NdotV * length(float3(at * TdotL, ab * BdotL, NdotL));
+  float v    = 0.5F / max(GGXV + GGXL, 1e-7F);
+  return clamp(v, 0.0F, 1.0F);
+}
+
+
+// -------------------------------------------------------------------------------------------------
+// Sheen primitives (Estevez & Kulla 2017, Khronos port)
+// -------------------------------------------------------------------------------------------------
+
+float D_Charlie(float sheenRoughness, float NdotH)
+{
+  sheenRoughness = max(sheenRoughness, 1e-6F);
+  float alphaG   = sheenRoughness * sheenRoughness;
+  float invR     = 1.0F / alphaG;
+  float cos2h    = NdotH * NdotH;
+  float sin2h    = max(1.0F - cos2h, 0.0F);
+  return (2.0F + invR) * pow(sin2h, invR * 0.5F) / (2.0F * M_PI);
+}
+
+float lambdaSheenNumericHelper(float x, float alphaG)
+{
+  float oneMinusAlphaSq = (1.0F - alphaG) * (1.0F - alphaG);
+  float a               = lerp(21.5473F, 25.3245F, oneMinusAlphaSq);
+  float b               = lerp(3.82987F, 3.32435F, oneMinusAlphaSq);
+  float c               = lerp(0.19823F, 0.16801F, oneMinusAlphaSq);
+  float d               = lerp(-1.97760F, -1.27393F, oneMinusAlphaSq);
+  float e               = lerp(-4.32054F, -4.85967F, oneMinusAlphaSq);
+  return a / (1.0F + b * pow(x, c)) + d * x + e;
+}
+
+float lambdaSheen(float cosTheta, float alphaG)
+{
+  if(abs(cosTheta) < 0.5F)
+    return exp(lambdaSheenNumericHelper(cosTheta, alphaG));
+  return exp(2.0F * lambdaSheenNumericHelper(0.5F, alphaG) - lambdaSheenNumericHelper(1.0F - cosTheta, alphaG));
+}
+
+float V_Sheen(float NdotL, float NdotV, float sheenRoughness)
+{
+  sheenRoughness = max(sheenRoughness, 1e-6F);
+  float alphaG   = sheenRoughness * sheenRoughness;
+  float denom    = (1.0F + lambdaSheen(NdotV, alphaG) + lambdaSheen(NdotL, alphaG)) * (4.0F * NdotV * NdotL);
+  return clamp(1.0F / max(denom, 1e-7F), 0.0F, 1.0F);
+}
+
+
+// -------------------------------------------------------------------------------------------------
+// Lambertian
+// -------------------------------------------------------------------------------------------------
+
+// Lambertian: c / pi.
+float3 BRDF_lambertian(float3 diffuseColor)
+{
+  return diffuseColor * M_1_PI;
+}
+
+
+// -------------------------------------------------------------------------------------------------
+// Sheen energy-compensation factor (Khronos `albedoSheenScalingLUT`)
+// -------------------------------------------------------------------------------------------------
+
+// Reads `.r` from the runtime-baked Charlie directional-albedo LUT
+// (see `nvshaders/hdr_charlie_brdf_lut.slang` and `nvshaders_host/pbr_sheen_lut.hpp`).
+#ifdef __SLANG__
+float albedoSheenScalingLUT(Sampler2D sheenLut, float NdotX, float sheenRoughness)
+{
+  float2 uv = clamp(float2(NdotX, sheenRoughness), float2(0.0F), float2(1.0F));
+  return sheenLut.SampleLevel(uv, 0.0F).r;
+}
+#endif
+
+
+// -------------------------------------------------------------------------------------------------
+// Khronos material-derived helpers
+// -------------------------------------------------------------------------------------------------
+
+/*-------------------------------------------------------------------------------------------------
+# Function `khronosDielectricF0`
+> Returns the vec3 dielectric F0 used by the Khronos glTF renderer's Fresnel math.
+
+Derived from the KHR_materials_ior ratio (`ior2/ior1`, default 1.5/1.0 -> F0 ~ 0.04) and tinted
+by KHR_materials_specular's `specularColor` (default `vec3(1)`), clamped to `vec3(1)` to keep
+the Fresnel physically bounded.
+-------------------------------------------------------------------------------------------------*/
+float3 khronosDielectricF0(PbrMaterial mat)
+{
+  float ior         = mat.ior2 / max(mat.ior1, 1e-5F);
+  float f0_from_ior = square((ior - 1.0F) / (ior + 1.0F));
+  return min(float3(f0_from_ior) * mat.specularColor, float3(1.0F));
+}
+
+/*-------------------------------------------------------------------------------------------------
+# Function `khronosClearcoatFresnel`
+> Schlick Fresnel at the clearcoat normal used by `pbr.frag:157` / `pbr.frag:220`.
+
+Returns `F_Schlick(clearcoatF0, vec3(1), NcDotV)`. Clearcoat uses the same IOR-derived F0 as the
+dielectric base (Khronos `getClearCoatInfo`: `clearcoatF0 = pow((ior-1)/(ior+1), 2)`), so swapping
+the base IOR via KHR_materials_ior also shifts the clearcoat's reflectance. Used by:
+  * The IBL composer (final `mix(., f_clearcoat, clearcoatFactor * clearcoatFresnel)` step).
+  * The emissive attenuation `emissive * (1 - clearcoatFactor * clearcoatFresnel)` (`pbr.frag:373`).
+  * The KHR_materials_volume_scatter mask (`pbr.frag:355`).
+-------------------------------------------------------------------------------------------------*/
+float3 khronosClearcoatFresnel(PbrMaterial mat, float3 V)
+{
+  float3 cF0    = float3(square((mat.ior2 - mat.ior1) / max(mat.ior2 + mat.ior1, 1e-5F)));
+  float  NcDotV = clampedDot(mat.Nc, V);
+  return cF0 + (1.0F - cF0) * pow(1.0F - NcDotV, 5.0F);
+}
+
+
+// -------------------------------------------------------------------------------------------------
+// Layered composite (Khronos `pbr.frag:218-220` / `:345-348`)
+// -------------------------------------------------------------------------------------------------
+
+/*-------------------------------------------------------------------------------------------------
+# Function `layeredCompositeKhronos`
+> Final per-pixel layering used by both the per-light direct evaluator
+> (`pbr_direct_eval.h.slang::bsdfEvaluatePunctualKhronos`) and the IBL evaluator
+> (`pbr_ibl_eval.h.slang::composeIBLAnalyticKhronos`). Mirrors `pbr.frag:218-220`:
+```
+color = lerp(dielectric, metal, metallic);
+color = sheen + color * sheenScale;
+color = lerp(color, clearcoat, clearcoat * clearcoatFresnel);
+```
+For the no-sheen path, pass `f_sheen = float3(0)` and `sheenScale = 1.0F`.
+-------------------------------------------------------------------------------------------------*/
+float3 layeredCompositeKhronos(float3 f_dielectric_brdf,
+                               float3 f_metal_brdf,
+                               float  metallic,
+                               float3 f_sheen,
+                               float  sheenScale,
+                               float3 f_clearcoat_brdf,
+                               float  clearcoat,
+                               float3 clearcoatFresnel)
+{
+  float3 color = lerp(f_dielectric_brdf, f_metal_brdf, metallic);
+  color        = f_sheen + color * sheenScale;
+  color        = lerp(color, f_clearcoat_brdf, clearcoat * clearcoatFresnel);
+  return color;
 }
 
 

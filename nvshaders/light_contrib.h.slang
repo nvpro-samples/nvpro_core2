@@ -32,6 +32,49 @@ struct LightContrib
 };
 
 /*-----------------------------------------------------------------------------------------------------------------
+# Function `getRangeAttenuation`
+> Spec-correct KHR_lights_punctual range attenuation.
+
+`range <= 0` means unlimited (returns `1/d^2`); otherwise returns `saturate(1-(d/range)^4)/d^2`.
+
+Reference: https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_lights_punctual/README.md
+----------------------------------------------------------------------------------------------------------------- */
+float getRangeAttenuation(float range, float distance)
+{
+  float dist2 = max(distance * distance, 1e-20F);
+  if(range <= 0.0F)
+    return 1.0F / dist2;
+  float distOverRange = distance / range;
+  float falloff       = square(square(distOverRange));  // (d/range)^4
+  return saturate(1.0F - falloff) / dist2;
+}
+
+/*-----------------------------------------------------------------------------------------------------------------
+# Function `getSpotAttenuation`
+> Spec-correct KHR_lights_punctual spot cone attenuation.
+
+Cos-quadratic ramp between inner and outer cone, with a hard cutoff outside the outer cone.
+`pointToLight` points from the shaded surface to the light; `spotDirection` is the light's emit axis.
+`innerConeCos > outerConeCos` (cosines, not angles).
+
+Reference: https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_lights_punctual/README.md
+----------------------------------------------------------------------------------------------------------------- */
+float getSpotAttenuation(float3 pointToLight, float3 spotDirection, float outerConeCos, float innerConeCos)
+{
+  float actualCos = dot(normalize(spotDirection), normalize(-pointToLight));
+  if(actualCos > outerConeCos)
+  {
+    if(actualCos < innerConeCos)
+    {
+      float angularAttenuation = (actualCos - outerConeCos) / (innerConeCos - outerConeCos);
+      return angularAttenuation * angularAttenuation;
+    }
+    return 1.0F;
+  }
+  return 0.0F;
+}
+
+/*-----------------------------------------------------------------------------------------------------------------
 # Function `singleLightContribution`
 > Calculates the contribution of a light source to the illumination at a specific point on a surface.
 
@@ -74,29 +117,30 @@ LightContrib singleLightContribution(in GltfLight light, in float3 surfacePos, i
   }
   else if(light.type == LightType::eLightTypeSpot || light.type == LightType::eLightTypePoint)
   {
-    float3  light_to_surface = surfacePos - light.position;
-    float distance         = sqrt(dot(light_to_surface, light_to_surface));
-    float r_distance       = 1.0F / distance;
+    float3 light_to_surface = surfacePos - light.position;
+    float  distance         = sqrt(dot(light_to_surface, light_to_surface));
+    float  r_distance       = 1.0F / distance;
 
     contrib.distance       = distance;
     contrib.incidentVector = light_to_surface * r_distance;
 
-    float attenuation = 1.F;
+    // Spec-correct KHR_lights_punctual range smoothing: saturate(1 - (d/range)^4). The 1/d^2 falloff
+    // is applied below (point lights only); area-light irradiance has its own geometric falloff via
+    // solid angle.
+    float rangeSmoothing = 1.0F;
     if(light.angularSizeOrInvRange > 0.0F)
     {
-      attenuation = square(saturate(1.0F - square(square(distance * light.angularSizeOrInvRange))));
-
-      if(attenuation == 0.0F)
+      float distOverRange = distance * light.angularSizeOrInvRange;  // d * (1/range)
+      rangeSmoothing      = saturate(1.0F - square(square(distOverRange)));
+      if(rangeSmoothing == 0.0F)
         return contrib;
     }
 
     float spotlight = 1.0F;
     if(light.type == LightType::eLightTypeSpot)
     {
-      float lDotD           = dot(contrib.incidentVector, light.direction);
-      float direction_angle = acos(lDotD);
-      spotlight             = 1.0F - smoothstep(light.innerAngle, light.outerAngle, direction_angle);
-
+      // pointToLight = light.position - surfacePos (= -light_to_surface).
+      spotlight = getSpotAttenuation(-contrib.incidentVector, light.direction, cos(light.outerAngle), cos(light.innerAngle));
       if(spotlight == 0.0F)
         return contrib;
     }
@@ -119,7 +163,7 @@ LightContrib singleLightContribution(in GltfLight light, in float3 surfacePos, i
       irradiance = light.intensity * square(r_distance);
     }
 
-    irradiance *= spotlight * attenuation;
+    irradiance *= spotlight * rangeSmoothing;
   }
 
   contrib.intensity = irradiance * light.color;

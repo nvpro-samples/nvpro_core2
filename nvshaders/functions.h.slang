@@ -61,6 +61,12 @@ inline float clampedDot(float3 x, float3 y)
   return clamp(dot(x, y), 0.0F, 1.0F);
 }
 
+// Maximum component of a float3.
+inline float max3(float3 v)
+{
+  return max(max(v.x, v.y), v.z);
+}
+
 //-----------------------------------------------------------------------------
 // Builds an orthonormal basis: given only a normal vector, returns a
 // tangent and bitangent.

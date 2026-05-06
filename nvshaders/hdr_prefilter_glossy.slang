@@ -30,7 +30,7 @@
 //   * `pc.roughness` is perceptualRoughness ∈ [0, 1].
 //   * Internal GGX α = perceptualRoughness² (squared here).
 //   * Consumers sample at lod = perceptualRoughness · (mipCount - 1)
-//     (see `gltf_khronos_pbr.h.slang::khr_getIBLRadianceGGX`).
+//     (see `pbr_ibl_eval.h.slang::getIBLRadianceGGX`).
 //
 // Variance reduction:
 //   * Samples read a mip of the HDR chosen via the Krivanek & Colbert formula (GPU Gems 3,

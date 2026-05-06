@@ -109,12 +109,63 @@ and a V-cavity shadowing-masking function).
 
 
 /*-------------------------------------------------------------------------------------------------
-# Function `absorptionCoefficient`
-> Returns the absorption coefficient of the material.
+# Function `volumeExtinctionCoefficient`
+> Returns the volumetric extinction coefficient `sigma_t = -log(c) / d` of the material, per
+> KHR_materials_volume / KHR_materials_volume_scatter.
+
+Per spec: when only `KHR_materials_volume` is active, scattering is assumed to be zero
+(`sigma_s = 0`), so `sigma_t = sigma_a`. When `KHR_materials_volume_scatter` is also active, the
+same formula `-log(c)/d` continues to give the **total** extinction (`sigma_t = sigma_a +
+sigma_s`); the scattering portion is recovered as `sigma_s = sigma_t * rho_ss`. Beer's-law
+transmittance over a path of length x is therefore `T(x) = exp(-sigma_t * x)` regardless of
+whether scattering is enabled.
+
+Caller intent: use this for the extinction in Beer's law, delta tracking, and any per-channel
+attenuation. Do NOT add `pbrMat.scatterCoefficient` on top -- it is already included in this
+result.
+-------------------------------------------------------------------------------------------------*/
+float3 volumeExtinctionCoefficient(PbrMaterial mat)
+{
+  return -log(max(mat.attenuationColor, float3(0.001))) / max(mat.attenuationDistance, 0.001);
+}
+
+/*-------------------------------------------------------------------------------------------------
+# Function `absorptionCoefficient` (deprecated alias)
+> DEPRECATED: kept for backward compatibility. The function name is misleading -- it actually
+> returns the **extinction** coefficient `sigma_t`, not the absorption coefficient `sigma_a`.
+> They coincide only when scattering is disabled (KHR_materials_volume without
+> KHR_materials_volume_scatter). New code should call `volumeExtinctionCoefficient` instead.
 -------------------------------------------------------------------------------------------------*/
 float3 absorptionCoefficient(PbrMaterial mat)
 {
-  return -log(max(mat.attenuationColor, float3(0.001))) / max(mat.attenuationDistance, 0.001);
+  return volumeExtinctionCoefficient(mat);
+}
+
+/*-------------------------------------------------------------------------------------------------
+# Function `applyIorToRoughness`
+> Scales transmission roughness by IOR, per KHR_materials_transmission.
+
+Maps the incoming roughness so that ior=1.0 produces no microfacet refraction and ior=1.5
+produces the default amount. Matches the Khronos reference renderer's `functions.glsl`.
+-------------------------------------------------------------------------------------------------*/
+float applyIorToRoughness(float roughness, float ior)
+{
+  return roughness * clamp(ior * 2.0F - 2.0F, 0.0F, 1.0F);
+}
+
+/*-------------------------------------------------------------------------------------------------
+# Function `applyVolumeAttenuation`
+> Beer's law over a transmissive segment, per KHR_materials_volume.
+
+`attenuationDistance == 0.0` means infinite attenuation distance (no absorption). Otherwise the
+returned radiance is `attenuationColor ^ (distance/attenuationDistance) * radiance`.
+-------------------------------------------------------------------------------------------------*/
+float3 applyVolumeAttenuation(float3 radiance, float distance, float3 attenuationColor, float attenuationDistance)
+{
+  if(attenuationDistance == 0.0F)
+    return radiance;
+  float3 transmittance = pow(attenuationColor, float3(distance / attenuationDistance));
+  return transmittance * radiance;
 }
 
 /*-------------------------------------------------------------------------------------------------
@@ -377,6 +428,10 @@ void brdf_diffuse_sample(NVSHADERS_INOUT_TYPE(BsdfSampleData) data, PbrMaterial 
   brdf_diffuse_sample(data, mat, mat.baseColor);
 }
 
+// Evaluates the diffuse-transmission lobe (Lambertian BTDF).
+// Per KHR_materials_diffuse_transmission, the BTDF color is `tint` (the caller passes
+// `mat.diffuseTransmissionColor`). Independent of the surface's `baseColor` -- baseColor
+// only affects the diffuse REFLECTION lobe. Symmetric with `brdf_diffuse_eval`.
 void brdf_diffuse_transmission_eval(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data, PbrMaterial mat, float3 tint)
 {
   // If the incoming light direction is on the same side as the surface normal,
@@ -390,9 +445,13 @@ void brdf_diffuse_transmission_eval(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data,
   data.pdf = max(0.0f, -nk2 * M_1_PI);
 
   // For a white Lambert material, the bxdf components match the evaluation pdf. (See MDL_renderer.)
-  data.bsdf_diffuse = tint * data.pdf * mat.diffuseTransmissionColor;
+  data.bsdf_diffuse = tint * data.pdf;
 }
 
+// Samples the diffuse-transmission lobe.
+// Per KHR_materials_diffuse_transmission, the BTDF color is `tint` (the caller passes
+// `mat.diffuseTransmissionColor`). Independent of the surface's `baseColor`. Symmetric with
+// `brdf_diffuse_sample`.
 void brdf_diffuse_transmission_sample(NVSHADERS_INOUT_TYPE(BsdfSampleData) data, PbrMaterial mat, float3 tint)
 {
   // Sample a direction on the opposite hemisphere (relative to -mat.N).
@@ -403,8 +462,8 @@ void brdf_diffuse_transmission_sample(NVSHADERS_INOUT_TYPE(BsdfSampleData) data,
   // Compute the PDF for this direction.
   data.pdf = dot(data.k2, -mat.N) * M_1_PI;
 
-  // Ensure energy conservation by considering the diffuse transmission tint.
-  data.bsdf_over_pdf = tint * mat.diffuseTransmissionColor;
+  // Lambertian BTDF / cosine-PDF; cancels to just `tint` (= diffuseTransmissionColor).
+  data.bsdf_over_pdf = tint;
   data.event_type    = BSDF_EVENT_DIFFUSE_TRANSMISSION;
 }
 
@@ -991,7 +1050,10 @@ void bsdfEvaluate(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data, PbrMaterial mat)
   }
   else if(lobe == LOBE_DIFFUSE_TRANSMISSION)
   {
-    brdf_diffuse_transmission_eval(data, mat, tint);
+    // Per KHR_materials_diffuse_transmission, the BTDF color is `diffuseTransmissionColor`,
+    // independent of `baseColor`. Pass it directly (bypassing the iridescence-modified `tint`,
+    // which only applies to the dielectric base / specular layers).
+    brdf_diffuse_transmission_eval(data, mat, mat.diffuseTransmissionColor);
   }
   else if(lobe == LOBE_SPECULAR_REFLECTION)
   {
@@ -1055,7 +1117,9 @@ void bsdfSample(NVSHADERS_INOUT_TYPE(BsdfSampleData) data, PbrMaterial mat)
   }
   else if(lobe == LOBE_DIFFUSE_TRANSMISSION)
   {
-    brdf_diffuse_transmission_sample(data, mat, tint);
+    // Per KHR_materials_diffuse_transmission, the BTDF color is `diffuseTransmissionColor`,
+    // independent of `baseColor`. Pass it directly; see brdf_diffuse_transmission_eval dispatch.
+    brdf_diffuse_transmission_sample(data, mat, mat.diffuseTransmissionColor);
   }
   else if(lobe == LOBE_SPECULAR_REFLECTION)
   {

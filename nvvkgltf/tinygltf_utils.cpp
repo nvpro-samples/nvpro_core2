@@ -110,7 +110,7 @@ KHR_materials_volume_scatter tinygltf::utils::getVolumeScatter(const tinygltf::M
   if(tinygltf::utils::hasElementName(tmat.extensions, KHR_MATERIALS_VOLUME_SCATTER_EXTENSION_NAME))
   {
     const tinygltf::Value& ext = tinygltf::utils::getElementValue(tmat.extensions, KHR_MATERIALS_VOLUME_SCATTER_EXTENSION_NAME);
-    tinygltf::utils::getArrayValue(ext, "multiscatterColor", gmat.multiscatterColor);
+    tinygltf::utils::getArrayValue(ext, "multiscatterColorFactor", gmat.multiscatterColorFactor);
     tinygltf::utils::getValue(ext, "scatterAnisotropy", gmat.scatterAnisotropy);
     gmat.scatterAnisotropy = std::clamp(gmat.scatterAnisotropy, -0.999f, 0.999f);
   }
@@ -125,7 +125,7 @@ void tinygltf::utils::setVolumeScatter(tinygltf::Material& tmat, const KHR_mater
   }
 
   tinygltf::Value& ext = tmat.extensions[KHR_MATERIALS_VOLUME_SCATTER_EXTENSION_NAME];
-  tinygltf::utils::setArrayValue(ext, "multiscatterColor", 3, glm::value_ptr(scatter.multiscatterColor));
+  tinygltf::utils::setArrayValue(ext, "multiscatterColorFactor", 3, glm::value_ptr(scatter.multiscatterColorFactor));
   tinygltf::utils::setValue(ext, "scatterAnisotropy", scatter.scatterAnisotropy);
 }
 

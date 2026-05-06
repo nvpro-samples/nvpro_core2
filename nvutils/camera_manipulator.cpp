@@ -34,6 +34,18 @@
 
 namespace nvutils {
 
+namespace {
+// Returns 'up' if it is not parallel to the view direction, otherwise a world axis that is.
+// glm::lookAt and any cross(forward, up) basis construction would otherwise produce NaN.
+glm::vec3 effectiveUp(const glm::vec3& eye, const glm::vec3& ctr, const glm::vec3& up)
+{
+  const glm::vec3 right = glm::cross(ctr - eye, up);
+  if(glm::dot(right, right) > CameraConstants::EPSILON)
+    return up;
+  return std::abs(up.y) < 0.9f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
+}
+}  // namespace
+
 //--------------------------------------------------------------------------------------------------
 CameraManipulator::CameraManipulator()
 {
@@ -178,15 +190,9 @@ CameraManipulator::CameraFrame CameraManipulator::computeCameraFrame() const
     return frame;
   }
 
-  frame.forward   = glm::normalize(viewDelta);
-  glm::vec3 right = glm::cross(frame.forward, m_current.up);
-  if(glm::dot(right, right) < CameraConstants::EPSILON)
-  {
-    const glm::vec3 fallbackUp = std::abs(frame.forward.y) < 0.99f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
-    right                      = glm::cross(frame.forward, fallbackUp);
-  }
-  frame.right = glm::normalize(right);
-  frame.up    = glm::cross(frame.right, frame.forward);
+  frame.forward = glm::normalize(viewDelta);
+  frame.right   = glm::normalize(glm::cross(frame.forward, effectiveUp(m_current.eye, m_current.ctr, m_current.up)));
+  frame.up      = glm::cross(frame.right, frame.forward);
   return frame;
 }
 
@@ -208,7 +214,7 @@ void CameraManipulator::zoomOrthographic(float factor)
 
 void CameraManipulator::updateLookatMatrix()
 {
-  m_matrix = glm::lookAt(m_current.eye, m_current.ctr, m_current.up);
+  m_matrix = glm::lookAt(m_current.eye, m_current.ctr, effectiveUp(m_current.eye, m_current.ctr, m_current.up));
 }
 
 void CameraManipulator::applyCameraInstant(const Camera& camera)
@@ -289,27 +295,35 @@ void CameraManipulator::orbit(glm::vec2 displacement, bool invert /*= false*/)
     return;
   centerToEye = glm::normalize(centerToEye);
 
-  // Find the rotation around the UP axis (Y)
-  glm::mat4 rotY = glm::rotate(glm::mat4(1), -displacement.x, m_current.up);
+  // Decompose centerToEye into an elevation around 'up' and a horizontal direction:
+  //   centerToEye = cos(elev) * up + sin(elev) * horizontal
+  // Yaw rotates 'horizontal' around 'up', pitch changes 'elev'.
+  constexpr float kPolePad   = 1e-3f;
+  const float     cosElev    = glm::dot(centerToEye, m_current.up);
+  glm::vec3       horizontal = centerToEye - cosElev * m_current.up;
+  const float     sinElev    = glm::length(horizontal);
+  const float     elev       = std::atan2(sinElev, cosElev);
 
-  // Apply the (Y) rotation to the eye-center vector
-  centerToEye = rotY * glm::vec4(centerToEye, 0);
+  if(sinElev < CameraConstants::EPSILON)
+  {
+    // At the pole, 'horizontal' is undefined. Pick any direction perpendicular to 'up'.
+    const glm::vec3 ref = (std::abs(m_current.up.x) < 0.9f) ? glm::vec3(1.f, 0.f, 0.f) : glm::vec3(0.f, 0.f, 1.f);
+    horizontal          = glm::normalize(ref - glm::dot(ref, m_current.up) * m_current.up);
+  }
+  else
+  {
+    horizontal /= sinElev;
+  }
 
-  // Find the rotation around the X vector: cross between eye-center and up (X)
-  glm::vec3 axeX = glm::cross(m_current.up, centerToEye);
-  if(glm::dot(axeX, axeX) < CameraConstants::EPSILON)
-    return;
-  axeX           = glm::normalize(axeX);
-  glm::mat4 rotX = glm::rotate(glm::mat4(1), -displacement.y, axeX);
+  // Yaw around 'up'
+  const float yawC = std::cos(-displacement.x);
+  const float yawS = std::sin(-displacement.x);
+  horizontal       = yawC * horizontal + yawS * glm::cross(m_current.up, horizontal);
 
-  // Apply the (X) rotation to the eye-center vector
-  glm::vec3 rotationVec = rotX * glm::vec4(centerToEye, 0);
+  // Pitch, clamped to keep centerToEye off the poles
+  const float newElev = glm::clamp(elev - displacement.y, kPolePad, glm::pi<float>() - kPolePad);
 
-  if(glm::sign(rotationVec.x) == glm::sign(centerToEye.x))
-    centerToEye = rotationVec;
-
-  // Make the vector as long as it was originally
-  centerToEye *= radius;
+  centerToEye = (std::cos(newElev) * m_current.up + std::sin(newElev) * horizontal) * radius;
 
   // Finding the new position
   glm::vec3 newPosition = centerToEye + origin;
@@ -799,7 +813,7 @@ void CameraManipulator::fit(const glm::vec3& boxMin, const glm::vec3& boxMax, bo
   if(tightFit)
   {
     // Get only the rotation matrix
-    glm::mat3 mView = glm::lookAt(m_current.eye, boxCenter, m_current.up);
+    glm::mat3 mView = glm::lookAt(m_current.eye, boxCenter, effectiveUp(m_current.eye, boxCenter, m_current.up));
 
     // Check each 8 corner of the cube
     for(int i = 0; i < 8; i++)

@@ -238,6 +238,8 @@ function(compile_slang SHADER_FILES OUTPUT_DIR)
   set(_OPTIONAL_FLAGS "")
   if(COMPILE_SHADER_CAPABILITIES)
     list(APPEND _OPTIONAL_FLAGS -capability ${COMPILE_SHADER_CAPABILITIES})
+  else()
+    list(APPEND _OPTIONAL_FLAGS -ignore-capabilities)
   endif()
 
   set(_BUILD_FLAGS

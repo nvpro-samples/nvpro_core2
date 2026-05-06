@@ -150,8 +150,8 @@ struct GltfShadeMaterial
   float3 diffuseTransmissionColor;   // offset 192  - 12 bytes
   float  diffuseTransmissionFactor;  // offset 204  - 4 bytes
 
-  float3 multiscatterColor;   // offset 208  - 12 bytes  // KHR_materials_volume_scatter
-  float  scatterAnisotropy;   // offset 220  - 4 bytes   // KHR_materials_volume_scatter
+  float3 multiscatterColorFactor;  // offset 208  - 12 bytes  // KHR_materials_volume_scatter
+  float  scatterAnisotropy;        // offset 220  - 4 bytes   // KHR_materials_volume_scatter
 
   int doubleSided;  // offset 224  - 4 bytes
   // Texture infos (uint16_t, 2 bytes each)
@@ -225,7 +225,7 @@ inline GltfShadeMaterial defaultGltfMaterial()
   m.pbrGlossinessFactor         = 1;
   m.diffuseTransmissionColor    = float3(1, 1, 1);
   m.diffuseTransmissionFactor   = 0;
-  m.multiscatterColor           = float3(0, 0, 0);
+  m.multiscatterColorFactor     = float3(0, 0, 0);
   m.scatterAnisotropy           = 0;
   m.doubleSided                 = 0;
 

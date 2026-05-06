@@ -292,18 +292,20 @@ PbrMaterial evaluateMaterial(in GltfShadeMaterial material, MeshState state, Sam
     pbrMat.transmission *= getTexture(textures, texInfos[material.transmissionTexture], state.tc, state.texGrad).r;
   }
 
-  // KHR_materials_volume. Note: this evaluator does not sample the thicknessTexture; the
-  // per-fragment value is just the factor. Apps that need texture-modulated thickness (like
-  // vk_gltf_renderer) use their own evaluator. thickness == 0 is the thin-walled case.
+  // KHR_materials_volume
   pbrMat.attenuationColor    = material.attenuationColor;
   pbrMat.attenuationDistance = material.attenuationDistance;
   pbrMat.thickness           = material.thicknessFactor;
+  if(isTexturePresent(material.thicknessTexture))
+  {
+    pbrMat.thickness *= getTexture(textures, texInfos[material.thicknessTexture], state.tc, state.texGrad).g;
+  }
 
   // KHR_materials_volume_scatter
   // Compute scattering coefficient from multi-scatter albedo and attenuation
-  if(any(material.multiscatterColor > float3(0.0)))
+  if(any(material.multiscatterColorFactor > float3(0.0)))
   {
-    float3 singleScatterAlbedo = multiToSingleScatterAlbedo(material.multiscatterColor);
+    float3 singleScatterAlbedo = multiToSingleScatterAlbedo(material.multiscatterColorFactor);
     float3 attenuationCoef = -log(max(pbrMat.attenuationColor, float3(0.001))) / max(pbrMat.attenuationDistance, 0.001);
     pbrMat.scatterCoefficient = attenuationCoef * singleScatterAlbedo;
   }
