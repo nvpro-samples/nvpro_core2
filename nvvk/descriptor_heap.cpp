@@ -22,8 +22,8 @@
 #include "descriptor_heap.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cassert>
+#include <limits>
 #include <vector>
 
 #include <nvutils/logger.hpp>
@@ -42,12 +42,19 @@ VkResult DescriptorHeap::init(VkPhysicalDevice physicalDevice, VkDevice device)
 
   NVVK_FAIL_RETURN(m_info.init(physicalDevice, device));
 
-  m_resourceDescStride = std::max(m_info.imageDescriptorSize(), m_info.bufferDescriptorSize());
+  // Find the available capacity for resource descriptors
+  const VkDeviceSize maxHeapBytes = m_info.maxResourceHeapSize();
+  const VkDeviceSize minReserved  = m_info.minResourceHeapReservedRange();
+  m_availableCapacity             = (maxHeapBytes >= minReserved) ? (maxHeapBytes - minReserved) : 0;
+
+  // Max capacities if the entire resource heap were one type, ignoring the reserved range and per-type alignment for mixed layouts.
+  m_maxImageCapacity =
+      static_cast<uint32_t>((m_info.imageDescriptorSize() > 0) ? (m_availableCapacity / m_info.imageDescriptorSize()) : 0);
+  m_maxBufferCapacity =
+      static_cast<uint32_t>((m_info.bufferDescriptorSize() > 0) ? (m_availableCapacity / m_info.bufferDescriptorSize()) : 0);
 
   m_maxSamplerCapacity = static_cast<uint32_t>((m_info.maxSamplerHeapSize() - m_info.minSamplerHeapReservedRange())
                                                / m_info.samplerDescriptorSize());
-  m_maxResourceCapacity =
-      static_cast<uint32_t>((m_info.maxResourceHeapSize() - m_info.minResourceHeapReservedRange()) / m_resourceDescStride);
 
   return VK_SUCCESS;
 }
@@ -56,22 +63,43 @@ VkResult DescriptorHeap::init(VkPhysicalDevice physicalDevice, VkDevice device)
 void DescriptorHeap::deinit()
 {
   m_info.deinit();
-  m_info                = {};
-  m_resourceDescStride  = {};
-  m_samplerHeapSize     = {};
-  m_resourceHeapSize    = {};
-  m_maxSamplers         = {};
-  m_maxResources        = {};
-  m_maxSamplerCapacity  = {};
-  m_maxResourceCapacity = {};
-  m_samplerDirtyMin     = ~0u;
-  m_samplerDirtyMax     = 0;
-  m_resourceDirtyMin    = ~0u;
-  m_resourceDirtyMax    = 0;
+  m_info                     = {};
+  m_samplerHeapSize          = {};
+  m_resourceHeapSize         = {};
+  m_maxSamplers              = {};
+  m_maxSamplerCapacity       = {};
+  m_maxImages                = {};
+  m_maxBuffers               = {};
+  m_maxImageCapacity         = {};
+  m_maxBufferCapacity        = {};
+  m_availableCapacity        = {};
+  m_imageRegionStartBytes    = {};
+  m_bufferRegionStartBytes   = {};
+  m_reservedRangeOffsetBytes = {};
+  m_resourceImageDirtyMin    = std::numeric_limits<VkDeviceSize>::max();
+  m_resourceImageDirtyMax    = {};
+  m_resourceBufferDirtyMin   = std::numeric_limits<VkDeviceSize>::max();
+  m_resourceBufferDirtyMax   = {};
+  m_samplerDirtyMin          = std::numeric_limits<uint32_t>::max();
+  m_samplerDirtyMax          = {};
   m_samplerMap.clear();
   m_samplerIndexToState.clear();
   m_freeSamplerSlots.clear();
   m_nextSamplerSlot = 0;
+}
+
+//--------------------------------------------------------------------------------------------------
+uint32_t DescriptorHeap::imageShaderIndexBase() const
+{
+  const VkDeviceSize sz = m_info.imageDescriptorSize();
+  return (sz > 0) ? static_cast<uint32_t>(m_imageRegionStartBytes / sz) : 0;
+}
+
+//--------------------------------------------------------------------------------------------------
+uint32_t DescriptorHeap::bufferShaderIndexBase() const
+{
+  const VkDeviceSize sz = m_info.bufferDescriptorSize();
+  return (sz > 0) ? static_cast<uint32_t>(m_bufferRegionStartBytes / sz) : 0;
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -90,8 +118,8 @@ VkDeviceSize DescriptorHeap::setupSamplerHeap(uint32_t maxSamplers)
   m_samplerHeapSize = m_info.alignToSamplerHeap(offset);
 
   m_maxSamplers     = maxSamplers;
-  m_samplerDirtyMin = ~0u;
-  m_samplerDirtyMax = 0;
+  m_samplerDirtyMin = std::numeric_limits<uint32_t>::max();
+  m_samplerDirtyMax = {};
   m_samplerMap.clear();
   m_samplerIndexToState.clear();
   m_freeSamplerSlots.clear();
@@ -100,23 +128,63 @@ VkDeviceSize DescriptorHeap::setupSamplerHeap(uint32_t maxSamplers)
 }
 
 //--------------------------------------------------------------------------------------------------
-VkDeviceSize DescriptorHeap::setupResourceHeap(uint32_t maxResources)
+VkDeviceSize DescriptorHeap::setupResourceHeap(uint32_t maxImages, uint32_t maxBuffers)
 {
-  assert(m_info.isInitialized() && maxResources > 0);
-  if(maxResources > m_maxResourceCapacity)
+  assert(m_info.isInitialized());
+  if(maxImages == 0 && maxBuffers == 0)
   {
-    LOGE("DescriptorHeap: maxResources (%u) exceeds hardware capacity (%u)\n", maxResources, m_maxResourceCapacity);
+    LOGE("DescriptorHeap: setupResourceHeap requires maxImages > 0 or maxBuffers > 0\n");
     return 0;
   }
 
-  VkDeviceSize resourceHeapSize = m_resourceDescStride * maxResources + m_info.minResourceHeapReservedRange();
-  resourceHeapSize              = m_info.alignToResourceHeap(resourceHeapSize);
+  VkDeviceSize offset        = 0;
+  m_imageRegionStartBytes    = m_info.appendImageDescriptors(offset, maxImages);
+  m_bufferRegionStartBytes   = m_info.appendBufferDescriptors(offset, maxBuffers);
+  m_reservedRangeOffsetBytes = m_info.appendResourceReservedRange(offset);
+  // Accurate byte usage for this (images, buffers) layout: packing through append calls, then resource heap alignment.
+  const VkDeviceSize packedResourceHeapBytes = m_info.alignToResourceHeap(offset);
 
-  m_resourceHeapSize = resourceHeapSize;
-  m_maxResources     = maxResources;
-  m_resourceDirtyMin = ~0u;
-  m_resourceDirtyMax = 0;
+  if(packedResourceHeapBytes > m_info.maxResourceHeapSize())
+  {
+    LOGE(
+        "DescriptorHeap: packed resource heap (%llu bytes) exceeds maxResourceHeapSize (%llu) "
+        "(images=%u, buffers=%u; includes per-type alignment between regions, reserved range, heap alignment). "
+        "Loose limits from availableCapacity() do not apply to mixed layouts.\n",
+        packedResourceHeapBytes, m_info.maxResourceHeapSize(), maxImages, maxBuffers);
+    return 0;
+  }
+
+  m_resourceHeapSize       = packedResourceHeapBytes;
+  m_maxImages              = maxImages;
+  m_maxBuffers             = maxBuffers;
+  m_resourceImageDirtyMin  = std::numeric_limits<VkDeviceSize>::max();
+  m_resourceImageDirtyMax  = 0;
+  m_resourceBufferDirtyMin = std::numeric_limits<VkDeviceSize>::max();
+  m_resourceBufferDirtyMax = 0;
   return m_resourceHeapSize;
+}
+
+//--------------------------------------------------------------------------------------------------
+bool DescriptorHeap::testMixedCapacity(uint32_t maxImages, uint32_t maxBuffers)
+{
+  assert(m_info.isInitialized());
+  if(maxImages == 0 && maxBuffers == 0)
+    return false;
+
+  VkDeviceSize offset = 0;
+  m_info.appendImageDescriptors(offset, maxImages);
+  m_info.appendBufferDescriptors(offset, maxBuffers);
+  m_info.appendResourceReservedRange(offset);
+  const VkDeviceSize packedResourceHeapBytes = m_info.alignToResourceHeap(offset);
+
+  const VkDeviceSize maxHeap = m_info.maxResourceHeapSize();
+  if(packedResourceHeapBytes > maxHeap)
+  {
+    LOGI("DescriptorHeap::testMixedCapacity: images=%u buffers=%u pack to %llu bytes, above maxResourceHeapSize (%llu).\n", maxImages,
+         maxBuffers, static_cast<unsigned long long>(packedResourceHeapBytes), static_cast<unsigned long long>(maxHeap));
+    return false;
+  }
+  return true;
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -210,50 +278,73 @@ VkResult DescriptorHeap::writeSamplerDescriptor(uint32_t index, const VkSamplerC
 }
 
 //--------------------------------------------------------------------------------------------------
-VkResult DescriptorHeap::writeImageDescriptor(uint32_t index, VkImage image, VkFormat format, VkImageLayout layout, void* resourceHeapBase, VkImageViewType viewType)
+void DescriptorHeap::markResourceImageDirty(VkDeviceSize byteOffset, VkDeviceSize descriptorByteSize)
+{
+  const VkDeviceSize lastByte = byteOffset + descriptorByteSize - 1;
+  m_resourceImageDirtyMin     = std::min(m_resourceImageDirtyMin, byteOffset);
+  m_resourceImageDirtyMax     = std::max(m_resourceImageDirtyMax, lastByte);
+}
+
+//--------------------------------------------------------------------------------------------------
+void DescriptorHeap::markResourceBufferDirty(VkDeviceSize byteOffset, VkDeviceSize descriptorByteSize)
+{
+  const VkDeviceSize lastByte = byteOffset + descriptorByteSize - 1;
+  m_resourceBufferDirtyMin    = std::min(m_resourceBufferDirtyMin, byteOffset);
+  m_resourceBufferDirtyMax    = std::max(m_resourceBufferDirtyMax, lastByte);
+}
+
+//--------------------------------------------------------------------------------------------------
+VkResult DescriptorHeap::writeImageDescriptor(uint32_t        localImageIndex,
+                                              VkImage         image,
+                                              VkFormat        format,
+                                              VkImageLayout   layout,
+                                              void*           resourceHeapBase,
+                                              VkImageViewType viewType)
 {
   assert(m_info.isInitialized());
-  assert(index < m_maxResources);
+  assert(localImageIndex < m_maxImages && "localImageIndex out of range");
   assert(resourceHeapBase != nullptr);
 
   if(!m_info.isInitialized())
     return VK_ERROR_INITIALIZATION_FAILED;
-  if(index >= m_maxResources || resourceHeapBase == nullptr)
+  if(m_maxImages == 0 || localImageIndex >= m_maxImages || resourceHeapBase == nullptr)
     return VK_ERROR_VALIDATION_FAILED_EXT;
 
-  void* dst = static_cast<uint8_t*>(resourceHeapBase) + static_cast<size_t>(index) * static_cast<size_t>(m_resourceDescStride);
+  const VkDeviceSize imgSize = m_info.imageDescriptorSize();
+  void*              dst     = static_cast<uint8_t*>(resourceHeapBase) + m_imageRegionStartBytes
+              + static_cast<size_t>(localImageIndex) * static_cast<size_t>(imgSize);
   VkResult result = m_info.writeImageDescriptor(image, format, layout, dst, viewType);
   if(result != VK_SUCCESS)
     return result;
 
-  m_resourceDirtyMin = std::min(m_resourceDirtyMin, index);
-  m_resourceDirtyMax = std::max(m_resourceDirtyMax, index);
+  markResourceImageDirty(m_imageRegionStartBytes + static_cast<VkDeviceSize>(localImageIndex) * imgSize, imgSize);
   return VK_SUCCESS;
 }
 
 //--------------------------------------------------------------------------------------------------
-VkResult DescriptorHeap::writeBufferDescriptor(uint32_t         index,
+VkResult DescriptorHeap::writeBufferDescriptor(uint32_t         localBufferIndex,
                                                VkDeviceAddress  bufferAddress,
                                                VkDeviceSize     bufferSize,
                                                VkDescriptorType type,
                                                void*            resourceHeapBase)
 {
   assert(m_info.isInitialized());
-  assert(index < m_maxResources);
+  assert(localBufferIndex < m_maxBuffers && "localBufferIndex out of range");
   assert(resourceHeapBase != nullptr);
 
   if(!m_info.isInitialized())
     return VK_ERROR_INITIALIZATION_FAILED;
-  if(index >= m_maxResources || resourceHeapBase == nullptr)
+  if(m_maxBuffers == 0 || localBufferIndex >= m_maxBuffers || resourceHeapBase == nullptr)
     return VK_ERROR_VALIDATION_FAILED_EXT;
 
-  void* dst = static_cast<uint8_t*>(resourceHeapBase) + static_cast<size_t>(index) * static_cast<size_t>(m_resourceDescStride);
+  const VkDeviceSize bufSize = m_info.bufferDescriptorSize();
+  void*              dst     = static_cast<uint8_t*>(resourceHeapBase) + m_bufferRegionStartBytes
+              + static_cast<size_t>(localBufferIndex) * static_cast<size_t>(bufSize);
   VkResult result = m_info.writeBufferDescriptor(bufferAddress, bufferSize, type, dst);
   if(result != VK_SUCCESS)
     return result;
 
-  m_resourceDirtyMin = std::min(m_resourceDirtyMin, index);
-  m_resourceDirtyMax = std::max(m_resourceDirtyMax, index);
+  markResourceBufferDirty(m_bufferRegionStartBytes + static_cast<VkDeviceSize>(localBufferIndex) * bufSize, bufSize);
   return VK_SUCCESS;
 }
 
@@ -269,27 +360,39 @@ DescriptorHeap::DirtyRange DescriptorHeap::getSamplerDirtyRange() const
 }
 
 //--------------------------------------------------------------------------------------------------
-DescriptorHeap::DirtyRange DescriptorHeap::getResourceDirtyRange() const
+DescriptorHeap::DirtyRange DescriptorHeap::getResourceImageDirtyRange() const
 {
-  if(m_resourceDirtyMin > m_resourceDirtyMax)
+  if(m_resourceImageDirtyMin > m_resourceImageDirtyMax)
     return {0, 0};
-  VkDeviceSize offset = static_cast<VkDeviceSize>(m_resourceDirtyMin) * m_resourceDescStride;
-  VkDeviceSize size   = static_cast<VkDeviceSize>(m_resourceDirtyMax - m_resourceDirtyMin + 1) * m_resourceDescStride;
+  VkDeviceSize offset = m_resourceImageDirtyMin;
+  VkDeviceSize size   = m_resourceImageDirtyMax - m_resourceImageDirtyMin + 1;
+  return {offset, size};
+}
+
+//--------------------------------------------------------------------------------------------------
+DescriptorHeap::DirtyRange DescriptorHeap::getResourceBufferDirtyRange() const
+{
+  if(m_resourceBufferDirtyMin > m_resourceBufferDirtyMax)
+    return {0, 0};
+  VkDeviceSize offset = m_resourceBufferDirtyMin;
+  VkDeviceSize size   = m_resourceBufferDirtyMax - m_resourceBufferDirtyMin + 1;
   return {offset, size};
 }
 
 //--------------------------------------------------------------------------------------------------
 void DescriptorHeap::clearSamplerDirty()
 {
-  m_samplerDirtyMin = ~0u;
-  m_samplerDirtyMax = 0;
+  m_samplerDirtyMin = std::numeric_limits<uint32_t>::max();
+  m_samplerDirtyMax = {};
 }
 
 //--------------------------------------------------------------------------------------------------
 void DescriptorHeap::clearResourceDirty()
 {
-  m_resourceDirtyMin = ~0u;
-  m_resourceDirtyMax = 0;
+  m_resourceImageDirtyMin  = std::numeric_limits<VkDeviceSize>::max();
+  m_resourceImageDirtyMax  = 0;
+  m_resourceBufferDirtyMin = std::numeric_limits<VkDeviceSize>::max();
+  m_resourceBufferDirtyMax = 0;
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -306,12 +409,12 @@ void DescriptorHeap::cmdBindHeaps(VkCommandBuffer cmd, VkDeviceAddress samplerHe
     vkCmdBindSamplerHeapEXT(cmd, &samplerBind);
   }
 
-  if(resourceHeapAddr != 0 && m_maxResources > 0)
+  if(resourceHeapAddr != 0 && (m_maxImages > 0 || m_maxBuffers > 0))
   {
     VkBindHeapInfoEXT resourceBind{
         .sType               = VK_STRUCTURE_TYPE_BIND_HEAP_INFO_EXT,
         .heapRange           = {resourceHeapAddr, m_resourceHeapSize},
-        .reservedRangeOffset = m_resourceDescStride * m_maxResources,
+        .reservedRangeOffset = m_reservedRangeOffsetBytes,
         .reservedRangeSize   = m_info.minResourceHeapReservedRange(),
     };
     vkCmdBindResourceHeapEXT(cmd, &resourceBind);
@@ -337,13 +440,21 @@ void DescriptorHeap::cmdBindHeaps(VkCommandBuffer cmd, VkDeviceAddress samplerHe
   // =====================================================================
   NVVK_CHECK(heap.init(physicalDevice, device));
 
+  // Packed sizing for a candidate mixed heap (e.g. loose single-type ceilings from init often exceed this together).
+  uint32_t numImages  = std::min(4U, heap.maxImageCapacity());
+  uint32_t numBuffers = std::min(3U, heap.maxBufferCapacity());
+  if(heap.testMixedCapacity(numImages, numBuffers) == false)
+  {
+    LOGE("DescriptorHeap: candidate mixed heap (images=%u, buffers=%u) exceeds capacity; adjust counts or check hardware limits.\n",
+         numImages, numBuffers);
+    return;
+  }
+
   // =====================================================================
-  // 2. Setup — compute heap sizes
+  // 2. Setup — compute heap sizes (images first, then buffers; local indices from 0)
   // =====================================================================
-  // Images and buffers share the resource heap.  The caller decides the
-  // index layout; for example, textures at [0..N), buffers at [N..M).
   VkDeviceSize samplerBufSize  = heap.setupSamplerHeap(2);
-  VkDeviceSize resourceBufSize = heap.setupResourceHeap(8);  // 4 images + 4 buffers
+  VkDeviceSize resourceBufSize = heap.setupResourceHeap(4, 3);  // 4 images + 3 buffers (indices 0..2)
 
   // =====================================================================
   // 3. Create GPU heap buffers
@@ -403,7 +514,6 @@ void DescriptorHeap::cmdBindHeaps(VkCommandBuffer cmd, VkDeviceAddress samplerHe
   // descriptor slots being updated.
   void* resMapping = resourceHeapBuffer.mapping;
 
-  // Images at indices [0..4)
   NVVK_CHECK(heap.writeImageDescriptor(0, image, format, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, resMapping));
   // nvvk::Image convenience overload
   nvvk::Image nvImage{};
@@ -412,57 +522,53 @@ void DescriptorHeap::cmdBindHeaps(VkCommandBuffer cmd, VkDeviceAddress samplerHe
   nvImage.descriptor.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   NVVK_CHECK(heap.writeImageDescriptor(1, nvImage, resMapping));
 
-  // Buffers at indices [4..8) — same resource heap, different descriptor type
-  NVVK_CHECK(heap.writeBufferDescriptor(4, sceneUBO, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, resMapping));
-  NVVK_CHECK(heap.writeBufferDescriptor(5, storageBuffer, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, resMapping));
-  // Low-level overload: raw address + size
-  NVVK_CHECK(heap.writeBufferDescriptor(6, storageBuffer.address, storageBuffer.bufferSize,
+  NVVK_CHECK(heap.writeBufferDescriptor(0, sceneUBO, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, resMapping));
+  NVVK_CHECK(heap.writeBufferDescriptor(1, storageBuffer, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, resMapping));
+  NVVK_CHECK(heap.writeBufferDescriptor(2, storageBuffer.address, storageBuffer.bufferSize,
                                         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, resMapping));
 
   // =====================================================================
   // 5. Bind heaps and draw
   // =====================================================================
+  const uint32_t imgBase = heap.imageShaderIndexBase();
+  const uint32_t bufBase = heap.bufferShaderIndexBase();
+
   heap.cmdBindHeaps(cmd, samplerHeapBuffer.address, resourceHeapBuffer.address);
 
-  // In the shader (Slang):
-  //   Texture2D    tex = Texture2D.Handle(uint2(0, 0));           // image at index 0
-  //   SamplerState smp = SamplerState.Handle(uint2(linearIdx, 0));
-  //   StructuredBuffer<T> buf = StructuredBuffer<T>.Handle(uint2(4, 0)); // buffer at index 4
-  //
-  // GLSL/SPIR-V paths that map traditional set/binding to heap offsets via
-  // VkDescriptorSetAndBindingMappingEXT need the per-heap stride:
-  const uint32_t samplerStride  = static_cast<uint32_t>(heap.samplerDescriptorSize());
-  const uint32_t resourceStride = static_cast<uint32_t>(heap.resourceDescriptorStride());
-  (void)samplerStride;
-  (void)resourceStride;
-
-  // In real code this is your application's push-constants struct.
-  std::array<float, 4> push{};
-  VkPushDataInfoEXT    pushInfo{
-         .sType  = VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT,
-         .offset = 0,
-         .data   = {.address = push.data(), .size = sizeof(push)},
+  // Mirror this layout in Slang push constants; bases combine with local indices for ResourceHeap handles:
+  //   Texture2D.Handle(uint2(push.imageShaderIndexBase + localImageIdx, 0)), etc.
+  struct DescriptorHeapPushExample
+  {
+    uint32_t imageShaderIndexBase{};
+    uint32_t bufferShaderIndexBase{};
+    uint32_t reserved[2]{};
+  };
+  DescriptorHeapPushExample push{};
+  push.imageShaderIndexBase = imgBase;  // Currently always zero since images are first in the resource heap, but use for clarity and future flexibility.
+  push.bufferShaderIndexBase = bufBase;  // Base index for buffer descriptors in the shader; add local indices from writeBufferDescriptor calls.
+  VkPushDataInfoEXT pushInfo{
+      .sType  = VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT,
+      .offset = 0,
+      .data   = {.address = &push, .size = sizeof(push)},
   };
   vkCmdPushDataEXT(cmd, &pushInfo);
 
   // =====================================================================
   // 6. Incremental update — dirty range tracking
   // =====================================================================
-  // After initial fill, update individual descriptors (e.g. texture
-  // load/unload).  The dirty range tells you what sub-range to upload.
-  // With a persistently mapped buffer this is just a barrier concern,
-  // but with a device-local buffer you'd upload the dirty sub-range:
   heap.clearResourceDirty();
   NVVK_CHECK(heap.writeImageDescriptor(2, image, format, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, resMapping));
-  NVVK_CHECK(heap.writeBufferDescriptor(5, storageBuffer, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, resMapping));
-  DescriptorHeap::DirtyRange dirty = heap.getResourceDirtyRange();  // covers indices [2..5]
-  (void)dirty;  // with a mapped buffer, data is already visible to the GPU
+  NVVK_CHECK(heap.writeBufferDescriptor(1, storageBuffer, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, resMapping));
+  DescriptorHeap::DirtyRange dirtyImages  = heap.getResourceImageDirtyRange();
+  DescriptorHeap::DirtyRange dirtyBuffers = heap.getResourceBufferDirtyRange();
+  (void)dirtyImages;
+  (void)dirtyBuffers;
   heap.clearResourceDirty();
 
   // =====================================================================
   // 7. Resize — grow the resource heap
   // =====================================================================
-  VkDeviceSize newSize = heap.setupResourceHeap(16);
+  VkDeviceSize newSize = heap.setupResourceHeap(8, 8);
   allocator->destroyBuffer(resourceHeapBuffer);
   NVVK_CHECK(allocator->createBuffer(resourceHeapBuffer, newSize, heapUsage, VMA_MEMORY_USAGE_AUTO,
                                      VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,

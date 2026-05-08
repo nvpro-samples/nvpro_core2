@@ -150,7 +150,7 @@ VkDeviceSize DescriptorHeapWriter::appendSamplerReservedRange(VkDeviceSize& offs
 //--------------------------------------------------------------------------------------------------
 VkDeviceSize DescriptorHeapWriter::appendResourceReservedRange(VkDeviceSize& offset) const
 {
-  VkDeviceSize start = offset;
+  VkDeviceSize start = nvutils::align_up(offset, m_imageDescAlignment);
   offset             = start + m_minResourceReservedRange;
   return start;
 }
