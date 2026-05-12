@@ -33,6 +33,7 @@
 #
 # Capabilities:
 #   CAPABILITIES <cap1> <cap2>...  - SPIR-V capabilities (joined with + for slangc)
+#   IGNORE_CAPABILITIES ON|OFF     - Suppress errors from missing capabilities. (default: OFF)
 #
 # Build settings:
 #   DEBUG_LEVEL <0-3>              - Debug information level (default: 3)
@@ -129,6 +130,7 @@ function(compile_slang SHADER_FILES OUTPUT_DIR)
     NAME_SUFFIX
     VERBOSE
     SHOW_TIMING
+    IGNORE_CAPABILITIES
   )
 
   set(multiValueArgs
@@ -212,6 +214,10 @@ function(compile_slang SHADER_FILES OUTPUT_DIR)
 
   # Join capabilities list with "+" for slangc -capability flag
   string(REPLACE ";" "+" COMPILE_SHADER_CAPABILITIES "${COMPILE_SHADER_CAPABILITIES}")
+  
+  if(NOT DEFINED COMPILE_SHADER_IGNORE_CAPABILITIES)
+    set(COMPILE_SHADER_IGNORE_CAPABILITIES OFF)
+  endif()
 
   #------------------------------------------------------------------------------------------------
   # Build compiler flags
@@ -238,8 +244,12 @@ function(compile_slang SHADER_FILES OUTPUT_DIR)
   set(_OPTIONAL_FLAGS "")
   if(COMPILE_SHADER_CAPABILITIES)
     list(APPEND _OPTIONAL_FLAGS -capability ${COMPILE_SHADER_CAPABILITIES})
+  endif()
+  
+  if(COMPILE_SHADER_IGNORE_CAPABILITIES)
+	list(APPEND _OPTIONAL_FLAGS -ignore-capabilities)
   else()
-    list(APPEND _OPTIONAL_FLAGS -ignore-capabilities)
+    list(APPEND _OPTIONAL_FLAGS -restrictive-capability-check)
   endif()
 
   set(_BUILD_FLAGS

@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cinttypes>
 #include <limits>
 #include <vector>
 
@@ -146,11 +147,11 @@ VkDeviceSize DescriptorHeap::setupResourceHeap(uint32_t maxImages, uint32_t maxB
 
   if(packedResourceHeapBytes > m_info.maxResourceHeapSize())
   {
-    LOGE(
-        "DescriptorHeap: packed resource heap (%llu bytes) exceeds maxResourceHeapSize (%llu) "
-        "(images=%u, buffers=%u; includes per-type alignment between regions, reserved range, heap alignment). "
-        "Loose limits from availableCapacity() do not apply to mixed layouts.\n",
-        packedResourceHeapBytes, m_info.maxResourceHeapSize(), maxImages, maxBuffers);
+    LOGE("DescriptorHeap: packed resource heap (%" PRIu64 " bytes) exceeds maxResourceHeapSize (%" PRIu64
+         ") "
+         "(images=%u, buffers=%u; includes per-type alignment between regions, reserved range, heap alignment). "
+         "Loose limits from availableCapacity() do not apply to mixed layouts.\n",
+         packedResourceHeapBytes, m_info.maxResourceHeapSize(), maxImages, maxBuffers);
     return 0;
   }
 
@@ -180,8 +181,9 @@ bool DescriptorHeap::testMixedCapacity(uint32_t maxImages, uint32_t maxBuffers)
   const VkDeviceSize maxHeap = m_info.maxResourceHeapSize();
   if(packedResourceHeapBytes > maxHeap)
   {
-    LOGI("DescriptorHeap::testMixedCapacity: images=%u buffers=%u pack to %llu bytes, above maxResourceHeapSize (%llu).\n", maxImages,
-         maxBuffers, static_cast<unsigned long long>(packedResourceHeapBytes), static_cast<unsigned long long>(maxHeap));
+    LOGI("DescriptorHeap::testMixedCapacity: images=%u buffers=%u pack to %" PRIu64
+         " bytes, above maxResourceHeapSize (%" PRIu64 ").\n",
+         maxImages, maxBuffers, packedResourceHeapBytes, maxHeap);
     return false;
   }
   return true;
@@ -461,9 +463,9 @@ void DescriptorHeap::cmdBindHeaps(VkCommandBuffer cmd, VkDeviceAddress samplerHe
   // =====================================================================
   // Either heap can be device-local (write via staging) or host-mapped (write directly).
   // Pick per memory characteristics; both paths shown below for illustration.
-  const VkBufferUsageFlags2KHR heapUsage = DescriptorHeap::getRequiredBufferUsage();
-  nvvk::Buffer                 samplerHeapBuffer{};
-  nvvk::Buffer                 resourceHeapBuffer{};
+  constexpr VkBufferUsageFlags2KHR heapUsage = DescriptorHeap::getRequiredBufferUsage();
+  nvvk::Buffer                     samplerHeapBuffer{};
+  nvvk::Buffer                     resourceHeapBuffer{};
 
   // Sampler heap: device-local (staging upload path — see step 4a)
   NVVK_CHECK(allocator->createBuffer(samplerHeapBuffer, samplerBufSize, heapUsage, VMA_MEMORY_USAGE_AUTO, {},
