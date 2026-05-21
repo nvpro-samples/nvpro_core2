@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -618,10 +618,7 @@ VkResult nvvk::ResourceAllocator::invalidateBuffer(const nvvk::Buffer& buffer, V
 
 VkResult nvvk::ResourceAllocator::autoFlushBuffer(const nvvk::Buffer& buffer, VkDeviceSize offset /*= 0*/, VkDeviceSize size /*= VK_WHOLE_SIZE*/)
 {
-  assert(buffer.mapping);
-  VkMemoryPropertyFlags memFlags{};
-  vmaGetAllocationMemoryProperties(m_allocator, buffer.allocation, &memFlags);
-  if(!(memFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
+  if(isNonCoherentlyMapped(buffer))
   {
     return vmaFlushAllocation(m_allocator, buffer.allocation, offset, size);
   }
@@ -633,10 +630,7 @@ VkResult nvvk::ResourceAllocator::autoFlushBuffer(const nvvk::Buffer& buffer, Vk
 
 VkResult nvvk::ResourceAllocator::autoInvalidateBuffer(const nvvk::Buffer& buffer, VkDeviceSize offset /*= 0*/, VkDeviceSize size /*= VK_WHOLE_SIZE*/)
 {
-  assert(buffer.mapping);
-  VkMemoryPropertyFlags memFlags{};
-  vmaGetAllocationMemoryProperties(m_allocator, buffer.allocation, &memFlags);
-  if(!(memFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
+  if(isNonCoherentlyMapped(buffer))
   {
     return vmaInvalidateAllocation(m_allocator, buffer.allocation, offset, size);
   }
@@ -646,6 +640,13 @@ VkResult nvvk::ResourceAllocator::autoInvalidateBuffer(const nvvk::Buffer& buffe
   }
 }
 
+bool nvvk::ResourceAllocator::isNonCoherentlyMapped(const nvvk::Buffer& buffer) const
+{
+  assert(buffer.mapping);
+  VkMemoryPropertyFlags memFlags{};
+  vmaGetAllocationMemoryProperties(m_allocator, buffer.allocation, &memFlags);
+  return !(memFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+}
 
 //-------------------------------------------------------------------------------------------------------------------------
 // Export allocator

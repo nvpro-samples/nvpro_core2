@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -149,6 +149,26 @@ bool SliderFloat4(const char* label, float v[4], float v_min, float v_max, const
 {
   return entry(label, [&] { return ImGui::SliderFloat4("##hidden", v, v_min, v_max, format, flags); }, tooltip);
 }
+bool SliderDouble(const char* label, double* v, double v_min, double v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
+{
+  return entry(
+      label, [&] { return ImGui::SliderScalar("##hidden", ImGuiDataType_Double, v, &v_min, &v_max, format, flags); }, tooltip);
+}
+bool SliderDouble2(const char* label, double v[2], double v_min, double v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
+{
+  return entry(
+      label, [&] { return ImGui::SliderScalarN("##hidden", ImGuiDataType_Double, v, 2, &v_min, &v_max, format, flags); }, tooltip);
+}
+bool SliderDouble3(const char* label, double v[3], double v_min, double v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
+{
+  return entry(
+      label, [&] { return ImGui::SliderScalarN("##hidden", ImGuiDataType_Double, v, 3, &v_min, &v_max, format, flags); }, tooltip);
+}
+bool SliderDouble4(const char* label, double v[4], double v_min, double v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
+{
+  return entry(
+      label, [&] { return ImGui::SliderScalarN("##hidden", ImGuiDataType_Double, v, 4, &v_min, &v_max, format, flags); }, tooltip);
+}
 bool SliderAngle(const char*        label,
                  float*             v_rad,
                  float              v_degrees_min,
@@ -186,6 +206,19 @@ bool SliderScalar(const char*        label,
 {
   return entry(label, [&] { return ImGui::SliderScalar("##hidden", data_type, p_data, p_min, p_max, format, flags); }, tooltip);
 }
+bool SliderScalarN(const char*        label,
+                   ImGuiDataType      data_type,
+                   void*              p_data,
+                   int                components,
+                   const void*        p_min,
+                   const void*        p_max,
+                   const char*        format,
+                   ImGuiSliderFlags   flags,
+                   const std::string& tooltip)
+{
+  return entry(
+      label, [&] { return ImGui::SliderScalarN("##hidden", data_type, p_data, components, p_min, p_max, format, flags); }, tooltip);
+}
 
 bool DragFloat(const char* label, float* v, float v_speed, float v_min, float v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
@@ -202,6 +235,42 @@ bool DragFloat3(const char* label, float v[3], float v_speed, float v_min, float
 bool DragFloat4(const char* label, float v[4], float v_speed, float v_min, float v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
   return entry(label, [&] { return ImGui::DragFloat4("##hidden", v, v_speed, v_min, v_max, format, flags); }, tooltip);
+}
+bool DragDouble(const char* label, double* v, double v_speed, double v_min, double v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
+{
+  return entry(
+      label,
+      [&] {
+        return ImGui::DragScalar("##hidden", ImGuiDataType_Double, v, static_cast<float>(v_speed), &v_min, &v_max, format, flags);
+      },
+      tooltip);
+}
+bool DragDouble2(const char* label, double v[2], double v_speed, double v_min, double v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
+{
+  return entry(
+      label,
+      [&] {
+        return ImGui::DragScalarN("##hidden", ImGuiDataType_Double, v, 2, static_cast<float>(v_speed), &v_min, &v_max, format, flags);
+      },
+      tooltip);
+}
+bool DragDouble3(const char* label, double v[3], double v_speed, double v_min, double v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
+{
+  return entry(
+      label,
+      [&] {
+        return ImGui::DragScalarN("##hidden", ImGuiDataType_Double, v, 3, static_cast<float>(v_speed), &v_min, &v_max, format, flags);
+      },
+      tooltip);
+}
+bool DragDouble4(const char* label, double v[4], double v_speed, double v_min, double v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
+{
+  return entry(
+      label,
+      [&] {
+        return ImGui::DragScalarN("##hidden", ImGuiDataType_Double, v, 4, static_cast<float>(v_speed), &v_min, &v_max, format, flags);
+      },
+      tooltip);
 }
 bool DragInt(const char* label, int* v, float v_speed, int v_min, int v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
@@ -231,6 +300,21 @@ bool DragScalar(const char*        label,
 {
   return entry(
       label, [&] { return ImGui::DragScalar("##hidden", data_type, p_data, v_speed, p_min, p_max, format, flags); }, tooltip);
+}
+bool DragScalarN(const char*        label,
+                 ImGuiDataType      data_type,
+                 void*              p_data,
+                 int                components,
+                 float              v_speed /*= 1.0f*/,
+                 const void*        p_min /*= NULL*/,
+                 const void*        p_max /*= NULL*/,
+                 const char*        format /*= NULL*/,
+                 ImGuiSliderFlags   flags /*= 0*/,
+                 const std::string& tooltip /*= {}*/)
+{
+  return entry(
+      label,
+      [&] { return ImGui::DragScalarN("##hidden", data_type, p_data, components, v_speed, p_min, p_max, format, flags); }, tooltip);
 }
 bool InputText(const char* label, char* buf, size_t buf_size, ImGuiInputTextFlags flags, const std::string& tooltip)
 {
@@ -320,6 +404,36 @@ bool InputDouble(const char* label, double* v, double step, double step_fast, co
 {
   return entry(label, [&] { return ImGui::InputDouble("##hidden", v, step, step_fast, format, flags); }, tooltip);
 }
+bool InputDouble2(const char* label, double v[2], double step, double step_fast, const char* format, ImGuiInputTextFlags flags, const std::string& tooltip)
+{
+  return entry(
+      label,
+      [&] {
+        return ImGui::InputScalarN("##hidden", ImGuiDataType_Double, v, 2, step > 0.0 ? &step : nullptr,
+                                   step_fast > 0.0 ? &step_fast : nullptr, format, flags);
+      },
+      tooltip);
+}
+bool InputDouble3(const char* label, double v[3], double step, double step_fast, const char* format, ImGuiInputTextFlags flags, const std::string& tooltip)
+{
+  return entry(
+      label,
+      [&] {
+        return ImGui::InputScalarN("##hidden", ImGuiDataType_Double, v, 3, step > 0.0 ? &step : nullptr,
+                                   step_fast > 0.0 ? &step_fast : nullptr, format, flags);
+      },
+      tooltip);
+}
+bool InputDouble4(const char* label, double v[4], double step, double step_fast, const char* format, ImGuiInputTextFlags flags, const std::string& tooltip)
+{
+  return entry(
+      label,
+      [&] {
+        return ImGui::InputScalarN("##hidden", ImGuiDataType_Double, v, 4, step > 0.0 ? &step : nullptr,
+                                   step_fast > 0.0 ? &step_fast : nullptr, format, flags);
+      },
+      tooltip);
+}
 bool InputScalar(const char*         label,
                  ImGuiDataType       data_type,
                  void*               p_data,
@@ -331,6 +445,20 @@ bool InputScalar(const char*         label,
 {
   return entry(
       label, [&] { return ImGui::InputScalar("##hidden", data_type, p_data, p_step, p_step_fast, format, flags); }, tooltip);
+}
+bool InputScalarN(const char*         label,
+                  ImGuiDataType       data_type,
+                  void*               p_data,
+                  int                 components,
+                  const void*         p_step,
+                  const void*         p_step_fast,
+                  const char*         format,
+                  ImGuiInputTextFlags flags,
+                  const std::string&  tooltip)
+{
+  return entry(
+      label,
+      [&] { return ImGui::InputScalarN("##hidden", data_type, p_data, components, p_step, p_step_fast, format, flags); }, tooltip);
 }
 
 bool ColorEdit3(const char* label, float col[3], ImGuiColorEditFlags flags, const std::string& tooltip)

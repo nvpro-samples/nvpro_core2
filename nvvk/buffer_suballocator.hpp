@@ -23,43 +23,10 @@
 #include <string>
 #include <memory>
 
-#include <offsetallocator/offsetAllocator.hpp>
-#include <vulkan/vulkan_core.h>
-
+#include "buffer_suballocation.hpp"
 #include "resource_allocator.hpp"
 
 namespace nvvk {
-
-class BufferSubAllocation
-{
-public:
-  BufferSubAllocation() = default;
-
-  operator bool() const { return allocation.offset != OffsetAllocator::Allocation::NO_SPACE; }
-
-  // useful for sorting by buffer binds
-  uint16_t getBlockIndex() const { return block; }
-
-private:
-  friend class BufferSubAllocator;
-
-  // the allocation.offset is in units of BufferSubAllocator's minAlignment
-  OffsetAllocator::Allocation allocation;
-
-  // original requested allocation size
-  // the OffsetAllocator's size may be bigger given its internal free space search
-  uint32_t size{};
-
-  // original requested alignment
-  // This alignment may need to be applied when converting the allocation.offset back
-  // to actual byte offset
-  uint16_t alignmentMinusOne{};
-
-  uint16_t block{};
-#if !defined(NDEBUG) && !defined(NVVK_DISABLE_BUFFER_SUB_ALLOCATOR_DEBUG_POINTER)
-  class BufferSubAllocator* allocator{};
-#endif
-};
 
 // Allocates blocks of buffers that one can
 // sub allocate from.
@@ -130,6 +97,8 @@ public:
     VkDeviceSize reservedSize{};
     // what is available within internal usage
     VkDeviceSize freeSize{};
+    // sum of allocations
+    VkDeviceSize allocatedSize{};
   };
 
   // current report on memory consumption

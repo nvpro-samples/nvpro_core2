@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -60,21 +60,31 @@ bool SliderFloat(const char* label, float* v, float v_min, float v_max, const ch
 bool SliderFloat2(const char* label, float v[2], float v_min, float v_max, const char* format = "%.3f", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
 bool SliderFloat3(const char* label, float v[3], float v_min, float v_max, const char* format = "%.3f", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
 bool SliderFloat4(const char* label, float v[4], float v_min, float v_max, const char* format = "%.3f", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
+bool SliderDouble(const char* label, double* v, double v_min, double v_max, const char* format = "%.3f", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
+bool SliderDouble2(const char* label, double v[2], double v_min, double v_max, const char* format = "%.3f", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
+bool SliderDouble3(const char* label, double v[3], double v_min, double v_max, const char* format = "%.3f", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
+bool SliderDouble4(const char* label, double v[4], double v_min, double v_max, const char* format = "%.3f", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
 bool SliderAngle(const char* label, float* v_rad, float v_degrees_min = -360.0f, float v_degrees_max = +360.0f, const char* format = "%.0f deg", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
 bool SliderInt(const char* label, int* v, int v_min, int v_max, const char* format = "%d", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
 bool SliderInt2(const char* label, int v[2], int v_min, int v_max, const char* format = "%d", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
 bool SliderInt3(const char* label, int v[3], int v_min, int v_max, const char* format = "%d", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
 bool SliderInt4(const char* label, int v[4], int v_min, int v_max, const char* format = "%d", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
 bool SliderScalar(const char* label, ImGuiDataType data_type, void* p_data, const void* p_min, const void* p_max, const char* format = NULL, ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
+bool SliderScalarN(const char* label, ImGuiDataType data_type, void* p_data, int components, const void* p_min, const void* p_max, const char* format = NULL, ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
 bool DragFloat(const char* label, float* v, float v_speed = 1.0f, float v_min = 0.0f, float v_max = 0.0f, const char* format = "%.3f", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
 bool DragFloat2(const char* label, float v[2], float v_speed = 1.0f, float v_min = 0.0f, float v_max = 0.0f, const char* format = "%.3f", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
 bool DragFloat3(const char* label, float v[3], float v_speed = 1.0f, float v_min = 0.0f, float v_max = 0.0f, const char* format = "%.3f", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
 bool DragFloat4(const char* label, float v[4], float v_speed = 1.0f, float v_min = 0.0f, float v_max = 0.0f, const char* format = "%.3f", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
+bool DragDouble(const char* label, double* v, double v_speed = 1.0, double v_min = 0.0, double v_max = 0.0, const char* format = "%.3f", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
+bool DragDouble2(const char* label, double v[2], double v_speed = 1.0, double v_min = 0.0, double v_max = 0.0, const char* format = "%.3f", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
+bool DragDouble3(const char* label, double v[3], double v_speed = 1.0, double v_min = 0.0, double v_max = 0.0, const char* format = "%.3f", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
+bool DragDouble4(const char* label, double v[4], double v_speed = 1.0, double v_min = 0.0, double v_max = 0.0, const char* format = "%.3f", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
 bool DragInt(const char* label, int* v, float v_speed = 1.0f, int v_min = 0, int v_max = 0, const char* format = "%d", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
 bool DragInt2(const char* label, int v[2], float v_speed = 1.0f, int v_min = 0, int v_max = 0, const char* format = "%d", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
 bool DragInt3(const char* label, int v[3], float v_speed = 1.0f, int v_min = 0, int v_max = 0, const char* format = "%d", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
 bool DragInt4(const char* label, int v[4], float v_speed = 1.0f, int v_min = 0, int v_max = 0, const char* format = "%d", ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
 bool DragScalar(const char* label, ImGuiDataType data_type, void* p_data, float v_speed = 1.0f, const void* p_min = NULL, const void* p_max = NULL, const char* format = NULL, ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
+bool DragScalarN(const char* label, ImGuiDataType data_type, void* p_data, int components, float v_speed = 1.0f, const void* p_min = NULL, const void* p_max = NULL, const char* format = NULL, ImGuiSliderFlags flags = 0, const std::string& tooltip = {});
 bool InputText(const char* label, char* buf, size_t buf_size, ImGuiInputTextFlags flags = 0, const std::string& tooltip = {});
 bool InputTextMultiline(const char* label, char* buf, size_t buf_size, const ImVec2& size = ImVec2(0, 0), ImGuiInputTextFlags flags = 0, const std::string& tooltip = {});
 // does support workaround for ImGuiInputTextFlags_EnterReturnsTrue
@@ -90,7 +100,11 @@ bool InputInt2(const char* label, int v[2], ImGuiInputTextFlags flags = 0, const
 bool InputInt3(const char* label, int v[3], ImGuiInputTextFlags flags = 0, const std::string& tooltip = {});
 bool InputInt4(const char* label, int v[4], ImGuiInputTextFlags flags = 0, const std::string& tooltip = {});
 bool InputDouble(const char* label, double* v, double step = 0.0, double step_fast = 0.0, const char* format = "%.6f", ImGuiInputTextFlags flags = 0, const std::string& tooltip = {});
+bool InputDouble2(const char* label, double v[2], double step = 0.0, double step_fast = 0.0, const char* format = "%.6f", ImGuiInputTextFlags flags = 0, const std::string& tooltip = {});
+bool InputDouble3(const char* label, double v[3], double step = 0.0, double step_fast = 0.0, const char* format = "%.6f", ImGuiInputTextFlags flags = 0, const std::string& tooltip = {});
+bool InputDouble4(const char* label, double v[4], double step = 0.0, double step_fast = 0.0, const char* format = "%.6f", ImGuiInputTextFlags flags = 0, const std::string& tooltip = {});
 bool InputScalar(const char* label, ImGuiDataType data_type, void* p_data, const void* p_step = NULL, const void* p_step_fast = NULL, const char* format = NULL, ImGuiInputTextFlags flags = 0, const std::string& tooltip = {});
+bool InputScalarN(const char* label, ImGuiDataType data_type, void* p_data, int components, const void* p_step = NULL, const void* p_step_fast = NULL, const char* format = NULL, ImGuiInputTextFlags flags = 0, const std::string& tooltip = {});
 bool ColorEdit3(const char* label, float col[3], ImGuiColorEditFlags flags = 0, const std::string& tooltip = {});
 bool ColorEdit4(const char* label, float col[4], ImGuiColorEditFlags flags = 0, const std::string& tooltip = {});
 bool ColorPicker3(const char* label, float col[3], ImGuiColorEditFlags flags = 0, const std::string& tooltip = {});

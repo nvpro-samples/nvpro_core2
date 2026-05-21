@@ -212,6 +212,26 @@ public:
   void                addSignalSemaphore(const VkSemaphoreSubmitInfo& signal);
   nvvk::SemaphoreInfo getFrameSignalSemaphore() const;  // Return the current frame's signal semaphore
 
+  // These callbacks will be invoked by the CPU with the current frame ID before
+  // and after the Application's queue submit and swapchain present call.
+  // They're most useful for setting latency markers; although frame pacing
+  // helps us with latency, this is necessary when timing frames with DLSS
+  // Frame Generation.
+  using FrameMarkerCallback = std::function<void(uint64_t)>;
+  void setQueueSubmitStartCallback(FrameMarkerCallback&& callback) { m_queueSubmitStartCallback = std::move(callback); }
+  void setQueueSubmitEndCallback(FrameMarkerCallback&& callback) { m_queueSubmitEndCallback = std::move(callback); }
+  void setPresentStartCallback(FrameMarkerCallback&& callback) { m_presentStartCallback = std::move(callback); }
+  void setPresentEndCallback(FrameMarkerCallback&& callback) { m_presentEndCallback = std::move(callback); }
+  // This callback will be invoked by the CPU on the swapchain image
+  // after rendering is completed, before presentation. It's intended so DLSS
+  // Frame Generation can generate extrapolated frames.
+  using FrameGenerationCallback =
+      std::function<void(VkCommandBuffer, VkImage, VkImageView, VkFormat, VkExtent2D, uint64_t /* frame number */)>;
+  void setFrameGenerationCallback(FrameGenerationCallback&& callback)
+  {
+    m_frameGenerationCallback = std::move(callback);
+  }
+
   // these command buffers are enqueued before the command buffer that is provided `onRender(cmd)`
   void prependCommandBuffer(const VkCommandBufferSubmitInfo& cmd);
 
@@ -330,6 +350,12 @@ protected:
 
   //--
   std::function<void(ImGuiID)> m_dockSetup;  // Function to setup the docking
+
+  FrameGenerationCallback m_frameGenerationCallback;
+  FrameMarkerCallback     m_queueSubmitStartCallback;
+  FrameMarkerCallback     m_queueSubmitEndCallback;
+  FrameMarkerCallback     m_presentStartCallback;
+  FrameMarkerCallback     m_presentEndCallback;
 
   bool     m_headless{false};
   bool     m_headlessClose{false};

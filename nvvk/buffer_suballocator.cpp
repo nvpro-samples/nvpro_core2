@@ -133,6 +133,7 @@ BufferSubAllocator::Report BufferSubAllocator::getReport() const
       // dedicated blocks
       report.reservedSize += block.buffer.bufferSize;
     }
+    report.allocatedSize += block.buffer.bufferSize;
   }
 
   report.requestedSize = m_state.allocatedSize;

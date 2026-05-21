@@ -56,6 +56,6 @@ void SetHomeCamera(const nvutils::CameraManipulator::Camera& camera);
 // Adds a camera to the list of cameras
 void AddCamera(const nvutils::CameraManipulator::Camera& camera);
 // Returns all cameras in the widget (including home at index 0)
-std::vector<nvutils::CameraManipulator::Camera> GetCameras();
+std::vector<nvutils::CameraManipulator::Camera>& GetCameras();
 
 }  // namespace nvgui

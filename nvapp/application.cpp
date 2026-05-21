@@ -591,7 +591,6 @@ void nvapp::Application::drawFrame(VkCommandBuffer cmd)
 
 void nvapp::Application::renderToSwapchain(VkCommandBuffer cmd)
 {
-
   // Start rendering to the swapchain
   beginDynamicRenderingToSwapchain(cmd);
   {
@@ -600,6 +599,12 @@ void nvapp::Application::renderToSwapchain(VkCommandBuffer cmd)
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
   }
   endDynamicRenderingToSwapchain(cmd);
+
+  if(m_frameGenerationCallback)
+  {
+    m_frameGenerationCallback(cmd, m_swapchain.getImage(), m_swapchain.getImageView(), m_swapchain.getImageFormat(),
+                              m_windowSize, m_frameData[m_frameRingCurrent].frameNumber);
+  }
 }
 
 //-----------------------------------------------------------------------
@@ -671,7 +676,6 @@ void nvapp::Application::endFrame(VkCommandBuffer cmd, uint32_t frameInFlights)
   // Ends recording of commands for the frame
   NVVK_CHECK(vkEndCommandBuffer(cmd));
 
-
   // Get the frame data for the current frame in the ring buffer
   FrameData& frame = m_frameData[m_frameRingCurrent];
 
@@ -708,8 +712,18 @@ void nvapp::Application::endFrame(VkCommandBuffer cmd, uint32_t frameInFlights)
     submitInfo.pNext = &frameBoundaryExt;
   }
 
+  if(m_queueSubmitStartCallback)
+  {
+    m_queueSubmitStartCallback(frame.frameNumber);
+  }
+
   // Submit the command buffer to the GPU and signal when it's done
   NVVK_CHECK(vkQueueSubmit2(m_queues[0].queue, 1, &submitInfo, nullptr));
+
+  if(m_queueSubmitEndCallback)
+  {
+    m_queueSubmitEndCallback(frame.frameNumber);
+  }
 }
 
 //-----------------------------------------------------------------------
@@ -718,8 +732,19 @@ void nvapp::Application::endFrame(VkCommandBuffer cmd, uint32_t frameInFlights)
 //
 void nvapp::Application::presentFrame()
 {
+  const FrameData& frame = m_frameData[m_frameRingCurrent];
+  if(m_presentStartCallback)
+  {
+    m_presentStartCallback(frame.frameNumber);
+  }
+
   // Present the image
   m_swapchain.presentFrame(m_queues[0].queue);
+
+  if(m_presentEndCallback)
+  {
+    m_presentEndCallback(frame.frameNumber);
+  }
 }
 
 //-----------------------------------------------------------------------
@@ -879,7 +904,6 @@ VkResult nvapp::Application::createTransientCommandPool()
 //
 VkResult nvapp::Application::createFrameSubmission(uint32_t numFrames)
 {
-  assert(numFrames >= 2);  // Must have at least 2 frames in flight
   VkDevice device = m_device;
 
   m_frameData.resize(numFrames);

@@ -40,7 +40,7 @@ namespace nvvk {
 // This is a base class for all staging uploaders.
 // It provides the basic functionality for staging uploader.
 // It is not meant to be used directly, but rather to be derived from.
-// The derived classes must implement the acquireStagingSpace, releaseStaging and resetStaging functions.
+// The derived classes must implement the `acquireStagingSpace`, `releaseStaging` and `resetStaging` functions.
 class StagingUploaderBase
 {
 public:
@@ -108,6 +108,8 @@ public:
   //////////////////////////////////////////////////////////////////////////
 
   // All temporary staging resources are associated with the provided SemaphoreState.
+  // When mapped pointers are used, their use is only valid until the next
+  // `cmdUploadAppended` or `cancelAppended` call.
 
   // buffer.buffer, buffer.bufferSize and buffer.mapping are used
   // if buffer.mapping is valid, then we directly write to it
@@ -339,7 +341,7 @@ protected:
 };
 
 // A basic implementation of the StagingUploaderBase interface.
-// Use the provided resource alloctor to acquire staging resources
+// Use the provided resource allocator to acquire staging resources
 // as individual buffers.
 class StagingUploader : public StagingUploaderBase
 {
@@ -356,14 +358,20 @@ public:
   }
 
   // explicit lifetime of resourceAllocator must be ensured externally
-  void init(ResourceAllocator* resourceAllocator, bool enableLayoutBarriers = false);
+  // `enableLayoutBarriers` is passed to `StagingUploaderBase::setEnableLayoutBarriers`
+  // `forceCoherentMapping` means we use memory for staging buffers that is guaranteed to have
+  // VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, avoiding the need to call vkFlushMappedMemoryRanges.
+  void init(ResourceAllocator* resourceAllocator, bool enableLayoutBarriers = false, bool forceCoherentMapping = true);
 
   // deinit implicitly calls `releaseStaging(true)`
   void deinit();
 
   VkResult acquireStagingSpace(BufferRange& stagingSpace, size_t dataSize, const void* data, const SemaphoreState& semaphoreState = {}) override;
-
   void releaseStaging(bool forceAll = false) override;
+
+  // Submit appended staging operations and barriers to `cmd`.
+  // This call may also flush non-coherently mapped staging buffers when applicable
+  void cmdUploadAppended(VkCommandBuffer cmd) override;
 
   ResourceAllocator* getResourceAllocator();
 
@@ -378,7 +386,9 @@ protected:
 
   ResourceAllocator*           m_resourceAllocator = nullptr;
   std::vector<StagingResource> m_stagingResources;
-  size_t                       m_batchStagingCount = 0;
+  size_t                       m_batchStagingCount    = 0;
+  bool                         m_batchRequiresFlush   = false;
+  bool                         m_forceCoherentMapping = true;
 };
 
 }  // namespace nvvk

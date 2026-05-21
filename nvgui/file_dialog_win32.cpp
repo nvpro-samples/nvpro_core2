@@ -45,7 +45,8 @@ static std::filesystem::path unifiedDialog(struct GLFWwindow*           glfwin,
                                            const std::wstring&          title,
                                            const std::wstring&          exts,
                                            DialogMode                   mode,
-                                           const std::filesystem::path& initialDir = {})
+                                           const std::filesystem::path& initialDir      = {},
+                                           const std::filesystem::path& initialFilename = {})
 {
   if(!glfwin)
   {
@@ -109,15 +110,28 @@ static std::filesystem::path unifiedDialog(struct GLFWwindow*           glfwin,
           pfd->SetFileTypes((UINT)filters.size(), filters.data());
       }
 
-      // Set initial directory if provided
-      if(!initialDir.empty() && std::filesystem::exists(initialDir))
+      // Set initial directory if provided;
+      // if `initialDir` isn't specified, we get it from `defaultFilename`.
+      std::filesystem::path trueInitialDir = initialDir;
+      if(trueInitialDir.empty())
+      {
+        trueInitialDir = initialFilename.parent_path();
+      }
+
+      if(!trueInitialDir.empty() && std::filesystem::exists(trueInitialDir))
       {
         Microsoft::WRL::ComPtr<IShellItem> pFolder;
-        hr = SHCreateItemFromParsingName(initialDir.c_str(), nullptr, IID_PPV_ARGS(&pFolder));
+        hr = SHCreateItemFromParsingName(trueInitialDir.c_str(), nullptr, IID_PPV_ARGS(&pFolder));
         if(SUCCEEDED(hr))
         {
           pfd->SetFolder(pFolder.Get());
         }
+      }
+
+      // Set initial filename if provided.
+      if(!initialFilename.empty())
+      {
+        pfd->SetFileName(initialFilename.filename().c_str());
       }
 
       // Show the dialog
@@ -164,9 +178,13 @@ std::filesystem::path nvgui::windowOpenFileDialog(struct GLFWwindow* glfwin, con
   return result;
 }
 
-std::filesystem::path nvgui::windowSaveFileDialog(struct GLFWwindow* glfwin, const char* title, const char* exts)
+std::filesystem::path nvgui::windowSaveFileDialog(struct GLFWwindow*           glfwin,
+                                                  const char*                  title,
+                                                  const char*                  exts,
+                                                  const std::filesystem::path& initialFilename)
 {
-  return unifiedDialog(glfwin, nvutils::pathFromUtf8(title).native(), nvutils::pathFromUtf8(exts).native(), DialogMode::SaveFile);
+  return unifiedDialog(glfwin, nvutils::pathFromUtf8(title).native(), nvutils::pathFromUtf8(exts).native(),
+                       DialogMode::SaveFile, {}, initialFilename);
 }
 
 std::filesystem::path nvgui::windowOpenFolderDialog(struct GLFWwindow* glfwin, const char* title)

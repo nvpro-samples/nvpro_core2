@@ -22,7 +22,7 @@
 
 #include "elem_camera.hpp"
 
-float nvapp::ElementCamera::wheelSpeed = -10.0f;
+double nvapp::ElementCamera::wheelSpeed = -10.0;
 
 void nvapp::ElementCamera::updateCamera(std::shared_ptr<nvutils::CameraManipulator> m_cameraManip, ImGuiWindow* viewportWindow)
 {

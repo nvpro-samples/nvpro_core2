@@ -52,7 +52,7 @@ struct ElementCamera : public nvapp::IAppElement
   // Can be called independently
   static void updateCamera(std::shared_ptr<nvutils::CameraManipulator> m_cameraManip, ImGuiWindow* viewportWindow);
 
-  static float wheelSpeed;
+  static double wheelSpeed;
 
 private:
   std::shared_ptr<nvutils::CameraManipulator> m_cameraManip{};

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -40,8 +40,15 @@
   VMA_ASSERT((expr) && "Use nvvk::ResourceAllocator::setLeakID(nvvkAllocID) to find the leak")
 #endif
 
-
+// X11 workaround
+#pragma push_macro("None")
+#pragma push_macro("Bool")
+#undef None
+#undef Bool
 #include <vk_mem_alloc.h>
+#pragma pop_macro("None")
+#pragma pop_macro("Bool")
+
 #include <vulkan/vulkan_core.h>
 
 #include "barriers.hpp"
@@ -227,6 +234,12 @@ public:
   VkDeviceMemory getDeviceMemory(VmaAllocation allocation) const;
 
   //////////////////////////////////////////////////////////////////////////
+  // This group of function calls is only legal for mapped buffers
+
+  // Returns true if the buffer's memory has no VK_MEMORY_PROPERTY_HOST_COHERENT_BIT.
+  // If 'true' one must flush (GPU sees what CPU wrote) or invalidate (CPU sees what GPU wrote)
+  // the buffer manually.
+  bool isNonCoherentlyMapped(const nvvk::Buffer& buffer) const;
 
   // Calls `vkFlushMappedMemoryRanges` via VMA for the provided buffer's memory.
   // Is required for non-coherent mapped memory after it was written by cpu.

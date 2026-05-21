@@ -32,6 +32,8 @@ StagingUploader::StagingUploader(StagingUploader&& other) noexcept
     std::swap(m_resourceAllocator, other.m_resourceAllocator);
     std::swap(m_stagingResources, other.m_stagingResources);
     std::swap(m_batchStagingCount, other.m_batchStagingCount);
+    std::swap(m_batchRequiresFlush, other.m_batchRequiresFlush);
+    std::swap(m_forceCoherentMapping, other.m_forceCoherentMapping);
   }
 }
 
@@ -46,15 +48,19 @@ nvvk::StagingUploader& StagingUploader::operator=(StagingUploader&& other) noexc
     std::swap(m_resourceAllocator, other.m_resourceAllocator);
     std::swap(m_stagingResources, other.m_stagingResources);
     std::swap(m_batchStagingCount, other.m_batchStagingCount);
+    std::swap(m_batchRequiresFlush, other.m_batchRequiresFlush);
+    std::swap(m_forceCoherentMapping, other.m_forceCoherentMapping);
   }
   return *this;
 }
 
-void StagingUploader::init(ResourceAllocator* resourceAllocator, bool enableLayoutBarriers)
+void StagingUploader::init(ResourceAllocator* resourceAllocator, bool enableLayoutBarriers, bool forceCoherentMapping)
 {
   assert(m_resourceAllocator == nullptr);
   m_resourceAllocator         = resourceAllocator;
   m_base.enableLayoutBarriers = enableLayoutBarriers;
+  m_forceCoherentMapping      = forceCoherentMapping;
+  m_batchRequiresFlush        = false;
 }
 
 void StagingUploader::deinit()
@@ -104,8 +110,8 @@ VkResult StagingUploader::acquireStagingSpace(BufferRange& stagingSpace, size_t 
 
   VmaAllocationCreateInfo allocInfo = {
       .flags         = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT,
-      .usage         = VMA_MEMORY_USAGE_CPU_ONLY,
-      .requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+      .usage         = m_forceCoherentMapping ? VMA_MEMORY_USAGE_CPU_ONLY : VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
+      .requiredFlags = m_forceCoherentMapping ? VK_MEMORY_PROPERTY_HOST_COHERENT_BIT : 0u,
   };
 
   const VkBufferUsageFlags2CreateInfo bufferUsageFlags2CreateInfo{
@@ -139,6 +145,11 @@ VkResult StagingUploader::acquireStagingSpace(BufferRange& stagingSpace, size_t 
   m_base.stagingResourcesSize += dataSize;
   m_stagingResources.emplace_back(stagingResource);
   m_batchStagingCount++;
+
+  if(!m_forceCoherentMapping && m_resourceAllocator->isNonCoherentlyMapped(stagingResource.buffer))
+  {
+    m_batchRequiresFlush = true;
+  }
 
   stagingSpace.buffer  = stagingResource.buffer.buffer;
   stagingSpace.offset  = 0;
@@ -957,6 +968,21 @@ void StagingUploader::releaseStaging(bool forceAll)
   m_stagingResources.resize(writeIdx);
 }
 
+void StagingUploader::cmdUploadAppended(VkCommandBuffer cmd)
+{
+  if(m_batchRequiresFlush)
+  {
+    size_t stagingResourceCount = m_stagingResources.size();
+    // we speculatively always flush and not check each resource individually
+    for(size_t i = stagingResourceCount - m_batchStagingCount; i < stagingResourceCount; i++)
+    {
+      StagingResource& staging = m_stagingResources[i];
+      m_resourceAllocator->flushBuffer(staging.buffer, 0, VK_WHOLE_SIZE);
+    }
+  }
+  StagingUploaderBase::cmdUploadAppended(cmd);
+}
+
 void StagingUploader::resetStaging(bool isCancel)
 {
   if(isCancel)
@@ -977,7 +1003,8 @@ void StagingUploader::resetStaging(bool isCancel)
 
     m_stagingResources.resize(count - m_batchStagingCount);
   }
-  m_batchStagingCount = 0;
+  m_batchStagingCount  = 0;
+  m_batchRequiresFlush = false;
 }
 
 }  // namespace nvvk
@@ -1140,7 +1167,8 @@ void StagingUploader::resetStaging(bool isCancel)
     nvvk::Buffer          myBuffer;
     std::vector<uint32_t> myData;
 
-    // track transfer completion through a timeline semaphore
+    // Track transfer completion through a timeline semaphore.
+    // This semaphore state would be signaled by the transfer queue.
     VkSemaphore transferTimelineSemaphore{};
     uint64_t    transferTimelineValue = 1;
     nvvk::SemaphoreState transferSemaphoreState = nvvk::SemaphoreState::makeFixed(transferTimelineSemaphore, transferTimelineValue);
@@ -1165,6 +1193,8 @@ void StagingUploader::resetStaging(bool isCancel)
     //
     stagingUploader.cmdUploadAppended(transferCmd);
 
-    // must ensure the the submit of `graphicsCmd` waits for `transferSemaphoreState`
+    // must ensure the following conditions:
+    // - the queue submit of `transferCmd` signals `transferSemaphoreState`
+    // - the submit of `graphicsCmd` waits for `transferSemaphoreState`
   }
 }

@@ -40,7 +40,7 @@ VkResult nvvk::Swapchain::init(const InitInfo& info)
     m_preferredVsyncOnMode = info.preferredVsyncOnMode;
   m_preferredSurfaceFormat  = info.preferredFormat.surfaceFormat;
   m_preferredImageCount     = std::max(2u, info.preferredImageCount);
-  m_preferredFramesInFlight = std::max(2u, info.preferredFramesInFlight);
+  m_preferredFramesInFlight = std::max(1u, info.preferredFramesInFlight);
 
   VkBool32 supportsPresent = VK_FALSE;
   NVVK_FAIL_RETURN(vkGetPhysicalDeviceSurfaceSupportKHR(info.physicalDevice, info.queue.familyIndex, info.surface, &supportsPresent));

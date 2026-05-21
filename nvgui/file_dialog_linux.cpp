@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2019-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 //--------------------------------------------------------------------
@@ -136,13 +136,17 @@ std::filesystem::path nvgui::windowOpenFileDialog(struct GLFWwindow* glfwin, con
   return result;
 }
 
-std::filesystem::path nvgui::windowSaveFileDialog(struct GLFWwindow* glfwin, const char* title, const char* exts)
+std::filesystem::path nvgui::windowSaveFileDialog(struct GLFWwindow*           glfwin,
+                                                  const char*                  title,
+                                                  const char*                  exts,
+                                                  const std::filesystem::path& initialFilename)
 {
   // Not sure yet how to use this; maybe make as a child window somehow?
   [[maybe_unused]] Window hwnd = glfwGetX11Window(glfwin);
 
-  std::vector<std::string> filterArgs = toFilterArgs(exts);
-  return save_file(title, ".", filterArgs).result();
+  const std::vector<std::string> filterArgs  = toFilterArgs(exts);
+  const std::string              defaultPath = initialFilename.empty() ? "." : initialFilename.string();
+  return save_file(title, defaultPath, filterArgs).result();
 }
 
 std::filesystem::path nvgui::windowOpenFolderDialog(struct GLFWwindow* glfwin, const char* title)

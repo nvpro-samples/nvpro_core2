@@ -66,10 +66,10 @@ struct CameraPresetManager
   // update setting, load or save
   void update(std::shared_ptr<nvutils::CameraManipulator> cameraManip)
   {
-    // Push the HOME camera and load default setting
+    // Push the HOME camera and load default settings
     if(m_cameras.empty())
     {
-      m_cameras.emplace_back(cameraManip->getCamera());
+      addCamera(cameraManip->getCamera());
     }
     if(m_doLoadSetting)
       loadSetting(cameraManip);
@@ -90,8 +90,10 @@ struct CameraPresetManager
   // Clear all cameras except the HOME
   void removedSavedCameras()
   {
-    if(m_cameras.size() > 1)
-      m_cameras.erase(m_cameras.begin() + 1, m_cameras.end());
+    for(size_t len = m_cameras.size(); len > 1; len--)
+    {
+      removeCamera(len - 1);
+    }
   }
 
   void setCameraJsonFile(const std::filesystem::path& filename)
@@ -127,14 +129,26 @@ struct CameraPresetManager
     {
       m_cameras.emplace_back(camera);
       markJsonSettingsDirty();
+
+      auto& plugins = nvutils::cameraPlugins();
+      for(size_t pluginIdx = 0; pluginIdx < plugins.size(); pluginIdx++)
+      {
+        plugins[pluginIdx]->onPresetAdd();
+      }
     }
   }
 
   // Removing a camera
-  void removeCamera(int delete_item)
+  void removeCamera(size_t delete_item)
   {
     m_cameras.erase(m_cameras.begin() + delete_item);
     markJsonSettingsDirty();
+
+    auto& plugins = nvutils::cameraPlugins();
+    for(size_t pluginIdx = 0; pluginIdx < plugins.size(); pluginIdx++)
+    {
+      plugins[pluginIdx]->onPresetRemove(delete_item);
+    }
   }
 
   void markJsonSettingsDirty()
@@ -160,7 +174,7 @@ struct CameraPresetManager
   bool getJsonArray(const json& j, const std::string& name, T& value)
   {
     auto fieldIt = j.find(name);
-    if(fieldIt != j.end())
+    if(fieldIt != j.end() && fieldIt->is_array())
     {
       value = T((*fieldIt).begin(), (*fieldIt).end());
       return true;
@@ -168,7 +182,6 @@ struct CameraPresetManager
     LOGW("Could not find JSON field %s", name.c_str());
     return false;
   }
-
 
   void loadSetting(std::shared_ptr<nvutils::CameraManipulator> cameraM)
   {
@@ -181,7 +194,7 @@ struct CameraPresetManager
     if(m_cameras.empty() || m_doLoadSetting == false)
       return;
 
-    const glm::vec2& currentClipPlanes = cameraM->getClipPlanes();
+    const glm::dvec2& currentClipPlanes = cameraM->getClipPlanes();
     try
     {
       m_doLoadSetting = false;
@@ -195,46 +208,66 @@ struct CameraPresetManager
       i >> j;
 
       // Temp
-      int                iVal;
-      float              fVal;
-      std::vector<float> vfVal;
+      int                 iVal;
+      double              dVal;
+      std::vector<double> vdVal;
 
       // Settings
       if(getJsonValue(j, "mode", iVal))
         cameraM->setMode(static_cast<nvutils::CameraManipulator::Modes>(iVal));
-      if(getJsonValue(j, "speed", fVal))
-        cameraM->setSpeed(fVal);
-      if(getJsonValue(j, "anim_duration", fVal))
-        cameraM->setAnimationDuration(fVal);
+      if(getJsonValue(j, "speed", dVal))
+        cameraM->setSpeed(dVal);
+      if(getJsonValue(j, "anim_duration", dVal))
+        cameraM->setAnimationDuration(dVal);
 
       // All cameras
-      std::vector<json> cc;
-      getJsonArray(j, "cameras", cc);
-      for(auto& c : cc)
+      const auto& camerasPtr = j.find("cameras");
+      if(camerasPtr != j.end() && camerasPtr->is_array())
       {
-        nvutils::CameraManipulator::Camera camera;
-        if(getJsonArray(c, "eye", vfVal))
-          camera.eye = {vfVal[0], vfVal[1], vfVal[2]};
-        if(getJsonArray(c, "ctr", vfVal))
-          camera.ctr = {vfVal[0], vfVal[1], vfVal[2]};
-        if(getJsonArray(c, "up", vfVal))
-          camera.up = {vfVal[0], vfVal[1], vfVal[2]};
-        if(getJsonValue(c, "fov", fVal))
-          camera.fov = fVal;
-        if(getJsonArray(c, "clip", vfVal))
-          camera.nearFar = {vfVal[0], vfVal[1]};
-        else
-          camera.nearFar = currentClipPlanes;  // For old JSON files that didn't have clip planes saved
-        if(getJsonArray(c, "orthMag", vfVal))
-          camera.orthMag = {vfVal[0], vfVal[1]};
-        if(getJsonValue(c, "projectionType", iVal))
-          camera.projectionType = static_cast<nvutils::CameraManipulator::ProjectionType>(iVal);
-        addCamera(camera);
+        for(auto& c : *camerasPtr)
+        {
+          nvutils::CameraManipulator::Camera camera;
+          if(getJsonArray(c, "eye", vdVal))
+            camera.eye = {vdVal[0], vdVal[1], vdVal[2]};
+          if(getJsonArray(c, "ctr", vdVal))
+            camera.ctr = {vdVal[0], vdVal[1], vdVal[2]};
+          if(getJsonArray(c, "up", vdVal))
+            camera.up = {vdVal[0], vdVal[1], vdVal[2]};
+          if(getJsonValue(c, "fov", dVal))
+            camera.fov = dVal;
+          if(getJsonArray(c, "clip", vdVal))
+            camera.nearFar = {vdVal[0], vdVal[1]};
+          else
+            camera.nearFar = currentClipPlanes;  // For old JSON files that didn't have clip planes saved
+          if(getJsonArray(c, "orthMag", vdVal))
+            camera.orthMag = {vdVal[0], vdVal[1]};
+          if(getJsonValue(c, "projectionType", iVal))
+            camera.projectionType = static_cast<nvutils::CameraManipulator::ProjectionType>(iVal);
+          addCamera(camera);
+        }
       }
+
+      // Plugins
+      const auto& allPluginSettings = j.find("plugins");
+      if(allPluginSettings != j.end() && allPluginSettings->is_object())
+      {
+        auto& plugins = nvutils::cameraPlugins();
+        for(size_t pluginIdx = 0; pluginIdx < plugins.size(); pluginIdx++)
+        {
+          auto&       plugin   = plugins[pluginIdx];
+          const auto& settings = allPluginSettings->find(std::string(plugin->getName()));
+          if(settings != allPluginSettings->end() && settings->is_string())
+          {
+            plugin->onDeserialize(settings->get<std::string>());
+          }
+        }
+      }
+
       i.close();
     }
-    catch(...)
+    catch(const std::exception& e)
     {
+      LOGE("Could not load camera settings from %s: %s\n", nvutils::utf8FromPath(m_jsonFilename).c_str(), e.what());
       return;
     }
   }
@@ -257,16 +290,29 @@ struct CameraPresetManager
       {
         auto& c              = m_cameras[n];
         json  jo             = json::object();
-        jo["eye"]            = std::vector<float>{c.eye.x, c.eye.y, c.eye.z};
-        jo["up"]             = std::vector<float>{c.up.x, c.up.y, c.up.z};
-        jo["ctr"]            = std::vector<float>{c.ctr.x, c.ctr.y, c.ctr.z};
+        jo["eye"]            = std::vector<double>{c.eye.x, c.eye.y, c.eye.z};
+        jo["up"]             = std::vector<double>{c.up.x, c.up.y, c.up.z};
+        jo["ctr"]            = std::vector<double>{c.ctr.x, c.ctr.y, c.ctr.z};
         jo["fov"]            = c.fov;
-        jo["clip"]           = std::vector<float>{c.nearFar.x, c.nearFar.y};
-        jo["orthMag"]        = std::vector<float>{c.orthMag.x, c.orthMag.y};
+        jo["clip"]           = std::vector<double>{c.nearFar.x, c.nearFar.y};
+        jo["orthMag"]        = std::vector<double>{c.orthMag.x, c.orthMag.y};
         jo["projectionType"] = static_cast<int>(c.projectionType);
         cc.push_back(jo);
       }
-      j["cameras"] = cc;
+      j["cameras"] = std::move(cc);
+
+      // Plugins
+      auto& plugins = nvutils::cameraPlugins();
+      if(!plugins.empty())
+      {
+        json serialized = json::object();
+        for(size_t pluginIdx = 0; pluginIdx < plugins.size(); pluginIdx++)
+        {
+          auto& plugin                  = plugins[pluginIdx];
+          serialized[plugin->getName()] = plugin->onSerialize();
+        }
+        j["plugins"] = std::move(serialized);
+      }
 
       std::ofstream o(m_jsonFilename);
       if(o.is_open())
@@ -305,7 +351,7 @@ static bool PeBeginAutostretch(const char* label)
 //--------------------------------------------------------------------------------------------------
 // Quick Actions Bar with icon buttons
 //
-static bool QuickActionsBar(std::shared_ptr<nvutils::CameraManipulator> cameraM, nvutils::CameraManipulator::Camera& camera)
+static bool QuickActionsBar(nvutils::CameraManipulator& cameraM, nvutils::CameraManipulator::Camera& camera)
 {
   bool changed = false;
 
@@ -325,7 +371,7 @@ static bool QuickActionsBar(std::shared_ptr<nvutils::CameraManipulator> cameraM,
   ImGui::SameLine(0, s_buttonSpacing);
   if(ImGui::Button(ICON_MS_ADD_A_PHOTO))
   {
-    CameraPresetManager::getInstance().addCamera(cameraM->getCamera());
+    CameraPresetManager::getInstance().addCamera(cameraM.getCamera());
   }
   nvgui::tooltip("Save current camera position");
 
@@ -395,25 +441,25 @@ static bool QuickActionsBar(std::shared_ptr<nvutils::CameraManipulator> cameraM,
 //--------------------------------------------------------------------------------------------------
 // Camera Presets Grid with icons
 //
-static bool PresetsSection(std::shared_ptr<nvutils::CameraManipulator> cameraM, nvutils::CameraManipulator::Camera& camera)
+static bool PresetsSection(nvutils::CameraManipulator& cameraM, nvutils::CameraManipulator::Camera& camera)
 {
   bool changed = false;
 
-  auto& presetManager   = CameraPresetManager::getInstance();
-  int   buttonsCount    = (int)presetManager.m_cameras.size();
-  float windowVisibleX2 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+  auto&        presetManager   = CameraPresetManager::getInstance();
+  const size_t buttonsCount    = presetManager.m_cameras.size();
+  float        windowVisibleX2 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
 
   if(buttonsCount == 1)
     ImGui::TextDisabled(" - No saved cameras");
 
   // Display saved cameras
-  int         delete_item = -1;
+  size_t      delete_item = 0;  // Index 0, the home camera, can't be removed
   std::string thisLabel   = "#1";
   std::string nextLabel;
-  for(int n = 1; n < buttonsCount; n++)
+  for(size_t n = 1; n < buttonsCount; n++)
   {
     nextLabel = fmt::format("#{}", n + 1);
-    ImGui::PushID(n);
+    ImGui::PushID(static_cast<int>(n));
     if(ImGui::Button(thisLabel.c_str()))
     {
       camera  = presetManager.m_cameras[n];
@@ -444,7 +490,7 @@ static bool PresetsSection(std::shared_ptr<nvutils::CameraManipulator> cameraM, 
   }
 
   // Delete camera if requested
-  if(delete_item > 0)
+  if(delete_item != 0)
   {
     presetManager.removeCamera(delete_item);
   }
@@ -455,7 +501,7 @@ static bool PresetsSection(std::shared_ptr<nvutils::CameraManipulator> cameraM, 
 //--------------------------------------------------------------------------------------------------
 // Navigation Settings Section: Mode (examine, fly, walk), Speed
 //
-static bool NavigationSettingsSection(std::shared_ptr<nvutils::CameraManipulator> cameraM)
+static bool NavigationSettingsSection(nvutils::CameraManipulator& cameraM)
 {
   bool changed = false;
 
@@ -463,9 +509,8 @@ static bool NavigationSettingsSection(std::shared_ptr<nvutils::CameraManipulator
   // Dear ImGui in v1.92 has a FIXME where it doesn't add 1px of spacing after separators
   ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1.f);
 
-  auto mode     = cameraM->getMode();
-  auto speed    = cameraM->getSpeed();
-  auto duration = static_cast<float>(cameraM->getAnimationDuration());
+  const nvutils::CameraManipulator::Modes mode  = cameraM.getMode();
+  double                                  speed = cameraM.getSpeed();
 
   // Change the button color to show the one that's currently active, and to
   // make the other ones match the color of the background.
@@ -480,7 +525,7 @@ static bool NavigationSettingsSection(std::shared_ptr<nvutils::CameraManipulator
   setColor(mode == nvutils::CameraManipulator::Modes::Examine);
   if(ImGui::Button(ICON_MS_ORBIT))
   {
-    cameraM->setMode(nvutils::CameraManipulator::Modes::Examine);
+    cameraM.setMode(nvutils::CameraManipulator::Modes::Examine);
     changed = true;
   }
   nvgui::tooltip("Orbit around a point of interest");
@@ -488,7 +533,7 @@ static bool NavigationSettingsSection(std::shared_ptr<nvutils::CameraManipulator
   setColor(mode == nvutils::CameraManipulator::Modes::Fly);
   if(ImGui::Button(ICON_MS_FLIGHT))
   {
-    cameraM->setMode(nvutils::CameraManipulator::Modes::Fly);
+    cameraM.setMode(nvutils::CameraManipulator::Modes::Fly);
     changed = true;
   }
   nvgui::tooltip("Fly: Free camera movement");
@@ -496,7 +541,7 @@ static bool NavigationSettingsSection(std::shared_ptr<nvutils::CameraManipulator
   setColor(mode == nvutils::CameraManipulator::Modes::Walk);
   if(ImGui::Button(ICON_MS_DIRECTIONS_WALK))
   {
-    cameraM->setMode(nvutils::CameraManipulator::Modes::Walk);
+    cameraM.setMode(nvutils::CameraManipulator::Modes::Walk);
     changed = true;
   }
   nvgui::tooltip("Walk: Stay on a horizontal plane");
@@ -509,11 +554,11 @@ static bool NavigationSettingsSection(std::shared_ptr<nvutils::CameraManipulator
     if(PeBeginAutostretch("##Speed"))
     {
       // ImGuiSliderFlags_Logarithmic requires a value range for its scaling to work.
-      const float speedMin = 1e-3f;
-      const float speedMax = 1e+3f;
-      changed |= PE::DragFloat("Speed", &speed, 2e-4f * (speedMax - speedMin), speedMin, speedMax, "%.2f",
-                               ImGuiSliderFlags_Logarithmic, "Speed of camera movement");
-      cameraM->setSpeed(speed);
+      const double speedMin = 1.e-3;
+      const double speedMax = 1.e+3;
+      changed |= PE::DragDouble("Speed", &speed, 2.e-4 * (speedMax - speedMin), speedMin, speedMax, "%.2f",
+                                ImGuiSliderFlags_Logarithmic, "Speed of camera movement");
+      cameraM.setSpeed(speed);
       PE::end();
     }
   }
@@ -524,9 +569,9 @@ static bool NavigationSettingsSection(std::shared_ptr<nvutils::CameraManipulator
 //--------------------------------------------------------------------------------------------------
 // Camera Position Section : Eye, Center, Up vectors
 //
-static bool PositionSection(std::shared_ptr<nvutils::CameraManipulator> cameraM,
-                            nvutils::CameraManipulator::Camera&         camera,
-                            ImGuiTreeNodeFlags                          flag = ImGuiTreeNodeFlags_None)
+static bool PositionSection(nvutils::CameraManipulator&         cameraM,
+                            nvutils::CameraManipulator::Camera& camera,
+                            ImGuiTreeNodeFlags                  flag = ImGuiTreeNodeFlags_None)
 {
   bool changed = false;
 
@@ -539,15 +584,15 @@ static bool PositionSection(std::shared_ptr<nvutils::CameraManipulator> cameraM,
   {
     if(PeBeginAutostretch("##Position"))
     {
-      myChanged |= PE::InputFloat3("Eye", &camera.eye.x);
-      myChanged |= PE::InputFloat3("Center", &camera.ctr.x);
-      myChanged |= PE::InputFloat3("Up", &camera.up.x);
+      myChanged |= PE::InputDouble3("Eye", &camera.eye.x);
+      myChanged |= PE::InputDouble3("Center", &camera.ctr.x);
+      myChanged |= PE::InputDouble3("Up", &camera.up.x);
       PE::end();
     }
     ImGui::TreePop();
   }
 
-  if(!cameraM->isAnimated())  // Ignore changes during animation
+  if(!cameraM.isAnimated())  // Ignore changes during animation
   {
     changed |= myChanged;
   }
@@ -558,9 +603,9 @@ static bool PositionSection(std::shared_ptr<nvutils::CameraManipulator> cameraM,
 //--------------------------------------------------------------------------------------------------
 // Projection Settings Section: projection type, field of view, orthographic size, Z-clip planes
 //
-static bool ProjectionSettingsSection(std::shared_ptr<nvutils::CameraManipulator> cameraManip,
-                                      nvutils::CameraManipulator::Camera&         camera,
-                                      ImGuiTreeNodeFlags                          flag = ImGuiTreeNodeFlags_None)
+static bool ProjectionSettingsSection(nvutils::CameraManipulator&         cameraManip,
+                                      nvutils::CameraManipulator::Camera& camera,
+                                      ImGuiTreeNodeFlags                  flag = ImGuiTreeNodeFlags_None)
 {
   bool changed = false;
   if(ImGui::TreeNodeEx("Projection", flag))
@@ -575,9 +620,9 @@ static bool ProjectionSettingsSection(std::shared_ptr<nvutils::CameraManipulator
           if(!isPerspective)
           {
             // Apply the camera changes first, then convert
-            cameraManip->setCamera(camera, true);
-            cameraManip->convertToPerspective();
-            camera = cameraManip->getCamera();
+            cameraManip.setCamera(camera, true);
+            cameraManip.convertToPerspective();
+            camera = cameraManip.getCamera();
             return true;
           }
         }
@@ -587,9 +632,9 @@ static bool ProjectionSettingsSection(std::shared_ptr<nvutils::CameraManipulator
           if(isPerspective)
           {
             // Apply the camera changes first, then convert
-            cameraManip->setCamera(camera, true);
-            cameraManip->convertToOrthographic();
-            camera = cameraManip->getCamera();
+            cameraManip.setCamera(camera, true);
+            cameraManip.convertToOrthographic();
+            camera = cameraManip.getCamera();
             return true;
           }
         }
@@ -599,22 +644,22 @@ static bool ProjectionSettingsSection(std::shared_ptr<nvutils::CameraManipulator
       // Show FOV for perspective cameras
       if(camera.projectionType == nvutils::CameraManipulator::ProjectionType::Perspective)
       {
-        changed |= PE::SliderFloat("FOV", &camera.fov, 1.F, 179.F, "%.1f°", ImGuiSliderFlags_Logarithmic,
-                                   "Field of view of the camera (degrees)");
+        changed |= PE::SliderDouble("FOV", &camera.fov, nvutils::CameraConstants::MIN_FOV, nvutils::CameraConstants::MAX_FOV,
+                                    "%.1f°", ImGuiSliderFlags_Logarithmic, "Field of view of the camera (degrees)");
       }
       else  // Show orthographic size for orthographic cameras
       {
 
         // Quick axis-aligned orthographic view buttons
         {
-          const float     distance = glm::length(camera.eye - camera.ctr);
-          const glm::vec3 center   = camera.ctr;
+          const double     distance = glm::length(camera.eye - camera.ctr);
+          const glm::dvec3 center   = camera.ctr;
 
           struct AxisView
           {
             const char* label;
-            glm::vec3   direction;
-            glm::vec3   up;
+            glm::dvec3  direction;
+            glm::dvec3  up;
             const char* tooltip;
           };
 
@@ -639,20 +684,20 @@ static bool ProjectionSettingsSection(std::shared_ptr<nvutils::CameraManipulator
         }
         // Orthographic magnitude slider
         {
-          float magValues[2] = {camera.orthMag.x, camera.orthMag.y};
-          if(PE::DragFloat2("Mag", magValues, 0.1f, 0.01f, 10000.0f, "%.3f", ImGuiSliderFlags_None,
-                            "Orthographic half-width/height (glTF xmag/ymag)"))
+          double magValues[2] = {camera.orthMag.x, camera.orthMag.y};
+          if(PE::DragDouble2("Mag", magValues, 0.1, 0.01, 10000.0, "%.3f", ImGuiSliderFlags_None,
+                             "Orthographic half-width/height (glTF xmag/ymag)"))
           {
             // Detect which value changed and update the other to maintain aspect ratio
             if(magValues[0] != camera.orthMag.x)
             {
               camera.orthMag.x = magValues[0];
-              camera.orthMag.y = camera.orthMag.x / cameraManip->getAspectRatio();
+              camera.orthMag.y = camera.orthMag.x / cameraManip.getAspectRatio();
             }
             else if(magValues[1] != camera.orthMag.y)
             {
               camera.orthMag.y = magValues[1];
-              camera.orthMag.x = camera.orthMag.y * cameraManip->getAspectRatio();
+              camera.orthMag.x = camera.orthMag.y * cameraManip.getAspectRatio();
             }
             changed |= true;
           }
@@ -660,10 +705,10 @@ static bool ProjectionSettingsSection(std::shared_ptr<nvutils::CameraManipulator
       }
 
       // ImGuiSliderFlags_Logarithmic requires a value range for its scaling to work.
-      const float minClip = 1e-5f;
-      const float maxClip = 1e+9f;
-      changed |= PE::DragFloat2("Z-Clip", &camera.nearFar.x, 2e-5f * (maxClip - minClip), minClip, maxClip, "%.6f",
-                                ImGuiSliderFlags_Logarithmic, "Near/Far clip planes for depth buffer");
+      const double minClip = 1.e-5;
+      const double maxClip = 1.e+9;
+      changed |= PE::DragDouble2("Z-Clip", &camera.nearFar.x, 2.e-5 * (maxClip - minClip), minClip, maxClip, "%.6f",
+                                 ImGuiSliderFlags_Logarithmic, "Near/Far clip planes for depth buffer");
 
       PE::end();
     }
@@ -677,9 +722,9 @@ static bool ProjectionSettingsSection(std::shared_ptr<nvutils::CameraManipulator
 //--------------------------------------------------------------------------------------------------
 // Advanced Settings Section : Up vector (Y-up, Z-up), animation transition time
 //
-static bool OtherSettingsSection(std::shared_ptr<nvutils::CameraManipulator> cameraM,
-                                 nvutils::CameraManipulator::Camera&         camera,
-                                 ImGuiTreeNodeFlags                          flag = ImGuiTreeNodeFlags_None)
+static bool OtherSettingsSection(nvutils::CameraManipulator&         cameraM,
+                                 nvutils::CameraManipulator::Camera& camera,
+                                 ImGuiTreeNodeFlags                  flag = ImGuiTreeNodeFlags_None)
 {
   bool changed = false;
   if(ImGui::TreeNodeEx("Other", flag))
@@ -690,27 +735,27 @@ static bool OtherSettingsSection(std::shared_ptr<nvutils::CameraManipulator> cam
         const bool yIsUp = camera.up.y == 1;
         if(ImGui::RadioButton("Y-up", yIsUp))
         {
-          camera.up = glm::vec3(0, 1, 0);
+          camera.up = glm::dvec3(0, 1, 0);
           changed   = true;
         }
         ImGui::SameLine();
         if(ImGui::RadioButton("Z-up", !yIsUp))
         {
-          camera.up = glm::vec3(0, 0, 1);
+          camera.up = glm::dvec3(0, 0, 1);
           changed   = true;
         }
-        if(glm::length(camera.up) < 0.0001f)
+        if(glm::length(camera.up) < 0.0001)
         {
-          camera.up = yIsUp ? glm::vec3(0, 1, 0) : glm::vec3(0, 0, 1);
+          camera.up = yIsUp ? glm::dvec3(0, 1, 0) : glm::dvec3(0, 0, 1);
           changed   = true;
         }
         return changed;
       });
 
-      auto duration = static_cast<float>(cameraM->getAnimationDuration());
-      changed |= PE::SliderFloat("Transition", &duration, 0.0F, 2.0F, "%.2fs", ImGuiSliderFlags_None,
-                                 "Transition duration of camera movement");
-      cameraM->setAnimationDuration(duration);
+      double duration = cameraM.getAnimationDuration();
+      changed |= PE::SliderDouble("Transition", &duration, 0.0, 2.0, "%.2fs", ImGuiSliderFlags_None,
+                                  "Transition duration of camera movement");
+      cameraM.setAnimationDuration(duration);
 
       PE::end();
     }
@@ -725,7 +770,12 @@ static bool OtherSettingsSection(std::shared_ptr<nvutils::CameraManipulator> cam
 //
 bool nvgui::CameraWidget(std::shared_ptr<nvutils::CameraManipulator> cameraManip, bool embed, CameraWidgetSections openSections)
 {
-  assert(cameraManip && "CameraManipulator is not set");
+  if(!cameraManip)
+  {
+    assert(!"CameraManipulator is not set.");
+    ImGui::Text("CameraManipulator is not set.");
+    return false;
+  }
 
   bool changed{false};
   bool instantChanged{false};
@@ -746,25 +796,38 @@ bool nvgui::CameraWidget(std::shared_ptr<nvutils::CameraManipulator> cameraManip
 
   // Main camera panel with modern design
   {
-    changed |= QuickActionsBar(cameraManip, camera);
+    changed |= QuickActionsBar(*cameraManip, camera);
 
-    changed |= PresetsSection(cameraManip, camera);
+    changed |= PresetsSection(*cameraManip, camera);
 
-    changed |= NavigationSettingsSection(cameraManip);
+    changed |= NavigationSettingsSection(*cameraManip);
 
     ImGui::Separator();
 
     // Clip planes / FOV section
-    instantChanged |= ProjectionSettingsSection(cameraManip, camera,
+    instantChanged |= ProjectionSettingsSection(*cameraManip, camera,
                                                 (openSections & CameraSection_Projection) ? ImGuiTreeNodeFlags_DefaultOpen :
                                                                                             ImGuiTreeNodeFlags_None);
 
-    changed |= PositionSection(cameraManip, camera,
+    changed |= PositionSection(*cameraManip, camera,
                                (openSections & CameraSection_Position) ? ImGuiTreeNodeFlags_DefaultOpen : ImGuiTreeNodeFlags_None);
 
     // Up vector / Animation duration section
-    changed |= OtherSettingsSection(cameraManip, camera,
+    changed |= OtherSettingsSection(*cameraManip, camera,
                                     (openSections & CameraSection_Other) ? ImGuiTreeNodeFlags_DefaultOpen : ImGuiTreeNodeFlags_None);
+
+    // Plugins
+    const bool userInteracted = changed || instantChanged;
+
+    auto& cameraPlugins = nvutils::cameraPlugins();
+    for(size_t pluginIdx = 0; pluginIdx < cameraPlugins.size(); pluginIdx++)
+    {
+      if(userInteracted)
+      {
+        cameraPlugins[pluginIdx]->onUserInterrupt();
+      }
+      changed |= cameraPlugins[pluginIdx]->onUIRender(*cameraManip);
+    }
 
     if(embed)
     {
@@ -797,7 +860,7 @@ void nvgui::AddCamera(const nvutils::CameraManipulator::Camera& camera)
   CameraPresetManager::getInstance().addCamera(camera);
 }
 
-std::vector<nvutils::CameraManipulator::Camera> nvgui::GetCameras()
+std::vector<nvutils::CameraManipulator::Camera>& nvgui::GetCameras()
 {
   return CameraPresetManager::getInstance().m_cameras;
 }
