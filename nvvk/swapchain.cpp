@@ -19,6 +19,8 @@
 
 #include "nvutils/logger.hpp"
 
+#include <algorithm>
+
 #include "commands.hpp"
 #include "barriers.hpp"
 #include "check_error.hpp"
