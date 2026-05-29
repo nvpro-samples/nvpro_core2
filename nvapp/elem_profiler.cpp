@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -515,7 +515,7 @@ void ElementProfiler::renderBarChart(View& view)
         if(items > 0)
         {
           ImPlot::PlotBarGroups(labels1.data(), data1.data(), items, groups, size, 0,
-                                view.state->barChart.stacked | ImPlotBarGroupsFlags_Horizontal);
+                                ImPlotSpec(ImPlotProp_Flags, (int)(view.state->barChart.stacked | ImPlotBarGroupsFlags_Horizontal)));
         }
         ImPlot::EndPlot();
       }
@@ -635,8 +635,8 @@ void ElementProfiler::renderLineChart(View& view)
 
           if(view.state->lineChart.cpuLine)
           {
-            ImPlot::SetNextLineStyle(ImColor(1.f, 0.f, 0.f, 1.0f), 0.1f);
-            ImPlot::PlotLine("CPU", cpuTimes.data(), (int)cpuTimes.size());
+            ImPlot::PlotLine("CPU", cpuTimes.data(), (int)cpuTimes.size(), 1.0, 0.0,
+                             ImPlotSpec(ImPlotProp_LineColor, (ImU32)ImColor(1.f, 0.f, 0.f, 1.0f), ImPlotProp_LineWeight, 0.1f));
           }
 
           ImPlot::SetAxes(ImAxis_X1, ImAxis_Y1);
@@ -646,10 +646,8 @@ void ElementProfiler::renderLineChart(View& view)
             size_t index = node.child.size() - i - 1;
             if(view.state->lineChart.gpuFills)
             {
-              ImPlot::PushStyleVar(ImPlotStyleVar_FillAlpha, 0.25f);
               ImPlot::PlotShaded(node.child[index].name.c_str(), gpuTimes[index].data(), (int)gpuTimes[index].size(),
-                                 -INFINITY, 1.0, 0, 0, 0);
-              ImPlot::PopStyleVar();
+                                 -INFINITY, 1.0, 0.0, ImPlotSpec(ImPlotProp_FillAlpha, 0.25f));
             }
             if(view.state->lineChart.gpuLines)
             {

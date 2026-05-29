@@ -2,15 +2,7 @@
 
 [![PyPI version](https://badge.fury.io/py/tinyobjloader.svg)](https://badge.fury.io/py/tinyobjloader)
 
-[![AZ Build Status](https://dev.azure.com/tinyobjloader/tinyobjloader/_apis/build/status/tinyobjloader.tinyobjloader?branchName=master)](https://dev.azure.com/tinyobjloader/tinyobjloader/_build/latest?definitionId=1&branchName=master)
-
-[![AppVeyor Build status](https://ci.appveyor.com/api/projects/status/m6wfkvket7gth8wn/branch/master?svg=true)](https://ci.appveyor.com/project/syoyo/tinyobjloader-6e4qf/branch/master)
-
-[![Coverage Status](https://coveralls.io/repos/github/syoyo/tinyobjloader/badge.svg?branch=master)](https://coveralls.io/github/syoyo/tinyobjloader?branch=master)
-
-[![AUR version](https://img.shields.io/aur/version/tinyobjloader?logo=arch-linux)](https://aur.archlinux.org/packages/tinyobjloader)
-
-Tiny but powerful single file wavefront obj loader written in C++03. No dependency except for C++ STL. It can parse over 10M polygons with moderate memory and time.
+Tiny but powerful single file wavefront obj loader written in C++11. No dependency except for C++ STL. It can parse over 10M polygons with moderate memory and time.
 
 `tinyobjloader` is good for embedding .obj loader to your (global illumination) renderer ;-)
 
@@ -19,7 +11,7 @@ If you are looking for C99 version, please see https://github.com/syoyo/tinyobjl
 Version notice
 --------------
 
-We recommend to use `master`(`main`) branch. Its v2.0 release candidate. Most features are now nearly robust and stable(Remaining task for release v2.0 is polishing C++ and Python API, and fix built-in triangulation code).
+We recommend using the `release` (main) branch. It contains the v2.0 release candidate. Most features are now nearly robust and stable. (The remaining task for release v2.0 is polishing C++ and Python API, and fix built-in triangulation code).
 
 We have released new version v1.0.0 on 20 Aug, 2016.
 Old version is available as `v0.9.x` branch https://github.com/syoyo/tinyobjloader/tree/v0.9.x
@@ -34,7 +26,7 @@ Old version is available as `v0.9.x` branch https://github.com/syoyo/tinyobjload
 
 ## Requirements
 
-* C++03 compiler
+* C++11 compiler
 
 ### Old version
 
@@ -74,8 +66,10 @@ TinyObjLoader is successfully used in ...
 * metal-ray-tracer - Writing ray-tracer using Metal Performance Shaders https://github.com/sergeyreznik/metal-ray-tracer https://sergeyreznik.github.io/metal-ray-tracer/index.html
 * Supernova Engine - 2D and 3D projects with Lua or C++ in data oriented design: https://github.com/supernovaengine/supernova
 * AGE (Arc Game Engine) - An open-source engine for building 2D & 3D real-time rendering and interactive contents: https://github.com/MohitSethi99/ArcGameEngine
-* [Wicked Engine<img src="https://github.com/turanszkij/WickedEngine/blob/master/Content/logo_small.png" width="28px" align="center"/>](https://github.com/turanszkij/WickedEngine) - 3D engine with modern graphics 
-* Your project here! (Letting us know via github issue is welcome!)
+* [Wicked Engine<img src="https://github.com/turanszkij/WickedEngine/blob/master/Content/logo_small.png" width="28px" align="center"/>](https://github.com/turanszkij/WickedEngine) - 3D engine with modern graphics
+* [Lumina Game Engine](https://github.com/MrDrElliot/LuminaEngine) - A modern, high-performance game engine built with Vulkan
+* lacecore: Python polygonal mesh library optimized for cloud computation https://github.com/lace/lacecore
+* Your project here! (Plese send PR)
 
 ### Old version(v0.9.x)
 
@@ -244,6 +238,22 @@ Note that when `triangulate` flag is true in `tinyobj::LoadObj()` argument, `num
 TinyObjLoader now use `real_t` for floating point data type.
 Default is `float(32bit)`.
 You can enable `double(64bit)` precision by using `TINYOBJLOADER_USE_DOUBLE` define.
+
+### High-performance float parsing (fast_float)
+
+By default, TinyObjLoader embeds [fast_float v8.0.2](https://github.com/fastfloat/fast_float)
+for ~3× faster, bit-exact ASCII-to-float conversion (equivalent to `strtod` but without locale overhead).
+
+To opt out and use the built-in hand-written parser instead, define:
+
+```c++
+#define TINYOBJLOADER_DISABLE_FAST_FLOAT
+#define TINYOBJLOADER_IMPLEMENTATION
+#include "tiny_obj_loader.h"
+```
+
+**Note:** If your project already includes `fast_float` under the `fast_float` namespace,
+defining `TINYOBJLOADER_DISABLE_FAST_FLOAT` avoids a redefinition conflict.
 
 ### Robust triangulation
 
@@ -425,17 +435,16 @@ See [python/sample.py](python/sample.py) for example use of Python binding of ti
 
 ### CI + PyPI upload
 
-cibuildwheels + twine upload for each git tagging event is handled in Github Actions and Cirrus CI(arm builds).
+cibuildwheels + twine upload for each git tagging event is handled in Github Actions.
 
 #### How to bump version(For developer)
 
-* Apply `black` to python files(`python/sample.py`)
 * Bump version in CMakeLists.txt
 * Commit and push `release`. Confirm C.I. build is OK.
 * Create tag starting with `v`(e.g. `v2.1.0`)
 * `git push --tags`
   * version settings is automatically handled in python binding through setuptools_scm.
-  * cibuildwheels + pypi upload(through twine) will be automatically triggered in Github Actions + Cirrus CI.
+  * cibuildwheels + pypi upload (through twine) will be automatically triggered in Github Actions.
 
 ## Tests
 

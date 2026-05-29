@@ -63,8 +63,7 @@ void nvvk::GBuffer::deinit()
   m_res        = {};
   m_size       = {};
   m_descLayout = {};
-
-  m_info = {};
+  m_info       = {};
 }
 
 VkResult nvvk::GBuffer::update(VkCommandBuffer cmd, VkExtent2D newSize)
@@ -283,40 +282,49 @@ VkResult nvvk::GBuffer::initResources(VkCommandBuffer cmd)
     vkCmdPipelineBarrier2(cmd, &depInfo);
   }
 
-  // Descriptor Set for ImGUI
+  // Descriptor sets intended to be consumed by an external UI library (e.g. Dear ImGui)
+  // as opaque texture IDs. The layout is a single VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE binding
+  // at slot 0, fragment-stage visible. This matches the layout used by the ImGui Vulkan
+  // backend since its 2026-04-22 redesign (separate ImageView + Sampler). Keeping this
+  // local avoids a dependency from nvvk on any UI library.
   if(m_info.descriptorPool)
   {
     m_res.uiDescriptorSets.resize(numColor);
 
-    // Create descriptor set layout (used by ImGui)
-    const VkDescriptorSetLayoutBinding binding = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT};
-    const VkDescriptorSetLayoutCreateInfo info = {
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 1, .pBindings = &binding};
-    NVVK_FAIL_RETURN(vkCreateDescriptorSetLayout(device, &info, nullptr, &m_descLayout));
+    const VkDescriptorSetLayoutBinding binding = {
+        .binding         = 0,
+        .descriptorType  = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+        .descriptorCount = 1,
+        .stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT,
+    };
+    const VkDescriptorSetLayoutCreateInfo layoutCreateInfo = {
+        .sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = 1,
+        .pBindings    = &binding,
+    };
+    NVVK_FAIL_RETURN(vkCreateDescriptorSetLayout(device, &layoutCreateInfo, nullptr, &m_descLayout));
 
     // Same layout for all color attachments
     std::vector<VkDescriptorSetLayout> layouts(numColor, m_descLayout);
 
-    // Allocate descriptor sets
-    std::vector<VkDescriptorImageInfo> descImages(numColor);
-    std::vector<VkWriteDescriptorSet>  writeDesc(numColor);
-    const VkDescriptorSetAllocateInfo  allocInfos = {
-         .sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-         .descriptorPool     = m_info.descriptorPool,
-         .descriptorSetCount = numColor,
-         .pSetLayouts        = layouts.data(),
+    const VkDescriptorSetAllocateInfo allocInfos = {
+        .sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool     = m_info.descriptorPool,
+        .descriptorSetCount = numColor,
+        .pSetLayouts        = layouts.data(),
     };
     NVVK_FAIL_RETURN(vkAllocateDescriptorSets(device, &allocInfos, m_res.uiDescriptorSets.data()));
 
-    // Update the descriptor sets
+    std::vector<VkDescriptorImageInfo> descImages(numColor);
+    std::vector<VkWriteDescriptorSet>  writeDesc(numColor);
     for(uint32_t d = 0; d < numColor; ++d)
     {
-      descImages[d] = {m_info.imageSampler, m_res.uiImageViews[d], layout};
+      descImages[d] = {.imageView = m_res.uiImageViews[d], .imageLayout = layout};
       writeDesc[d]  = {
            .sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
            .dstSet          = m_res.uiDescriptorSets[d],
            .descriptorCount = 1,
-           .descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+           .descriptorType  = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
            .pImageInfo      = &descImages[d],
       };
     }

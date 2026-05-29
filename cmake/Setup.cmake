@@ -73,8 +73,11 @@ if(NOT DEFINED CMAKE_INSTALL_RPATH)
   set(CMAKE_INSTALL_RPATH "$ORIGIN")
 endif()
 
-# Set the output directory for executables
-if(GENERATOR_IS_MULTI_CONFIG)
+# Set the output directory for executables.
+# Note: GENERATOR_IS_MULTI_CONFIG is a global property, not a variable, so we
+# must query it via get_property()
+get_property(_is_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(_is_multi_config)
   # CMake appends the build config for us
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${NVPRO_CORE2_OUTPUT_DIR}/_bin)
 else()

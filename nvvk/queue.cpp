@@ -149,6 +149,7 @@ nvvk::SemaphoreState QueueTimeline::createDynamicSemaphoreState() const
 
 nvvk::SemaphoreState QueueTimeline::createNextFixedSemaphoreState() const
 {
+  std::lock_guard guard(m_mutex);
   return SemaphoreState::makeFixed(m_timelineSemaphore, m_timelineValue);
 }
 
@@ -211,7 +212,7 @@ VkResult QueueTimeline::submit(SubmitInfo& submitInfo, SemaphoreState& submitSta
         {
           assert(it.semaphoreState.getTimelineValue() == submitTimeLineValue && "unexpected timeline value");
         }
-
+        wasAdded = true;
         signalSemaphores.push_back(makeSemaphoreSubmitInfo(it));
       }
     }

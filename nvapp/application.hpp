@@ -194,10 +194,11 @@ public:
   void submitResourceFree(std::function<void()>&& func);
 
   // Utilities
-  bool isVsync() const { return m_vsyncWanted; }                        // Return true if V-Sync is on
-  void setVsync(bool v);                                                // Set V-Sync on or off
-  bool isHeadless() const { return m_headless; }                        // Return true if headless
-  void setRenderWhileMinimized(bool v) { m_renderWhileMinimized = v; }  // Continue rendering when minimized
+  bool     isVsync() const { return m_vsyncWanted; }                        // Return true if V-Sync is on
+  void     setVsync(bool v);                                                // Set V-Sync on or off
+  bool     isHeadless() const { return m_headless; }                        // Return true if headless
+  void     setRenderWhileMinimized(bool v) { m_renderWhileMinimized = v; }  // Continue rendering when minimized
+  uint32_t getHeadlessFrameCount() const { return m_headlessFrameCount; }   // Number of frames to render in headless
 
   // Swapchain format control
   void setPreferredSurfaceFormat(VkSurfaceFormatKHR format);  // Set preferred surface format and request rebuild

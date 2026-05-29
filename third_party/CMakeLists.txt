@@ -92,7 +92,7 @@ if(NOT TARGET imgui)
   # Link against GLFW and Volk
   target_link_libraries(imgui PUBLIC glfw volk)
   # Mandatory for Imgui to work with Volk
-  target_compile_definitions(imgui PRIVATE IMGUI_IMPL_VULKAN_USE_VOLK)
+  target_compile_definitions(imgui PUBLIC IMGUI_IMPL_VULKAN_USE_VOLK)
 
   set_property(TARGET imgui PROPERTY FOLDER "ThirdParty")
 endif()

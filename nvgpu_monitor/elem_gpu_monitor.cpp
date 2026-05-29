@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -313,30 +313,29 @@ void ElementGpuMonitor::imguiGraphLines(uint32_t gpuIndex)
     ImPlot::SetupAxisLimits(ImAxis_Y2, 0, float(deviceMemory.memoryTotal.get()));
     ImPlot::SetupAxisFormat(ImAxis_Y2, metricFormatter, (void*)"iB");
 
-    ImPlot::PushStyleVar(ImPlotStyleVar_FillAlpha, 0.25f);
-
     ImPlot::SetAxes(ImAxis_X1, ImAxis_Y1);
-    ImPlot::SetNextFillStyle(s_lineColor);
     ImPlot::PlotShaded(lineString.c_str(), deviceUtilization.gpuUtilization.get().data(),
-                       (int)deviceUtilization.gpuUtilization.get().size(), -INFINITY, 1.0, 0.0, 0, offset + 1);
-    ImPlot::SetNextLineStyle(s_lineColor);
+                       (int)deviceUtilization.gpuUtilization.get().size(), -INFINITY, 1.0, 0.0,
+                       ImPlotSpec(ImPlotProp_FillColor, (ImU32)s_lineColor, ImPlotProp_FillAlpha, 0.25f,
+                                  ImPlotProp_Offset, offset + 1));
     ImPlot::PlotLine(lineString.c_str(), deviceUtilization.gpuUtilization.get().data(),
-                     (int)deviceUtilization.gpuUtilization.get().size(), 1.0, 0.0, 0, offset + 1);
+                     (int)deviceUtilization.gpuUtilization.get().size(), 1.0, 0.0,
+                     ImPlotSpec(ImPlotProp_LineColor, (ImU32)s_lineColor, ImPlotProp_Offset, offset + 1));
 
     ImPlot::SetAxes(ImAxis_X1, ImAxis_Y2);
-    ImPlot::SetNextFillStyle(s_memColor);
     // Cast to unsigned long long for Linux compilation, where ImPlot functions are not instantiated with uint64_t
     ImPlot::PlotShaded(memString.c_str(), reinterpret_cast<const unsigned long long*>(deviceMemory.memoryUsed.get().data()),
-                       (int)deviceMemory.memoryUsed.get().size(), -INFINITY, 1.0, 0.0, 0, offset + 1);
-    ImPlot::SetNextLineStyle(s_memColor);
+                       (int)deviceMemory.memoryUsed.get().size(), -INFINITY, 1.0, 0.0,
+                       ImPlotSpec(ImPlotProp_FillColor, (ImU32)s_memColor, ImPlotProp_FillAlpha, 0.25f,
+                                  ImPlotProp_Offset, offset + 1));
     // Cast to unsigned long long for Linux compilation, where ImPlot functions are not instantiated with uint64_t
     ImPlot::PlotLine(memString.c_str(), reinterpret_cast<const unsigned long long*>(deviceMemory.memoryUsed.get().data()),
-                     (int)deviceMemory.memoryUsed.get().size(), 1.0, 0.0, 0, offset + 1);
-    ImPlot::PopStyleVar();
+                     (int)deviceMemory.memoryUsed.get().size(), 1.0, 0.0,
+                     ImPlotSpec(ImPlotProp_LineColor, (ImU32)s_memColor, ImPlotProp_Offset, offset + 1));
 
     ImPlot::SetAxes(ImAxis_X1, ImAxis_Y1);
-    ImPlot::SetNextLineStyle(s_cpuColor);
-    ImPlot::PlotLine(cpuString.c_str(), cpuMeasure.cpu.data(), (int)cpuMeasure.cpu.size(), 1.0, 0.0, 0, offset + 1);
+    ImPlot::PlotLine(cpuString.c_str(), cpuMeasure.cpu.data(), (int)cpuMeasure.cpu.size(), 1.0, 0.0,
+                     ImPlotSpec(ImPlotProp_LineColor, (ImU32)s_cpuColor, ImPlotProp_Offset, offset + 1));
 
     if(ImPlot::IsPlotHovered())
     {
@@ -530,13 +529,12 @@ void ElementGpuMonitor::imguiDeviceMemory(uint32_t deviceIndex)
     ImPlot::SetupAxes(nullptr, "Bytes", s_axesFlags | ImPlotAxisFlags_NoDecorations, s_axesFlags);
     ImPlot::SetupAxesLimits(0, SAMPLING_NUM, 0, static_cast<double>(memory.memoryTotal.get()));
 
-    ImPlot::PushStyleVar(ImPlotStyleVar_FillAlpha, 0.25f);
     ImPlot::SetAxes(ImAxis_X1, ImAxis_Y1);
-    ImPlot::SetNextFillStyle(s_graphicsColor);
     // Cast to unsigned long long for Linux compilation, where ImPlot functions are not instantiated with uint64_t
     ImPlot::PlotShaded(memLine.c_str(), reinterpret_cast<const unsigned long long*>(memory.memoryUsed.get().data()),
-                       (int)memory.memoryUsed.get().size(), -INFINITY, 1.0, 0.0, 0, offset + 1);
-    ImPlot::PopStyleVar();
+                       (int)memory.memoryUsed.get().size(), -INFINITY, 1.0, 0.0,
+                       ImPlotSpec(ImPlotProp_FillColor, (ImU32)s_graphicsColor, ImPlotProp_FillAlpha, 0.25f,
+                                  ImPlotProp_Offset, offset + 1));
 
     if(ImPlot::IsPlotHovered())
     {
@@ -556,14 +554,12 @@ void ElementGpuMonitor::imguiDeviceMemory(uint32_t deviceIndex)
     ImPlot::SetupAxes(nullptr, "Bytes", s_axesFlags | ImPlotAxisFlags_NoDecorations, s_axesFlags);
     ImPlot::SetupAxesLimits(0, SAMPLING_NUM, 0, static_cast<double>(memory.bar1Total.get()));
 
-    ImPlot::PushStyleVar(ImPlotStyleVar_FillAlpha, 0.25f);
-
     ImPlot::SetAxes(ImAxis_X1, ImAxis_Y1);
-    ImPlot::SetNextFillStyle(s_graphicsColor);
     // Cast to unsigned long long for Linux compilation, where ImPlot functions are not instantiated with uint64_t
     ImPlot::PlotShaded(bar1Line.c_str(), reinterpret_cast<const unsigned long long*>(memory.bar1Used.get().data()),
-                       (int)memory.bar1Used.get().size(), -INFINITY, 1.0, 0.0, 0, offset + 1);
-    ImPlot::PopStyleVar();
+                       (int)memory.bar1Used.get().size(), -INFINITY, 1.0, 0.0,
+                       ImPlotSpec(ImPlotProp_FillColor, (ImU32)s_graphicsColor, ImPlotProp_FillAlpha, 0.25f,
+                                  ImPlotProp_Offset, offset + 1));
 
     if(ImPlot::IsPlotHovered())
     {
@@ -615,20 +611,16 @@ void ElementGpuMonitor::imguiDevicePerformanceState(uint32_t deviceIndex)
     ImPlot::SetupAxes(nullptr, "Frequency", s_axesFlags | ImPlotAxisFlags_NoDecorations, s_axesFlags);
     ImPlot::SetupAxesLimits(0, SAMPLING_NUM, 0, generalMaxClock);
 
-    ImPlot::PushStyleVar(ImPlotStyleVar_FillAlpha, 0.25f);
-
     ImPlot::SetAxes(ImAxis_X1, ImAxis_Y1);
-    ImPlot::SetNextFillStyle(s_graphicsColor);
     ImPlot::PlotShaded(graphicsClockLine.c_str(), performanceState.clockGraphics.get().data(),
-                       (int)performanceState.clockGraphics.get().size(), -INFINITY, 1.0, 0.0, 0, offset + 1);
-    ImPlot::SetNextLineStyle(s_smColor);
-    ImPlot::PlotLine(smClockLine.c_str(), performanceState.clockSM.get().data(),
-                     (int)performanceState.clockSM.get().size(), 1.0, 0.0, 0, offset + 1);
-    ImPlot::SetNextLineStyle(s_videoColor);
+                       (int)performanceState.clockGraphics.get().size(), -INFINITY, 1.0, 0.0,
+                       ImPlotSpec(ImPlotProp_FillColor, (ImU32)s_graphicsColor, ImPlotProp_FillAlpha, 0.25f,
+                                  ImPlotProp_Offset, offset + 1));
+    ImPlot::PlotLine(smClockLine.c_str(), performanceState.clockSM.get().data(), (int)performanceState.clockSM.get().size(),
+                     1.0, 0.0, ImPlotSpec(ImPlotProp_LineColor, (ImU32)s_smColor, ImPlotProp_Offset, offset + 1));
     ImPlot::PlotLine(videoClockLine.c_str(), performanceState.clockVideo.get().data(),
-                     (int)performanceState.clockVideo.get().size(), 1.0, 0.0, 0, offset + 1);
-
-    ImPlot::PopStyleVar();
+                     (int)performanceState.clockVideo.get().size(), 1.0, 0.0,
+                     ImPlotSpec(ImPlotProp_LineColor, (ImU32)s_videoColor, ImPlotProp_Offset, offset + 1));
 
     if(ImPlot::IsPlotHovered())
     {
@@ -652,14 +644,11 @@ void ElementGpuMonitor::imguiDevicePerformanceState(uint32_t deviceIndex)
     ImPlot::SetupAxes(nullptr, "Frequency", s_axesFlags | ImPlotAxisFlags_NoDecorations, s_axesFlags);
     ImPlot::SetupAxesLimits(0, SAMPLING_NUM, 0, generalMaxClock);
 
-    ImPlot::PushStyleVar(ImPlotStyleVar_FillAlpha, 0.25f);
-
     ImPlot::SetAxes(ImAxis_X1, ImAxis_Y1);
-    ImPlot::SetNextFillStyle(s_graphicsColor);
     ImPlot::PlotShaded(memClockLine.c_str(), performanceState.clockMem.get().data(),
-                       (int)performanceState.clockMem.get().size(), -INFINITY, 1.0, 0.0, 0, offset + 1);
-
-    ImPlot::PopStyleVar();
+                       (int)performanceState.clockMem.get().size(), -INFINITY, 1.0, 0.0,
+                       ImPlotSpec(ImPlotProp_FillColor, (ImU32)s_graphicsColor, ImPlotProp_FillAlpha, 0.25f,
+                                  ImPlotProp_Offset, offset + 1));
 
     if(ImPlot::IsPlotHovered())
     {
@@ -700,16 +689,12 @@ void ElementGpuMonitor::imguiDevicePerformanceState(uint32_t deviceIndex)
     ImPlot::SetupAxisScale(ImAxis_Y1, ImPlotScale_SymLog);
     ImPlot::SetupAxisTicks(ImAxis_Y1, throttleValues.data(), static_cast<int>(throttleValues.size()), throttleCharPtr.data(), false);
 
-    ImPlot::PushStyleVar(ImPlotStyleVar_FillAlpha, 0.25f);
-
     ImPlot::SetAxes(ImAxis_X1, ImAxis_Y1);
-    ImPlot::SetNextFillStyle(s_graphicsColor);
     // Cast to unsigned long long for Linux compilation, where ImPlot functions are not instantiated with uint64_t
-    ImPlot::PlotShaded(throttleLine.c_str(),
-                       reinterpret_cast<const unsigned long long*>(performanceState.throttleReasons.get().data()),
-                       (int)performanceState.throttleReasons.get().size(), -INFINITY, 1.0, 0.0, 0, offset + 1);
-
-    ImPlot::PopStyleVar();
+    ImPlot::PlotShaded(
+        throttleLine.c_str(), reinterpret_cast<const unsigned long long*>(performanceState.throttleReasons.get().data()),
+        (int)performanceState.throttleReasons.get().size(), -INFINITY, 1.0, 0.0,
+        ImPlotSpec(ImPlotProp_FillColor, (ImU32)s_graphicsColor, ImPlotProp_FillAlpha, 0.25f, ImPlotProp_Offset, offset + 1));
 
     if(ImPlot::IsPlotHovered())
     {
@@ -760,14 +745,11 @@ void ElementGpuMonitor::imguiDevicePowerState(uint32_t deviceIndex)
     ImPlot::SetupAxes(nullptr, "Celsius", s_axesFlags | ImPlotAxisFlags_NoDecorations, s_axesFlags);
     ImPlot::SetupAxesLimits(0, SAMPLING_NUM, 0, info.tempThresholdShutdown.get());
 
-    ImPlot::PushStyleVar(ImPlotStyleVar_FillAlpha, 0.25f);
-
     ImPlot::SetAxes(ImAxis_X1, ImAxis_Y1);
-    ImPlot::SetNextFillStyle(s_graphicsColor);
     ImPlot::PlotShaded(temperatureLine.c_str(), powerState.temperature.get().data(),
-                       (int)powerState.temperature.get().size(), -INFINITY, 1.0, 0.0, 0, offset + 1);
-
-    ImPlot::PopStyleVar();
+                       (int)powerState.temperature.get().size(), -INFINITY, 1.0, 0.0,
+                       ImPlotSpec(ImPlotProp_FillColor, (ImU32)s_graphicsColor, ImPlotProp_FillAlpha, 0.25f,
+                                  ImPlotProp_Offset, offset + 1));
 
     if(ImPlot::IsPlotHovered())
     {
@@ -787,14 +769,10 @@ void ElementGpuMonitor::imguiDevicePowerState(uint32_t deviceIndex)
     ImPlot::SetupAxes(nullptr, "Watt", s_axesFlags | ImPlotAxisFlags_NoDecorations, s_axesFlags);
     ImPlot::SetupAxesLimits(0, SAMPLING_NUM, 0, info.powerLimit.get());
 
-    ImPlot::PushStyleVar(ImPlotStyleVar_FillAlpha, 0.25f);
-
     ImPlot::SetAxes(ImAxis_X1, ImAxis_Y1);
-    ImPlot::SetNextFillStyle(s_graphicsColor);
-    ImPlot::PlotShaded(powerLine.c_str(), powerState.power.get().data(), (int)powerState.power.get().size(), -INFINITY,
-                       1.0, 0.0, 0, offset + 1);
-
-    ImPlot::PopStyleVar();
+    ImPlot::PlotShaded(powerLine.c_str(), powerState.power.get().data(), (int)powerState.power.get().size(), -INFINITY, 1.0, 0.0,
+                       ImPlotSpec(ImPlotProp_FillColor, (ImU32)s_graphicsColor, ImPlotProp_FillAlpha, 0.25f,
+                                  ImPlotProp_Offset, offset + 1));
 
     if(ImPlot::IsPlotHovered())
     {
@@ -815,14 +793,11 @@ void ElementGpuMonitor::imguiDevicePowerState(uint32_t deviceIndex)
     ImPlot::SetupAxes(nullptr, "%%", s_axesFlags | ImPlotAxisFlags_NoDecorations, s_axesFlags);
     ImPlot::SetupAxesLimits(0, SAMPLING_NUM, 0, 100);
 
-    ImPlot::PushStyleVar(ImPlotStyleVar_FillAlpha, 0.25f);
-
     ImPlot::SetAxes(ImAxis_X1, ImAxis_Y1);
-    ImPlot::SetNextFillStyle(s_graphicsColor);
     ImPlot::PlotShaded(fanSpeedLine.c_str(), powerState.fanSpeed.get().data(), (int)powerState.fanSpeed.get().size(),
-                       -INFINITY, 1.0, 0.0, 0, offset + 1);
-
-    ImPlot::PopStyleVar();
+                       -INFINITY, 1.0, 0.0,
+                       ImPlotSpec(ImPlotProp_FillColor, (ImU32)s_graphicsColor, ImPlotProp_FillAlpha, 0.25f,
+                                  ImPlotProp_Offset, offset + 1));
 
     if(ImPlot::IsPlotHovered())
     {
@@ -869,17 +844,14 @@ void ElementGpuMonitor::imguiDeviceUtilization(uint32_t deviceIndex)
     ImPlot::SetupAxes(nullptr, "Celsius", s_axesFlags | ImPlotAxisFlags_NoDecorations, s_axesFlags);
     ImPlot::SetupAxesLimits(0, SAMPLING_NUM, 0, 100);
 
-    ImPlot::PushStyleVar(ImPlotStyleVar_FillAlpha, 0.25f);
-
     ImPlot::SetAxes(ImAxis_X1, ImAxis_Y1);
-    ImPlot::SetNextFillStyle(s_graphicsColor);
     ImPlot::PlotShaded(gpuUtilizationLine.c_str(), utilization.gpuUtilization.get().data(),
-                       (int)utilization.gpuUtilization.get().size(), -INFINITY, 1.0, 0.0, 0, offset + 1);
-    ImPlot::SetNextFillStyle(s_smColor);
+                       (int)utilization.gpuUtilization.get().size(), -INFINITY, 1.0, 0.0,
+                       ImPlotSpec(ImPlotProp_FillColor, (ImU32)s_graphicsColor, ImPlotProp_FillAlpha, 0.25f,
+                                  ImPlotProp_Offset, offset + 1));
     ImPlot::PlotShaded(memUtilizationLine.c_str(), utilization.memUtilization.get().data(),
-                       (int)utilization.memUtilization.get().size(), -INFINITY, 1.0, 0.0, 0, offset + 1);
-
-    ImPlot::PopStyleVar();
+                       (int)utilization.memUtilization.get().size(), -INFINITY, 1.0, 0.0,
+                       ImPlotSpec(ImPlotProp_FillColor, (ImU32)s_smColor, ImPlotProp_FillAlpha, 0.25f, ImPlotProp_Offset, offset + 1));
 
     if(ImPlot::IsPlotHovered())
     {
@@ -900,16 +872,14 @@ void ElementGpuMonitor::imguiDeviceUtilization(uint32_t deviceIndex)
     ImPlot::SetupAxes(nullptr, "Processes", s_axesFlags | ImPlotAxisFlags_NoDecorations, s_axesFlags);
     ImPlot::SetupAxesLimits(0, SAMPLING_NUM, 0, 100);
 
-    ImPlot::PushStyleVar(ImPlotStyleVar_FillAlpha, 0.25f);
-
     ImPlot::SetAxes(ImAxis_X1, ImAxis_Y1);
-    ImPlot::SetNextFillStyle(s_graphicsColor);
     ImPlot::PlotShaded(graphicsProcessLine.c_str(), utilization.graphicsProcesses.get().data(),
-                       (int)utilization.graphicsProcesses.get().size(), -INFINITY, 1.0, 0.0, 0, offset + 1);
-    ImPlot::SetNextFillStyle(s_smColor);
+                       (int)utilization.graphicsProcesses.get().size(), -INFINITY, 1.0, 0.0,
+                       ImPlotSpec(ImPlotProp_FillColor, (ImU32)s_graphicsColor, ImPlotProp_FillAlpha, 0.25f,
+                                  ImPlotProp_Offset, offset + 1));
     ImPlot::PlotShaded(computeProcessLine.c_str(), utilization.computeProcesses.get().data(),
-                       (int)utilization.computeProcesses.get().size(), -INFINITY, 1.0, 0.0, 0, offset + 1);
-    ImPlot::PopStyleVar();
+                       (int)utilization.computeProcesses.get().size(), -INFINITY, 1.0, 0.0,
+                       ImPlotSpec(ImPlotProp_FillColor, (ImU32)s_smColor, ImPlotProp_FillAlpha, 0.25f, ImPlotProp_Offset, offset + 1));
 
     if(ImPlot::IsPlotHovered())
     {

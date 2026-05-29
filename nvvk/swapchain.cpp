@@ -17,9 +17,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "nvutils/logger.hpp"
-
 #include <algorithm>
+
+#include "nvutils/logger.hpp"
 
 #include "commands.hpp"
 #include "barriers.hpp"

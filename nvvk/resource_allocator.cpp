@@ -192,6 +192,12 @@ VkResult nvvk::ResourceAllocator::createBuffer(nvvk::Buffer&                  re
 
 void nvvk::ResourceAllocator::destroyBuffer(nvvk::Buffer& buffer) const
 {
+  if(buffer.buffer == VK_NULL_HANDLE || buffer.allocation == VK_NULL_HANDLE)
+  {
+    buffer = {};
+    return;
+  }
+
   vmaDestroyBuffer(m_allocator, buffer.buffer, buffer.allocation);
   buffer = {};
 }

@@ -953,22 +953,21 @@ VkResult nvapp::Application::createFrameSubmission(uint32_t numFrames)
 }
 
 //-----------------------------------------------------------------------
-// The Descriptor Pool is used to allocate descriptor sets.
-// Currently, ImGui only requires combined image samplers.
-// We allocate up to m_maxTexturePool of them so that we can display additional
-// images using ImGui_ImplVulkan_AddTexture().
+// The Descriptor Pool is used to allocate descriptor sets for ImGui textures
+// and for any user code that wants to display images via ImGui_ImplVulkan_AddTexture().
 //
 VkResult nvapp::Application::createDescriptorPool()
 {
-  const std::array<VkDescriptorPoolSize, 1> poolSizes{
-      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, m_maxTexturePool},
-  };
+  const std::array<VkDescriptorPoolSize, 2> poolSizes{{
+      {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, m_maxTexturePool},
+      {VK_DESCRIPTOR_TYPE_SAMPLER, IMGUI_IMPL_VULKAN_MINIMUM_SAMPLER_POOL_SIZE},
+  }};
 
   const VkDescriptorPoolCreateInfo poolInfo = {
       .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
       .flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT |  //  allows descriptor sets to be updated after they have been bound to a command buffer
                VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,  // individual descriptor sets can be freed from the descriptor pool
-      .maxSets       = m_maxTexturePool,  // Allowing to create many sets (ImGui uses this for textures)
+      .maxSets = m_maxTexturePool + IMGUI_IMPL_VULKAN_MINIMUM_SAMPLER_POOL_SIZE,  // ImGui sampler sets + per-texture sets
       .poolSizeCount = uint32_t(poolSizes.size()),
       .pPoolSizes    = poolSizes.data(),
   };

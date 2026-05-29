@@ -40,14 +40,16 @@
   VMA_ASSERT((expr) && "Use nvvk::ResourceAllocator::setLeakID(nvvkAllocID) to find the leak")
 #endif
 
-// X11 workaround
-#pragma push_macro("None")
-#pragma push_macro("Bool")
-#undef None
-#undef Bool
+// On Linux, vk_mem_alloc.h pulls in vulkan.h, which pulls in Xlib.h, which
+// has helper #preprocessor defines that can conflict with other libraries,
+// like Draco's draco::Status. Here we undefine those (since if we need to call
+// X11 functions directly we can use the types instead of macros).
 #include <vk_mem_alloc.h>
-#pragma pop_macro("None")
-#pragma pop_macro("Bool")
+#undef Bool
+#undef False
+#undef None
+#undef Status
+#undef True
 
 #include <vulkan/vulkan_core.h>
 

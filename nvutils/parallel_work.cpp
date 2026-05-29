@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -21,13 +21,13 @@
 
 namespace nvutils {
 
-BS::thread_pool& get_thread_pool()
+BS::light_thread_pool& get_thread_pool()
 {
   // Marking this as static ensures it's only initialized the first time
   // execution enters this function, even if it's called from multiple threads,
   // since C++11. See
   // https://en.cppreference.com/w/cpp/language/storage_duration#Static_block_variables
-  static BS::thread_pool threadPool;
+  static BS::light_thread_pool threadPool;
   return threadPool;
 }
 

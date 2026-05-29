@@ -24,6 +24,16 @@
 
 namespace nvvk {
 
+namespace {
+
+inline bool imageLayoutAllowsCopy(VkImageLayout layout)
+{
+  return layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL || layout == VK_IMAGE_LAYOUT_GENERAL
+         || layout == VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR;
+}
+
+}  // namespace
+
 StagingUploader::StagingUploader(StagingUploader&& other) noexcept
 {
   {
@@ -520,23 +530,7 @@ VkResult StagingUploaderBase::appendImage(nvvk::Image& image, size_t dataSize, c
   BufferRange stagingSpace;
   NVVK_FAIL_RETURN(acquireStagingSpace(stagingSpace, dataSize, data, semaphoreState));
 
-  bool layoutAllowsCopy = image.descriptor.imageLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
-                          || image.descriptor.imageLayout == VK_IMAGE_LAYOUT_GENERAL
-                          || image.descriptor.imageLayout == VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR;
-
-  VkImageLayout dstImageLayout = image.descriptor.imageLayout;
-
-  if(m_base.enableLayoutBarriers && !layoutAllowsCopy)
-  {
-    VkImageMemoryBarrier2 barrier = makeImageMemoryBarrier(
-        {.image = image.image, .oldLayout = image.descriptor.imageLayout, .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL});
-
-    modifyImageBarrier(barrier);
-
-    dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-
-    m_batch.pre.imageBarriers.push_back(barrier);
-  }
+  const VkImageLayout dstImageLayout = insertPreImageBarrier(image.image, image.descriptor.imageLayout, newLayout);
 
   // Copy buffer data to the image
   const VkBufferImageCopy2 copyBufferImageRegion{
@@ -562,18 +556,7 @@ VkResult StagingUploaderBase::appendImage(nvvk::Image& image, size_t dataSize, c
   m_batch.copyBufferImageRegions.emplace_back(copyBufferImageRegion);
   m_batch.copyBufferImageInfos.emplace_back(copyBufferToImageInfo);
 
-  if(m_base.enableOwnerBarriers || (m_base.enableLayoutBarriers && (!layoutAllowsCopy || newLayout != VK_IMAGE_LAYOUT_UNDEFINED)))
-  {
-    if(newLayout != VK_IMAGE_LAYOUT_UNDEFINED)
-    {
-      image.descriptor.imageLayout = newLayout;
-    }
-
-    VkImageMemoryBarrier2 barrier =
-        makeImageMemoryBarrier({.image = image.image, .oldLayout = dstImageLayout, .newLayout = image.descriptor.imageLayout});
-
-    insertPostImageBarrier(barrier);
-  }
+  insertPostUploadBarrier(image, dstImageLayout, newLayout);
 
   return VK_SUCCESS;
 }
@@ -596,22 +579,7 @@ VkResult StagingUploaderBase::appendImageMapping(nvvk::Image&          image,
 
   uploadMapping = stagingSpace.mapping;
 
-  bool layoutAllowsCopy = image.descriptor.imageLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
-                          || image.descriptor.imageLayout == VK_IMAGE_LAYOUT_GENERAL
-                          || image.descriptor.imageLayout == VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR;
-
-  VkImageLayout dstImageLayout = image.descriptor.imageLayout;
-
-  if(m_base.enableLayoutBarriers && !layoutAllowsCopy)
-  {
-    VkImageMemoryBarrier2 barrier = makeImageMemoryBarrier(
-        {.image = image.image, .oldLayout = image.descriptor.imageLayout, .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL});
-    modifyImageBarrier(barrier);
-
-    dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-
-    m_batch.pre.imageBarriers.push_back(barrier);
-  }
+  const VkImageLayout dstImageLayout = insertPreImageBarrier(image.image, image.descriptor.imageLayout, newLayout);
 
   const VkBufferImageCopy2 copyBufferImageRegion{
       .sType             = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
@@ -636,18 +604,7 @@ VkResult StagingUploaderBase::appendImageMapping(nvvk::Image&          image,
   m_batch.copyBufferImageRegions.emplace_back(copyBufferImageRegion);
   m_batch.copyBufferImageInfos.emplace_back(copyBufferToImageInfo);
 
-  if(m_base.enableOwnerBarriers || (m_base.enableLayoutBarriers && (!layoutAllowsCopy || newLayout != VK_IMAGE_LAYOUT_UNDEFINED)))
-  {
-    if(newLayout != VK_IMAGE_LAYOUT_UNDEFINED)
-    {
-      image.descriptor.imageLayout = newLayout;
-    }
-
-    VkImageMemoryBarrier2 barrier =
-        makeImageMemoryBarrier({.image = image.image, .oldLayout = dstImageLayout, .newLayout = image.descriptor.imageLayout});
-
-    insertPostImageBarrier(barrier);
-  }
+  insertPostUploadBarrier(image, dstImageLayout, newLayout);
 
   return VK_SUCCESS;
 }
@@ -671,26 +628,10 @@ VkResult StagingUploaderBase::appendImageSub(nvvk::Image&                    ima
   BufferRange stagingSpace;
   NVVK_FAIL_RETURN(acquireStagingSpace(stagingSpace, dataSize, data, semaphoreState));
 
-  bool layoutAllowsCopy = image.descriptor.imageLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
-                          || image.descriptor.imageLayout == VK_IMAGE_LAYOUT_GENERAL
-                          || image.descriptor.imageLayout == VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR;
-
-  VkImageLayout dstImageLayout = image.descriptor.imageLayout;
-
-  if(m_base.enableLayoutBarriers && !layoutAllowsCopy)
-  {
-    VkImageMemoryBarrier2 barrier = makeImageMemoryBarrier(
-        {.image     = image.image,
-         .oldLayout = image.descriptor.imageLayout,
-         .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-         .subresourceRange = {subresource.aspectMask, subresource.mipLevel, 1, subresource.baseArrayLayer, subresource.layerCount}});
-
-    modifyImageBarrier(barrier);
-
-    dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-
-    m_batch.pre.imageBarriers.push_back(barrier);
-  }
+  const VkImageSubresourceRange subresourceRange{subresource.aspectMask, subresource.mipLevel, 1,
+                                                 subresource.baseArrayLayer, subresource.layerCount};
+  const VkImageLayout           dstImageLayout =
+      insertPreImageBarrier(image.image, image.descriptor.imageLayout, newLayout, &subresourceRange);
 
   // Copy buffer data to the image
   const VkBufferImageCopy2 copyBufferImageRegion{
@@ -716,21 +657,7 @@ VkResult StagingUploaderBase::appendImageSub(nvvk::Image&                    ima
   m_batch.copyBufferImageRegions.emplace_back(copyBufferImageRegion);
   m_batch.copyBufferImageInfos.emplace_back(copyBufferToImageInfo);
 
-  if(m_base.enableOwnerBarriers || (m_base.enableLayoutBarriers && (!layoutAllowsCopy || newLayout != VK_IMAGE_LAYOUT_UNDEFINED)))
-  {
-    if(newLayout != VK_IMAGE_LAYOUT_UNDEFINED)
-    {
-      image.descriptor.imageLayout = newLayout;
-    }
-
-    VkImageMemoryBarrier2 barrier = makeImageMemoryBarrier(
-        {.image     = image.image,
-         .oldLayout = dstImageLayout,
-         .newLayout = image.descriptor.imageLayout,
-         .subresourceRange = {subresource.aspectMask, subresource.mipLevel, 1, subresource.baseArrayLayer, subresource.layerCount}});
-
-    insertPostImageBarrier(barrier);
-  }
+  insertPostUploadBarrier(image, dstImageLayout, newLayout, &subresourceRange);
 
   return VK_SUCCESS;
 }
@@ -756,25 +683,10 @@ VkResult StagingUploaderBase::appendImageSubMapping(nvvk::Image&                
 
   uploadMapping = stagingSpace.mapping;
 
-  bool layoutAllowsCopy = image.descriptor.imageLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
-                          || image.descriptor.imageLayout == VK_IMAGE_LAYOUT_GENERAL
-                          || image.descriptor.imageLayout == VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR;
-
-  VkImageLayout dstImageLayout = image.descriptor.imageLayout;
-
-  if(m_base.enableLayoutBarriers && !layoutAllowsCopy)
-  {
-    VkImageMemoryBarrier2 barrier = makeImageMemoryBarrier(
-        {.image     = image.image,
-         .oldLayout = image.descriptor.imageLayout,
-         .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-         .subresourceRange = {subresource.aspectMask, subresource.mipLevel, 1, subresource.baseArrayLayer, subresource.layerCount}});
-    modifyImageBarrier(barrier);
-
-    dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-
-    m_batch.pre.imageBarriers.push_back(barrier);
-  }
+  const VkImageSubresourceRange subresourceRange{subresource.aspectMask, subresource.mipLevel, 1,
+                                                 subresource.baseArrayLayer, subresource.layerCount};
+  const VkImageLayout           dstImageLayout =
+      insertPreImageBarrier(image.image, image.descriptor.imageLayout, newLayout, &subresourceRange);
 
   const VkBufferImageCopy2 copyBufferImageRegion{
       .sType             = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
@@ -799,21 +711,7 @@ VkResult StagingUploaderBase::appendImageSubMapping(nvvk::Image&                
   m_batch.copyBufferImageRegions.emplace_back(copyBufferImageRegion);
   m_batch.copyBufferImageInfos.emplace_back(copyBufferToImageInfo);
 
-  if(m_base.enableOwnerBarriers || (m_base.enableLayoutBarriers && (!layoutAllowsCopy || newLayout != VK_IMAGE_LAYOUT_UNDEFINED)))
-  {
-    if(newLayout != VK_IMAGE_LAYOUT_UNDEFINED)
-    {
-      image.descriptor.imageLayout = newLayout;
-    }
-
-    VkImageMemoryBarrier2 barrier = makeImageMemoryBarrier(
-        {.image     = image.image,
-         .oldLayout = dstImageLayout,
-         .newLayout = image.descriptor.imageLayout,
-         .subresourceRange = {subresource.aspectMask, subresource.mipLevel, 1, subresource.baseArrayLayer, subresource.layerCount}});
-
-    insertPostImageBarrier(barrier);
-  }
+  insertPostUploadBarrier(image, dstImageLayout, newLayout, &subresourceRange);
 
   return VK_SUCCESS;
 }
@@ -858,6 +756,91 @@ void StagingUploaderBase::cancelAppended()
   resetStaging(true);
 }
 
+VkImageLayout StagingUploaderBase::insertPreImageBarrier(VkImage                        image,
+                                                         VkImageLayout                  currentLayout,
+                                                         VkImageLayout                  newLayout,
+                                                         const VkImageSubresourceRange* subresourceRange)
+{
+  const bool currentAllowsCopy = imageLayoutAllowsCopy(currentLayout);
+  const bool newAllowsCopy     = imageLayoutAllowsCopy(newLayout);
+
+  VkImageLayout copyImageLayout = currentLayout;
+
+  if(m_base.enableLayoutBarriers && !currentAllowsCopy)
+  {
+    copyImageLayout = newAllowsCopy ? newLayout : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+
+    ImageMemoryBarrierParams params{.image = image, .oldLayout = currentLayout, .newLayout = copyImageLayout};
+    if(subresourceRange)
+    {
+      params.subresourceRange = *subresourceRange;
+    }
+
+    VkImageMemoryBarrier2 barrier = makeImageMemoryBarrier(params);
+    modifyImageBarrier(barrier);
+    m_batch.pre.imageBarriers.push_back(barrier);
+  }
+
+  return copyImageLayout;
+}
+
+void StagingUploaderBase::insertPostUploadBarrier(nvvk::Image&                   image,
+                                                  VkImageLayout                  currentLayout,
+                                                  VkImageLayout                  newLayout,
+                                                  const VkImageSubresourceRange* subresourceRange)
+{
+  // If our format was not copyable, we temporarily transitioned into a copyable format, and
+  // may need to transition back to original.
+  // Or we have a new layout that we want to transition to, and we haven't transitioned into it already.
+  const bool originalAllowsCopy = imageLayoutAllowsCopy(image.descriptor.imageLayout);
+  const bool requiresLayoutTransition =
+      (m_base.enableLayoutBarriers
+       && (!originalAllowsCopy || (newLayout != VK_IMAGE_LAYOUT_UNDEFINED && newLayout != currentLayout)));
+
+  if(m_base.enableOwnerBarriers || requiresLayoutTransition)
+  {
+    if(newLayout != VK_IMAGE_LAYOUT_UNDEFINED)
+    {
+      image.descriptor.imageLayout = newLayout;
+    }
+
+    ImageMemoryBarrierParams params{.image = image.image, .oldLayout = currentLayout, .newLayout = image.descriptor.imageLayout};
+    if(subresourceRange)
+    {
+      params.subresourceRange = *subresourceRange;
+    }
+
+    VkImageMemoryBarrier2 barrier = makeImageMemoryBarrier(params);
+    if(m_base.enableOwnerBarriers)
+    {
+      barrier.srcQueueFamilyIndex = m_base.srcQueueFamilyIndex;
+      barrier.dstQueueFamilyIndex = m_base.dstQueueFamilyIndex;
+
+      VkImageMemoryBarrier2 releaseBarrier = barrier;
+      VkImageMemoryBarrier2 acquireBarrier = barrier;
+
+      releaseBarrier.srcStageMask  = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+      releaseBarrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+      releaseBarrier.dstStageMask  = VK_PIPELINE_STAGE_2_NONE;
+      releaseBarrier.dstAccessMask = VK_ACCESS_2_NONE;
+      // handle layout change at acquisition / on destination queue
+      releaseBarrier.newLayout = releaseBarrier.oldLayout;
+
+      acquireBarrier.srcStageMask  = VK_PIPELINE_STAGE_2_NONE;
+      acquireBarrier.srcAccessMask = VK_ACCESS_2_NONE;
+
+      m_batch.post.imageBarriers.push_back(releaseBarrier);
+      m_batch.acquire.imageBarriers.push_back(acquireBarrier);
+    }
+    else
+    {
+      modifyImageBarrier(barrier);
+
+      m_batch.post.imageBarriers.push_back(barrier);
+    }
+  }
+}
+
 void StagingUploaderBase::modifyImageBarrier(VkImageMemoryBarrier2& barrier)
 {
   if(m_batch.transferOnly)
@@ -895,37 +878,6 @@ void StagingUploaderBase::insertOwnerBufferBarrier(VkBuffer buffer, VkDeviceSize
   m_batch.acquire.bufferBarriers.push_back(bufferBarrier);
 }
 
-void StagingUploaderBase::insertPostImageBarrier(VkImageMemoryBarrier2& barrier)
-{
-  if(m_base.enableOwnerBarriers)
-  {
-    barrier.srcQueueFamilyIndex = m_base.srcQueueFamilyIndex;
-    barrier.dstQueueFamilyIndex = m_base.dstQueueFamilyIndex;
-
-    VkImageMemoryBarrier2 releaseBarrier = barrier;
-    VkImageMemoryBarrier2 acquireBarrier = barrier;
-
-    releaseBarrier.srcStageMask  = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
-    releaseBarrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-    releaseBarrier.dstStageMask  = VK_PIPELINE_STAGE_2_NONE;
-    releaseBarrier.dstAccessMask = VK_ACCESS_2_NONE;
-    // handle layout change at acquisition / on destination queue
-    releaseBarrier.newLayout = releaseBarrier.oldLayout;
-
-    acquireBarrier.srcStageMask  = VK_PIPELINE_STAGE_2_NONE;
-    acquireBarrier.srcAccessMask = VK_ACCESS_2_NONE;
-
-    m_batch.post.imageBarriers.push_back(releaseBarrier);
-    m_batch.acquire.imageBarriers.push_back(acquireBarrier);
-  }
-  else
-  {
-    modifyImageBarrier(barrier);
-
-    m_batch.post.imageBarriers.push_back(barrier);
-  }
-}
-
 void StagingUploader::releaseStaging(bool forceAll)
 {
   VkDevice device = m_resourceAllocator->getDevice();
@@ -959,7 +911,7 @@ void StagingUploader::releaseStaging(bool forceAll)
     {
       m_stagingResources[writeIdx++] = std::move(stagingResource);
     }
-    else if(!forceAll)
+    else
     {
       writeIdx++;
     }
@@ -1084,6 +1036,26 @@ void StagingUploader::resetStaging(bool isCancel)
       // this will handle the transition from the current `myImageTextures[i].descriptor.imageLayout` to `VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL`
       // as well as the intermediate transition to `VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL`
       result = stagingUploader.appendImage(myImageTextures[i], myImageDatas[i], VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
+
+      // for handling the transition with multiple mips, special care must be taken.
+      VkImageLayout originalLayout = myImageTextures[i].descriptor.imageLayout;
+      for(uint32_t m = 0; m < myImageTextures[m].mipLevels; m++)
+      {
+        std::vector<std::span<uint8_t>> imageMipDatas;
+        VkImageSubresourceLayers        subResource{
+                   .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                   .mipLevel   = m,
+                   .layerCount = 1,
+        };
+        VkOffset3D offset{};
+        VkExtent3D extent{};
+
+        // reset the imageLayout with each mip, given the automatic transition logic looks only at this single value for
+        // all mips.
+        myImageTextures[i].descriptor.imageLayout = originalLayout;
+        result = stagingUploader.appendImageSub(myImageTextures[i], offset, extent, subResource, imageMipDatas[m],
+                                                VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL);
+      }
 
       // flush upload if we reached a gigabyte or if we are the last resource
       if(isLast || stagingUploader.checkAppendedSize(1024 * 1024 * 1024))

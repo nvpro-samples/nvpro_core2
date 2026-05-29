@@ -50,7 +50,7 @@ struct NXProfileFunc
     eventAttrib.message.ascii   = name;
     eventAttrib.payloadType     = NVTX_PAYLOAD_TYPE_INT64;
     eventAttrib.payload.llValue = (int64_t)p;
-    eventAttrib.category        = (uint32_t)p;
+    eventAttrib.category        = 0;
     nvtxRangePushEx(&eventAttrib);
   }
   ~NXProfileFunc() { nvtxRangePop(); }

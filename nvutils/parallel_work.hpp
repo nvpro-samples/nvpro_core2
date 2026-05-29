@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -205,10 +205,11 @@ inline void parallel_batches(uint64_t numItems, F&& fn, uint32_t numThreads = 0)
 }
 
 // Returns the thread pool; creates it if it hasn't been created yet.
+// (BS::light_thread_pool is a thread pool without optional priority/pause/deadlock features.)
 // Safe to call from multiple threads, but for performance reasons, should
 // only be called if you know you'll run on multiple threads using the
 // pool functions.
-BS::thread_pool& get_thread_pool();
+BS::light_thread_pool& get_thread_pool();
 
 // Like parallel_batches, but provides a thread index from within the pool of threads.
 template <uint64_t BATCHSIZE = 512, typename F>
@@ -262,7 +263,7 @@ inline void parallel_batches_pooled(uint64_t numItems, F&& fn, uint32_t numThrea
     // more synchronization overhead; the ideal `numBlocks` is probably
     // somewhere between these limiting cases.
     const uint64_t         numBlocks  = ((BATCHSIZE == 1) ? numBatches : 0);
-    BS::thread_pool&       threadPool = get_thread_pool();
+    BS::light_thread_pool& threadPool = get_thread_pool();
     BS::multi_future<void> future     = threadPool.submit_loop<uint64_t>(0, numBatches, worker, numBlocks);
     future.wait();
   }
@@ -297,7 +298,7 @@ inline void parallel_ranges_pooled(uint64_t numItems, F&& fn, uint32_t numThread
     };
 
     const uint64_t         numBlocks  = ((BATCHSIZE == 1) ? numBatches : 0);
-    BS::thread_pool&       threadPool = get_thread_pool();
+    BS::light_thread_pool& threadPool = get_thread_pool();
     BS::multi_future<void> future     = threadPool.submit_loop<uint64_t>(0, numBatches, worker, numBlocks);
     future.wait();
   }

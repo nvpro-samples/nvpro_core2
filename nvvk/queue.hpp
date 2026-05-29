@@ -128,7 +128,8 @@ protected:
   QueueInfo   m_queueInfo{};
   VkSemaphore m_timelineSemaphore{};
   // value of the next submit
-  uint64_t   m_timelineValue = 1;
-  std::mutex m_mutex{};
+  uint64_t m_timelineValue = 1;
+
+  mutable std::mutex m_mutex{};
 };
 }  // namespace nvvk

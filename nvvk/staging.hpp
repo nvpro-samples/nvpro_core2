@@ -270,6 +270,10 @@ public:
   // If `dataSize` is `0`, returns VK_SUCCESS
   // `data` must be valid if `dataSize` is non zero, and is copied linearly into staging memory with this call.
   // `semaphoreState` can be used to track the completion of this upload.
+  // Note:
+  // `image.descriptor.imageLayout` is tested when automatic layout barriers are enabled. However,
+  // as mips have their own layout states, we advise resetting `image.descriptor.imageLayout`
+  // before each mip upload when uploading many mips. See `usage_StagingUploader`.
   VkResult appendImageSub(nvvk::Image&                    image,
                           const VkOffset3D&               offset,
                           const VkExtent3D&               extent,
@@ -309,9 +313,25 @@ protected:
   virtual void resetStaging(bool isCancel) = 0;
 
   void resetBatch();
+
+  // if we are on a transfer only queue, keeps only transfer pipeline and access bits
   void modifyImageBarrier(VkImageMemoryBarrier2& barrier);
+
+  // ownership barrier management for buffers
   void insertOwnerBufferBarrier(VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size);
-  void insertPostImageBarrier(VkImageMemoryBarrier2& barrier);
+
+  // initial layout transition prior copy.
+  // returns the layout in which the copy is done in.
+  [[nodiscard]] VkImageLayout insertPreImageBarrier(VkImage                        image,
+                                                    VkImageLayout                  currentLayout,
+                                                    VkImageLayout                  newLayout,
+                                                    const VkImageSubresourceRange* subresourceRange = nullptr);
+
+  // post copy layout transition and ownership transfer
+  void insertPostUploadBarrier(nvvk::Image&                   image,
+                               VkImageLayout                  currentLayout,
+                               VkImageLayout                  newLayout,
+                               const VkImageSubresourceRange* subresourceRange = nullptr);
 
   struct Batch
   {
