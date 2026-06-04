@@ -80,6 +80,9 @@ public:
     // If provided , use this surface format. Make sure to select one of the formats returned by getAvailableFormats().
     VkSurfaceFormat2KHR preferredFormat = {.sType         = VK_STRUCTURE_TYPE_SURFACE_FORMAT_2_KHR,
                                            .surfaceFormat = {VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR}};
+    // how the swapchain images are made accessible
+    // must be compatible with VkSurfaceCapabilitiesKHR::supportedUsageFlags
+    VkImageUsageFlags imageUsage{VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
 
     // Preferred swapchain image count (presentation parallelism). Clamped at
     // runtime to the surface's [minImageCount, maxImageCount] (with a floor of
@@ -131,6 +134,12 @@ public:
   -*/
   void presentFrame(VkQueue queue);
 
+  // Transition the acquired swapchain image for write access / presentation.
+  // Tracks per-image layout so transitions happen only after vkAcquireNextImageKHR.
+  // transitions from VK_IMAGE_LAYOUT_UNDEFINED to newLayout
+  void cmdTransitionImageForOverwrite(VkCommandBuffer cmd, VkImageLayout newLayout);
+  // transitions from previous layout to VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+  void cmdTransitionImageForPresent(VkCommandBuffer cmd);
 
   /*--
    * Retrieve all image formats the given surface can support.
@@ -163,6 +172,9 @@ private:
     VkImage     image{};             // Swapchain image (owned by the swapchain)
     VkImageView imageView{};         // 2D view of the image
     VkSemaphore presentSemaphore{};  // Binary semaphore: signaled when rendering done, waited on by present
+    // Current layout of this image; starts UNDEFINED and is transitioned lazily
+    // after the image has been acquired (see cmdTransitionImage*).
+    VkImageLayout currentLayout{VK_IMAGE_LAYOUT_UNDEFINED};
   };
   /*-- Per-in-flight-slot resources --------------------------------------------
    * One entry per "frame in flight" -- typically 2, regardless of the image
@@ -197,9 +209,10 @@ private:
   VkDevice            m_device{};          // The logical device (interface to the physical device)
   QueueInfo           m_queue{};           // The queue used to submit command buffers to the GPU
   VkSwapchainKHR      m_swapChain{};       // The swapchain
-  VkSurfaceFormat2KHR m_surfaceFormat;     // the surface format used by the swapchain
+  VkSurfaceFormat2KHR m_surfaceFormat;     // The surface format used by the swapchain
   VkSurfaceKHR        m_surface{};         // The surface to present images to
   VkCommandPool       m_cmdPool{};         // The command pool for the swapchain
+  VkImageUsageFlags   m_imageUsage{};      // The requested image usage for the swapchain
 
   std::vector<Image>          m_images{};                // The swapchain images and their views
   std::vector<FrameResources> m_frameResources{};        // Synchronization primitives for each frame

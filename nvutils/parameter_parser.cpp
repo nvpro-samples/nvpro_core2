@@ -239,7 +239,8 @@ size_t ParameterParser::parse(std::span<const char* const> args,
 {
   std::filesystem::path filenameBasePath = filenameBasePathIn;
 
-  if(filenameBasePath.has_extension())
+  std::error_code ec;
+  if(!std::filesystem::is_directory(filenameBasePath, ec))
   {
     filenameBasePath = filenameBasePath.parent_path();
   }

@@ -35,50 +35,195 @@
 
 namespace nvvk {
 
+// Utility class to batch copy operations and related barriers.
+// Fully public so classes that manage uploads or downloads can use it directly
+// with full flexibility
+class StagingCopyBatch
+{
+public:
+  //////////////////////////////////////////////////////////////////////////
+  // persistent state
 
-// Primary interface for staging uploader.
-// This is a base class for all staging uploaders.
-// It provides the basic functionality for staging uploader.
-// It is not meant to be used directly, but rather to be derived from.
-// The derived classes must implement the `acquireStagingSpace`, `releaseStaging` and `resetStaging` functions.
-class StagingUploaderBase
+  // enqueues layout transitions for images
+  // `pre` barrier will contain a barrier transition to a copyable state if it's not already,
+  // and `post` barrier will contain back to original or the optional `newLayout`
+  bool enableLayoutBarriers = false;
+
+  // relevant if `enableLayoutBarriers` are enabled.
+  // Triggers `applyImageBarrierMask` which allows disabling bits that
+  // are not supported by the vulkan queue that this batch is executed on.
+  // Example: for a transfer only queue, would use
+  // VK_ACCESS_2_TRANSFER_WRITE_BIT | VK_ACCESS_2_TRANSFER_READ_BIT accessMask bits
+  // as well as VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT stageMask
+  bool                     enableLayoutBarrierMask        = false;
+  VkAccessFlagBits2        layoutBarrierAccessMask        = ~0ULL;
+  VkPipelineStageFlagBits2 layoutBarrierPipelineStageMask = ~0ULL;
+
+  // enqueues resource ownership barriers
+  bool enableOwnerBarriers = false;
+  // used for ownership barriers
+  uint32_t srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  uint32_t dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+
+  //////////////////////////////////////////////////////////////////////////
+  // these states are reset/cleared on `reset` and/or `cmdCopyAppended`
+  size_t stagingSize = 0;
+
+  // These copy operations are triggered during `cmdCopyAppended`.
+  // The `copyInfo.pRegions` are computed from the tightly packed
+  // regions using a prefix sum over `copyInfo.regionCount`
+  std::vector<VkBufferCopy2>            copyBufferRegions;
+  std::vector<VkCopyBufferInfo2>        copyBufferInfos;
+  std::vector<VkBufferImageCopy2>       copyBufferImageRegions;
+  std::vector<VkCopyBufferToImageInfo2> copyBufferImageInfos;
+
+  // barriers performed on the provided command buffer during `cmdCopyAppended`
+  BarrierContainer pre;
+  BarrierContainer post;
+  // external barriers must be gathered externally before `cmdCopyAppended`
+  BarrierContainer acquire;
+
+  // nothing in the batch
+  bool isAppendedEmpty() const;
+
+  // check if we should flush because already enough traffic caused by the batch
+  inline bool checkAppendedSize(size_t limitInBytes, size_t addedSize = 0) const
+  {
+    return stagingSize && (stagingSize + addedSize) > limitInBytes;
+  }
+
+  // Records pending copy and barrier operations into `cmd` and then clears the batch state.
+  // Warning: Staging resource ownership and lifetime must be managed by caller.
+  // calls `reset` after enqueuing the commands.
+  void cmdCopyAppended(VkCommandBuffer cmd);
+
+  // resets all vectors and intermediate `stagingSize`
+  void reset();
+
+  // adds a buffer copy
+  // calls `addOwnerBufferBarrier` if `allowOwnerBarrier` and `enableOwnerBarriers` are true
+  // `allowOwnerBarrier` is optional for scenarios where we might copy to a big buffer a few times
+  // and then trigger `addOwnerBufferBarrier` manually for the full range.
+  void addBufferCopy(VkBuffer     stagingBuffer,
+                     VkDeviceSize stagingOffset,
+                     VkBuffer     buffer,
+                     VkDeviceSize bufferOffset,
+                     VkDeviceSize dataSize,
+                     bool         allowOwnerBarrier = true);
+
+  // adds an image subresource copy
+  // calls `handlePreImageBarrier` and `handlePostImageBarrier`
+  void addImageCopy(VkBuffer                        stagingBuffer,
+                    VkDeviceSize                    stagingOffset,
+                    VkImage                         image,
+                    VkImageLayout&                  imageLayout,
+                    VkImageLayout                   newLayout,
+                    size_t                          dataSize,
+                    const VkImageSubresourceLayers& subresource,
+                    const VkOffset3D&               offset,
+                    const VkExtent3D&               extent,
+                    const VkImageSubresourceRange*  subresourceRange = nullptr);
+
+  // ownership barrier management for buffers.
+  // adds `post` and `acquire` barrier
+  void addOwnerBufferBarrier(VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size);
+
+  // modifies automatic image memory barrier,
+  // to remove pipelines/access bits that aren't supported on
+  // the queue that this batch is executed on
+  void applyImageBarrierMask(VkImageMemoryBarrier2& barrier);
+
+  // may add `pre` barrier for layout transition prior copy.
+  // `currentLayout` layout the image is in before copy operation
+  // `newLayout` layout that is desired after copy operation (if not VK_IMAGE_LAYOUT_UNDEFINED)
+  // returns the layout in which the copy is done in.
+  // may call `applyImageBarrierMask`
+  [[nodiscard]] VkImageLayout handlePreImageBarrier(VkImage                        image,
+                                                    VkImageLayout                  currentLayout,
+                                                    VkImageLayout                  newLayout,
+                                                    const VkImageSubresourceRange* subresourceRange = nullptr);
+
+  // may add `post` barrier for layout transition after copy and/or ownership transfer.
+  // may add `acquire` barrier for ownership transfer.
+  // may call `applyImageBarrierMask`
+  // `currentLayout` layout in which copy is done
+  // `originalLayout` before operations
+  // `newLayout` desired after copy operation (if not VK_IMAGE_LAYOUT_UNDEFINED)
+  // returns either `originalLayout` or `newLayout`
+  [[nodiscard]] VkImageLayout handlePostImageBarrier(VkImage                        image,
+                                                     VkImageLayout                  currentLayout,
+                                                     VkImageLayout                  originalLayout,
+                                                     VkImageLayout                  newLayout,
+                                                     const VkImageSubresourceRange* subresourceRange = nullptr);
+};
+
+// A basic implementation of a StagingUploader that uses
+// the provided resource allocator to acquire staging resources
+// as individual buffers.
+// Does take care of non-coherent memory flushes and various
+// barrier management.
+// We do recommend more sophisticated designs than this, that
+// are tuned for the application need, like per-frame submissions
+// or asynchronous submissions.
+class StagingUploader
 {
 public:
   static constexpr VkDeviceSize DEFAULT_LARGE_CHUNK_SIZE = 256ull * 1024 * 1024;
 
+
+  StagingUploader()                                  = default;
+  StagingUploader(const StagingUploader&)            = delete;
+  StagingUploader& operator=(const StagingUploader&) = delete;
+  StagingUploader(StagingUploader&& other) noexcept;
+  StagingUploader& operator=(StagingUploader&& other) noexcept;
+  ~StagingUploader()
+  {
+    assert(isAppendedEmpty() && "Did you forget cmdUploadAppended() or cancelAppended()");
+    assert(m_resourceAllocator == nullptr && "Missing deinit()");
+  }
+
+  // explicit lifetime of resourceAllocator must be ensured externally
+  // `enableLayoutBarriers` is passed to `setEnableLayoutBarriers`
+  // `forceCoherentMapping` means we use memory for staging buffers that is guaranteed to have
+  // VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, avoiding the need to call vkFlushMappedMemoryRanges.
+  void init(ResourceAllocator* resourceAllocator, bool enableLayoutBarriers = false, bool forceCoherentMapping = true);
+
+  // deinit implicitly calls `releaseStaging(true)`
+  void deinit();
+
+  ResourceAllocator* getResourceAllocator();
+
+  //////////////////////////////////////////////////////////////////////////
+
   // Returns staging buffer information that can be used for any manual copy operations.
   // If data is non-null it will be copied to bufferMapping automatically.
   // The returned `stagingSpace` is valid until `cmdUploadAppended` or `cancelAppended`.
-  // Pure virtual function, derived classes must implement this by different means.
-  virtual VkResult acquireStagingSpace(BufferRange&          stagingSpace,
-                                       size_t                dataSize,
-                                       const void*           data,
-                                       const SemaphoreState& semaphoreState = {}) = 0;
+  virtual VkResult acquireStagingSpace(BufferRange& stagingSpace, size_t dataSize, const void* data, const SemaphoreState& semaphoreState = {});
 
   // Releases temporary staging resources based on SemaphoreState.
   // If a resources `!SemaphoreState.isValid()` then it is immediately released,
   // otherwise runs `SemaphoreState.testSignaled`.
   // If `forceAll` is true, then we assume it's safe delete all resources, which
   // typically requires a device wait idle in advance.
-  // Pure virtual function, derived classes must implement staging space management by different means.
-  virtual void releaseStaging(bool forceAll = false) = 0;
+  virtual void releaseStaging(bool forceAll = false);
 
   // Records pending operations (copy & relevant layout transitions) into the command buffer
   // and then resets the internal state for appended / acquired staging space.
   // When ownership transfers are active, don't forget to copy/run the `getOwnerDestinationBarriers`
   // at the acquiring queue before calling this function.
-  // Triggers `resetBatch(); resetStaging(false);`
+  // Triggers `m_batch.reset(); resetStaging(false);`
+  // This call may also flush non-coherently mapped staging buffers when applicable
   virtual void cmdUploadAppended(VkCommandBuffer cmd);
 
   // Clears all pending copy operations and their
   // acquired staging spaces.
-  // Triggers `resetBatch(); resetStaging(true);`
+  // Triggers `m_batch.reset(); resetStaging(true);`
   void cancelAppended();
 
   //////////////////////////////////////////////////////////////////////////
 
   // start operations that are only on transfer queue
-  // state is reset on `cancelAppended` or `cmdUploadAppended`
+  // state is set to false on `cancelAppended` or `cmdUploadAppended`
   void beginTransferOnly();
 
   // Handles layout transitions for images on a VkImageSubresourceRange level.
@@ -90,7 +235,7 @@ public:
   void setEnableOwnerBarriers(bool enableOwnerBarriers, uint32_t srcQueueFamilyIndex, uint32_t dstQueueFamilyIndex);
 
   // Must execute these barriers on the destination queue.
-  // Must copy /execute content of this container before calling `cmdUploadAppended`.
+  // Must copy / execute content of this container before calling `cmdUploadAppended`.
   const BarrierContainer& getOwnerAcquisitionBarriers() const { return m_batch.acquire; }
 
   //////////////////////////////////////////////////////////////////////////
@@ -99,7 +244,7 @@ public:
   bool isAppendedEmpty() const;
 
   // get size of all staging resources
-  size_t getStagingUsage() const { return m_base.stagingResourcesSize; }
+  size_t getStagingUsage() const { return m_stagingResourcesSize; }
 
   // returns true if the sum of staging resources used in pending operations
   // and the added size is beyond the limit
@@ -308,95 +453,7 @@ public:
                                  const SemaphoreState&           semaphoreState = {});
 
 protected:
-  // if `isCancel` is true then implementation must
-  // release all staging resources from the current batch
-  virtual void resetStaging(bool isCancel) = 0;
-
-  void resetBatch();
-
-  // if we are on a transfer only queue, keeps only transfer pipeline and access bits
-  void modifyImageBarrier(VkImageMemoryBarrier2& barrier);
-
-  // ownership barrier management for buffers
-  void insertOwnerBufferBarrier(VkBuffer buffer, VkDeviceSize offset, VkDeviceSize size);
-
-  // initial layout transition prior copy.
-  // returns the layout in which the copy is done in.
-  [[nodiscard]] VkImageLayout insertPreImageBarrier(VkImage                        image,
-                                                    VkImageLayout                  currentLayout,
-                                                    VkImageLayout                  newLayout,
-                                                    const VkImageSubresourceRange* subresourceRange = nullptr);
-
-  // post copy layout transition and ownership transfer
-  void insertPostUploadBarrier(nvvk::Image&                   image,
-                               VkImageLayout                  currentLayout,
-                               VkImageLayout                  newLayout,
-                               const VkImageSubresourceRange* subresourceRange = nullptr);
-
-  struct Batch
-  {
-    bool   transferOnly = false;
-    size_t stagingSize  = 0;
-
-    std::vector<VkBufferCopy2>            copyBufferRegions;
-    std::vector<VkCopyBufferInfo2>        copyBufferInfos;
-    std::vector<VkBufferImageCopy2>       copyBufferImageRegions;
-    std::vector<VkCopyBufferToImageInfo2> copyBufferImageInfos;
-    BarrierContainer                      pre;
-    BarrierContainer                      post;
-    BarrierContainer                      acquire;
-  };
-
-  struct Base
-  {
-    size_t   stagingResourcesSize = 0;
-    bool     enableLayoutBarriers = false;
-    bool     enableOwnerBarriers  = false;
-    uint32_t srcQueueFamilyIndex  = VK_QUEUE_FAMILY_IGNORED;
-    uint32_t dstQueueFamilyIndex  = VK_QUEUE_FAMILY_IGNORED;
-  };
-
-  Batch m_batch{};
-  Base  m_base{};
-};
-
-// A basic implementation of the StagingUploaderBase interface.
-// Use the provided resource allocator to acquire staging resources
-// as individual buffers.
-class StagingUploader : public StagingUploaderBase
-{
-public:
-  StagingUploader()                                  = default;
-  StagingUploader(const StagingUploader&)            = delete;
-  StagingUploader& operator=(const StagingUploader&) = delete;
-  StagingUploader(StagingUploader&& other) noexcept;
-  StagingUploader& operator=(StagingUploader&& other) noexcept;
-  ~StagingUploader()
-  {
-    assert(isAppendedEmpty() && "Did you forget cmdUploadAppended() or cancelAppended()");
-    assert(m_resourceAllocator == nullptr && "Missing deinit()");
-  }
-
-  // explicit lifetime of resourceAllocator must be ensured externally
-  // `enableLayoutBarriers` is passed to `StagingUploaderBase::setEnableLayoutBarriers`
-  // `forceCoherentMapping` means we use memory for staging buffers that is guaranteed to have
-  // VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, avoiding the need to call vkFlushMappedMemoryRanges.
-  void init(ResourceAllocator* resourceAllocator, bool enableLayoutBarriers = false, bool forceCoherentMapping = true);
-
-  // deinit implicitly calls `releaseStaging(true)`
-  void deinit();
-
-  VkResult acquireStagingSpace(BufferRange& stagingSpace, size_t dataSize, const void* data, const SemaphoreState& semaphoreState = {}) override;
-  void releaseStaging(bool forceAll = false) override;
-
-  // Submit appended staging operations and barriers to `cmd`.
-  // This call may also flush non-coherently mapped staging buffers when applicable
-  void cmdUploadAppended(VkCommandBuffer cmd) override;
-
-  ResourceAllocator* getResourceAllocator();
-
-protected:
-  void resetStaging(bool isCancel) override;
+  virtual void resetStaging(bool isCancel);
 
   struct StagingResource
   {
@@ -406,6 +463,8 @@ protected:
 
   ResourceAllocator*           m_resourceAllocator = nullptr;
   std::vector<StagingResource> m_stagingResources;
+  size_t                       m_stagingResourcesSize = 0;
+  StagingCopyBatch             m_batch;
   size_t                       m_batchStagingCount    = 0;
   bool                         m_batchRequiresFlush   = false;
   bool                         m_forceCoherentMapping = true;

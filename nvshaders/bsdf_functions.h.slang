@@ -1023,19 +1023,10 @@ void brdf_sheen_sample(NVSHADERS_INOUT_TYPE(BsdfSampleData) data, PbrMaterial ma
 
 
 /*-------------------------------------------------------------------------------------------------
-# Function `bsdfEvaluate`
-> Evaluates the full BSDF model for the given material and set of directions.
-
-You must provide `BsdfEvaluateData`'s `k1`, `k2`, and `xi` parameters.
-(Evaluation is stochastic because this code randomly samples lobes depending on
-`xi`; this is valid to do in a Monte Carlo path tracer.)
-
-The diffuse lobe evaluation and the sum of the specular lobe evaluations
-(including the cosine term from the rendering equation) will be returned in
-`data.bsdf_diffuse` and `data.bsdf_glossy`. Additionally, the probability that
-the sampling code will return this direction will be returned in `data.pdf`.
+# Function `bsdfEvaluateCore`
+> Single-path BSDF evaluation (forward or retro view direction in `data.k1`).
 -------------------------------------------------------------------------------------------------*/
-void bsdfEvaluate(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data, PbrMaterial mat)
+void bsdfEvaluateCore(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data, PbrMaterial mat)
 {
   float3 tint       = mat.baseColor;
   float  VdotN      = dot(data.k1, mat.N);
@@ -1085,24 +1076,56 @@ void bsdfEvaluate(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data, PbrMaterial mat)
 }
 
 /*-------------------------------------------------------------------------------------------------
-# Function `bsdfSample`
-
-> Samples the full BSDF model for the given material and input direction.
-
-You must provide `BsdfSampleData`'s `k1` and `xi` parameters. This function
-will set the other parameters of `BsdfSampleData`.
-
-There are two things you should check after calling this function:
-* Is `data.event_type` equal to `BSDF_EVENT_ABSORB`? If so, the sampler sampled
-  an output direction that would be absorbed by the material (e.g. it chose a
-  reflective lobe but sampled a vector below the surface).
-  The light path ends here.
-* Is `data.pdf` equal to `DIRAC`? If so, this sampled a perfectly specular lobe.
-  If you're using Multiple Importance Sampling weights, you should compute them
-  as if `data.pdf` was infinity.
-  
+# Function `bsdfEvaluateRetroreflectionBlend`
+> Blends a Minimal Retroreflective Microfacet Model evaluation into an already evaluated forward BSDF.
 -------------------------------------------------------------------------------------------------*/
-void bsdfSample(NVSHADERS_INOUT_TYPE(BsdfSampleData) data, PbrMaterial mat)
+void bsdfEvaluateRetroreflectionBlend(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data, PbrMaterial mat, float blend)
+{
+  // Portsmouth et al. 2026's Minimal Retroreflective Microfacet Model
+  // (https://jcgt.org/published/0015/01/04/) wraps an existing microfacet BSDF
+  // by replacing the view direction V with reflect(-V, N).
+  BsdfEvaluateData dRetro;
+  dRetro.k1 = reflect(-data.k1, mat.N);
+  dRetro.k2 = data.k2;
+  dRetro.xi = data.xi;
+  bsdfEvaluateCore(dRetro, mat);
+
+  data.bsdf_diffuse = lerp(data.bsdf_diffuse, dRetro.bsdf_diffuse, blend);
+  data.bsdf_glossy  = lerp(data.bsdf_glossy, dRetro.bsdf_glossy, blend);
+  data.pdf          = lerp(data.pdf, dRetro.pdf, blend);
+}
+
+/*-------------------------------------------------------------------------------------------------
+# Function `bsdfEvaluate`
+> Evaluates the full BSDF model for the given material and set of directions.
+
+You must provide `BsdfEvaluateData`'s `k1`, `k2`, and `xi` parameters.
+(Evaluation is stochastic because this code randomly samples lobes depending on
+`xi`; this is valid to do in a Monte Carlo path tracer.)
+
+The diffuse lobe evaluation and the sum of the specular lobe evaluations
+(including the cosine term from the rendering equation) will be returned in
+`data.bsdf_diffuse` and `data.bsdf_glossy`. Additionally, the probability that
+the sampling code will return this direction will be returned in `data.pdf`.
+-------------------------------------------------------------------------------------------------*/
+void bsdfEvaluate(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data, PbrMaterial mat)
+{
+  // Evaluate forward directly into the output; no dForward copy.
+  bsdfEvaluateCore(data, mat);
+
+  const float blend = mat.retroreflection;
+  if(blend > 0.0f)
+  {
+    bsdfEvaluateRetroreflectionBlend(data, mat, blend);
+  }
+}
+
+
+/*-------------------------------------------------------------------------------------------------
+# Function `bsdfSampleCore`
+> Single-path BSDF sample (forward or retro view direction in `data.k1`).
+-------------------------------------------------------------------------------------------------*/
+void bsdfSampleCore(NVSHADERS_INOUT_TYPE(BsdfSampleData) data, PbrMaterial mat)
 {
   float3 tint        = mat.baseColor;
   float  VdotN       = dot(data.k1, mat.N);
@@ -1159,6 +1182,68 @@ void bsdfSample(NVSHADERS_INOUT_TYPE(BsdfSampleData) data, PbrMaterial mat)
     // Treat as a perfectly specular bounce; change GLOSSY to IMPULSE
     data.event_type = (data.event_type & (~BSDF_EVENT_GLOSSY)) | BSDF_EVENT_IMPULSE;
     data.pdf        = DIRAC;
+  }
+}
+
+/*-------------------------------------------------------------------------------------------------
+# Function `bsdfSampleRetroreflectionPath`
+> Selects the forward or retroreflective MRM sampling path and returns its selection probability.
+> Requires `blend > 0`.
+-------------------------------------------------------------------------------------------------*/
+float bsdfSampleRetroreflectionPath(NVSHADERS_INOUT_TYPE(BsdfSampleData) data, PbrMaterial mat, float blend)
+{
+  // Use xi.z for path selection, then decorrelate it before bsdfSampleCore uses it
+  // for lobe selection and dispersion wavelength sampling.
+  bool useRetro = data.xi.z < blend;
+  data.xi.z     = rerandomize(data.xi.z);
+
+  if(useRetro)
+  {
+    data.k1 = reflect(-data.k1, mat.N);
+  }
+
+  return useRetro ? blend : (1.0f - blend);
+}
+
+/*-------------------------------------------------------------------------------------------------
+# Function `bsdfSample`
+
+> Samples the full BSDF model for the given material and input direction.
+
+You must provide `BsdfSampleData`'s `k1` and `xi` parameters. This function
+will set the other parameters of `BsdfSampleData`.
+
+There are two things you should check after calling this function:
+* Is `data.event_type` equal to `BSDF_EVENT_ABSORB`? If so, the sampler sampled
+  an output direction that would be absorbed by the material (e.g. it chose a
+  reflective lobe but sampled a vector below the surface).
+  The light path ends here.
+* Is `data.pdf` equal to `DIRAC`? If so, this sampled a perfectly specular lobe.
+  If you're using Multiple Importance Sampling weights, you should compute them
+  as if `data.pdf` was infinity.
+  
+-------------------------------------------------------------------------------------------------*/
+void bsdfSample(NVSHADERS_INOUT_TYPE(BsdfSampleData) data, PbrMaterial mat)
+{
+  // Minimal Retroreflection Model sampling: randomly choose forward vs. retroreflective path,
+  // and modify the view direction for the rest of the sampling accordingly.
+  float       pathProb = 1.0f;
+  const float blend    = mat.retroreflection;
+  const bool  hasRetro = blend > 0.0f;
+  if(hasRetro)
+  {
+    pathProb = bsdfSampleRetroreflectionPath(data, mat, blend);
+  }
+
+  // Sample forward or retro BSDF as chosen above, directly into the output; no dForward copy.
+  bsdfSampleCore(data, mat);
+
+  // If we have retroreflection and we didn't get absorption, account for the path selection probability.
+  if(hasRetro && pathProb > 0.0f && data.event_type != BSDF_EVENT_ABSORB)
+  {
+    data.bsdf_over_pdf /= pathProb;
+    if(data.pdf != DIRAC)
+      data.pdf *= pathProb;
   }
 }
 

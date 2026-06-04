@@ -63,10 +63,11 @@ VkResult BufferSubAllocator::init(const InitInfo& info)
   assert(info.minAlignment <= MAX_ALIGNMENT);
   assert(info.minAlignment >= MIN_ALIGNMENT);
 
-  m_state.maxAllocationSize = std::min((VkDeviceSize(1) << (sizeof(BufferSubAllocation::size)) * 8) - 1,
+  m_state.maxAllocationSize = std::min((VkDeviceSize(1) << (sizeof(BufferSubAllocation::m_size)) * 8) - 1,
                                        info.resourceAllocator->getMaxMemoryAllocationSize());
 
   assert(info.blockSize <= m_state.maxAllocationSize);
+  assert(!info.threadSafeBlockAccess || info.maxAllocatedSize != 0);
 
   m_info = info;
   if(!m_info.maxAllocatedSize)
@@ -91,6 +92,18 @@ VkResult BufferSubAllocator::init(const InitInfo& info)
 
     m_state.activeBlockCount = 1;
     m_state.activeBlockIndex = 0;
+  }
+
+  if(m_info.threadSafeBlockAccess && m_blocks.size() < m_state.maxBlocks)
+  {
+    size_t oldSize = m_blocks.size();
+
+    m_blocks.resize(m_state.maxBlocks);
+    m_state.freeBlockIndex = uint32_t(oldSize);
+    for(size_t i = oldSize; i < m_state.maxBlocks; i++)
+    {
+      m_blocks[i].nextFreeIndex = i < (m_state.maxBlocks - 1) ? uint32_t(i + 1) : INVALID_BLOCK_INDEX;
+    }
   }
 
   return VK_SUCCESS;
@@ -206,13 +219,13 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
     Block& block = m_blocks[freeBlockIndex];
     NVVK_FAIL_RETURN(createNewBuffer(block.buffer, size, std::max(m_info.minAlignment, alignment), freeBlockIndex));
 
-    subAllocation.allocation.offset   = 0;
-    subAllocation.allocation.metadata = OffsetAllocator::Allocation::NO_SPACE;
-    subAllocation.size                = static_cast<uint32_t>(size);
-    subAllocation.alignmentMinusOne   = alignment - 1;
-    subAllocation.block               = uint16_t(freeBlockIndex);
+    subAllocation.m_allocation.offset   = 0;
+    subAllocation.m_allocation.metadata = OffsetAllocator::Allocation::NO_SPACE;
+    subAllocation.m_size                = static_cast<uint32_t>(size);
+    subAllocation.m_alignmentMinusOne   = alignment - 1;
+    subAllocation.m_block               = uint16_t(freeBlockIndex);
 #if !defined(NDEBUG) && !defined(NVVK_DISABLE_BUFFER_SUB_ALLOCATOR_DEBUG_POINTER)
-    subAllocation.allocator = this;
+    subAllocation.m_allocator = this;
 #endif
 
     // dedicated blocks are _not_ thrown into the active block list (m_activeBlockIndex)
@@ -254,12 +267,12 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
 
     if(allocation.offset != OffsetAllocator::Allocation::NO_SPACE)
     {
-      subAllocation.allocation        = allocation;
-      subAllocation.size              = static_cast<uint32_t>(size);
-      subAllocation.alignmentMinusOne = alignment - 1;
-      subAllocation.block             = uint16_t(activeBlockIndex);
+      subAllocation.m_allocation        = allocation;
+      subAllocation.m_size              = static_cast<uint32_t>(size);
+      subAllocation.m_alignmentMinusOne = alignment - 1;
+      subAllocation.m_block             = uint16_t(activeBlockIndex);
 #if !defined(NDEBUG) && !defined(NVVK_DISABLE_BUFFER_SUB_ALLOCATOR_DEBUG_POINTER)
-      subAllocation.allocator = this;
+      subAllocation.m_allocator = this;
 #endif
 
       return VK_SUCCESS;
@@ -305,12 +318,12 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
 
     if(allocation.offset != OffsetAllocator::Allocation::NO_SPACE)
     {
-      subAllocation.allocation        = allocation;
-      subAllocation.size              = static_cast<uint32_t>(size);
-      subAllocation.alignmentMinusOne = alignment - 1;
-      subAllocation.block             = uint16_t(freeBlockIndex);
+      subAllocation.m_allocation        = allocation;
+      subAllocation.m_size              = static_cast<uint32_t>(size);
+      subAllocation.m_alignmentMinusOne = alignment - 1;
+      subAllocation.m_block             = uint16_t(freeBlockIndex);
 #if !defined(NDEBUG) && !defined(NVVK_DISABLE_BUFFER_SUB_ALLOCATOR_DEBUG_POINTER)
-      subAllocation.allocator = this;
+      subAllocation.m_allocator = this;
 #endif
 
       return VK_SUCCESS;
@@ -331,18 +344,18 @@ void BufferSubAllocator::subFree(BufferSubAllocation& subAllocation)
   }
 
 #if !defined(NDEBUG) && !defined(NVVK_DISABLE_BUFFER_SUB_ALLOCATOR_DEBUG_POINTER)
-  assert(subAllocation.allocator == this);
+  assert(subAllocation.m_allocator == this);
 #endif
 
-  OffsetAllocator::Allocator* offsetAllocator = m_blocks[subAllocation.block].offsetAllocator.get();
+  OffsetAllocator::Allocator* offsetAllocator = m_blocks[subAllocation.m_block].offsetAllocator.get();
 
   // dedicated blocks might not have an offset allocator
   if(offsetAllocator)
   {
-    offsetAllocator->free(subAllocation.allocation);
+    offsetAllocator->free(subAllocation.m_allocation);
   }
 
-  m_state.allocatedSize -= subAllocation.size;
+  m_state.allocatedSize -= subAllocation.m_size;
 
   // check if dedicated block or empty
   if(!offsetAllocator || offsetAllocator->storageReport().totalFreeSpace == m_state.internalBlockUnits)
@@ -351,7 +364,7 @@ void BufferSubAllocator::subFree(BufferSubAllocation& subAllocation)
     // and maybe depending on how many blocks to keep
     if(!offsetAllocator || (m_state.activeBlockCount > m_info.keepBlockCount))
     {
-      m_info.resourceAllocator->destroyBuffer(m_blocks[subAllocation.block].buffer);
+      m_info.resourceAllocator->destroyBuffer(m_blocks[subAllocation.m_block].buffer);
 
       // blocks with OffsetAllocators are counted to active blocks
       if(offsetAllocator)
@@ -360,7 +373,7 @@ void BufferSubAllocator::subFree(BufferSubAllocation& subAllocation)
 
         // need to remove from linked list of active blocks
 
-        uint32_t selfActiveIndex = subAllocation.block;
+        uint32_t selfActiveIndex = subAllocation.m_block;
         uint32_t prevActiveIndex = m_blocks[selfActiveIndex].prevActiveIndex;
         uint32_t nextActiveIndex = m_blocks[selfActiveIndex].nextActiveIndex;
         if(prevActiveIndex != INVALID_BLOCK_INDEX)
@@ -380,11 +393,11 @@ void BufferSubAllocator::subFree(BufferSubAllocation& subAllocation)
       }
 
       // nuke it completely
-      m_blocks[subAllocation.block] = {};
+      m_blocks[subAllocation.m_block] = {};
 
       // chain into linked list of empty blocks
-      m_blocks[subAllocation.block].nextFreeIndex = m_state.freeBlockIndex;
-      m_state.freeBlockIndex                      = subAllocation.block;
+      m_blocks[subAllocation.m_block].nextFreeIndex = m_state.freeBlockIndex;
+      m_state.freeBlockIndex                        = subAllocation.m_block;
     }
   }
 
@@ -400,31 +413,18 @@ BufferRange BufferSubAllocator::subRange(const BufferSubAllocation& subAllocatio
   }
 
 #if !defined(NDEBUG) && !defined(NVVK_DISABLE_BUFFER_SUB_ALLOCATOR_DEBUG_POINTER)
-  assert(subAllocation.allocator == this);
+  assert(subAllocation.m_allocator == this);
 #endif
 
   BufferRange info;
-  info.buffer  = m_blocks[subAllocation.block].buffer.buffer;
-  info.address = m_blocks[subAllocation.block].buffer.address;
-  info.mapping = m_blocks[subAllocation.block].buffer.mapping;
+  info.buffer  = m_blocks[subAllocation.m_block].buffer.buffer;
+  info.address = m_blocks[subAllocation.m_block].buffer.address;
+  info.mapping = m_blocks[subAllocation.m_block].buffer.mapping;
 
-  info.range = subAllocation.size;
+  info.range = subAllocation.m_size;
 
   // OffsetAllocator's offset is in units of `m_info.minAlignment`
-  info.offset = subAllocation.allocation.offset * m_info.minAlignment;
-
-  // The original requested alignment might have been greater than the minAlignment,
-  // or might be non-power-of-two.
-  // In that case we need to re-adjust the offset, which is safe to work as we
-  // allocated a safety margin.
-  uint32_t alignment = uint32_t(subAllocation.alignmentMinusOne) + 1;
-
-  // allow non-power-of-two alignments
-  uint32_t rest = info.offset % alignment;
-  if(rest != 0)
-  {
-    info.offset += alignment - rest;
-  }
+  info.offset = subAllocation.getOffset(m_info.minAlignment);
 
   // apply offset to address
   info.address += info.offset;

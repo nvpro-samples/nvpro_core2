@@ -773,7 +773,7 @@ void nvapp::Application::waitForFrameCompletion() const
 //-----------------------------------------------------------------------
 // We are using dynamic rendering, which is a more flexible way to render to the swapchain image.
 //
-void nvapp::Application::beginDynamicRenderingToSwapchain(VkCommandBuffer cmd) const
+void nvapp::Application::beginDynamicRenderingToSwapchain(VkCommandBuffer cmd)
 {
   // Image to render to
   const VkRenderingAttachmentInfo colorAttachment{
@@ -794,8 +794,8 @@ void nvapp::Application::beginDynamicRenderingToSwapchain(VkCommandBuffer cmd) c
       .pColorAttachments    = &colorAttachment,
   };
 
-  // Transition the swapchain image to the color attachment layout, needed when using dynamic rendering
-  nvvk::cmdImageMemoryBarrier(cmd, {m_swapchain.getImage(), VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL});
+  // Transition the acquired swapchain image to the attachment layout for dynamic rendering
+  m_swapchain.cmdTransitionImageForOverwrite(cmd, VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL);
 
   vkCmdBeginRendering(cmd, &renderingInfo);
 }
@@ -809,7 +809,7 @@ void nvapp::Application::endDynamicRenderingToSwapchain(VkCommandBuffer cmd)
   vkCmdEndRendering(cmd);
 
   // Transition the swapchain image back to the present layout
-  nvvk::cmdImageMemoryBarrier(cmd, {m_swapchain.getImage(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR});
+  m_swapchain.cmdTransitionImageForPresent(cmd);
 }
 
 //-----------------------------------------------------------------------

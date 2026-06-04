@@ -55,6 +55,8 @@ Key improvements in `nvpro_core2` compared to previous [nvpro_core](https://gith
 sudo apt install libx11-dev libxcb1-dev libxcb-keysyms1-dev libxcursor-dev libxi-dev libxinerama-dev libxrandr-dev libxxf86vm-dev libtbb-dev libgl-dev
 ```
 
+- For Wayland support (optional), also install `libwayland-dev` and `libxkbcommon-dev` (apt) or `wayland-devel` and `libxkbcommon-devel` (RPM). GLFW builds with both X11 and Wayland support when these are present; set `-DGLFW_BUILD_WAYLAND=OFF` to disable Wayland explicitly.
+
 ## Building a Sample
 
 1. Install the required development tools (see [Requirements](#Requirements) above).

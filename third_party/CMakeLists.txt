@@ -24,8 +24,26 @@ if(NOT TARGET glfw)
   set(GLFW_BUILD_DOCS OFF)
   set(GLFW_BUILD_EXAMPLES OFF)
   set(GLFW_BUILD_TESTS OFF)
-  set(GLFW_BUILD_WAYLAND OFF)
   set(GLFW_INSTALL OFF)
+  # Pre-check the same pkg-config modules GLFW requires for Wayland support,
+  # but non-fatally, so that X11-only systems fall back gracefully instead of
+  # hitting GLFW's own REQUIRED check.
+  if(UNIX AND NOT APPLE AND NOT DEFINED GLFW_BUILD_WAYLAND)
+    include(FindPkgConfig)
+    if(PKG_CONFIG_FOUND)
+      pkg_check_modules(WaylandForGLFW
+          wayland-client>=0.2.7
+          wayland-cursor>=0.2.7
+          wayland-egl>=0.2.7
+          xkbcommon>=0.5.0)
+    endif()
+    if(WaylandForGLFW_FOUND)
+      set(GLFW_BUILD_WAYLAND ON)
+    else()
+      message(STATUS "Wayland pkg-config modules not found; building GLFW without Wayland support")
+      set(GLFW_BUILD_WAYLAND OFF)
+    endif()
+  endif()
   add_subdirectory(glfw)
   set_target_properties(glfw update_mappings PROPERTIES FOLDER "ThirdParty/GLFW")
 endif()
@@ -51,6 +69,9 @@ if(NOT TARGET volk)
     target_compile_definitions(
       volk PUBLIC VK_USE_PLATFORM_XCB_KHR VK_USE_PLATFORM_XLIB_KHR
     )
+    if(GLFW_BUILD_WAYLAND)
+      target_compile_definitions(volk PUBLIC VK_USE_PLATFORM_WAYLAND_KHR)
+    endif()
   endif()
   # Define VK_NO_PROTOTYPES to avoid including Vulkan prototypes
   # This is necessary because we are using volk to load Vulkan functions

@@ -388,7 +388,7 @@ void ElementProfiler::renderPieChart(View& view)
   ImGui::InputInt("Levels", &levels);
   levels = std::max(1, levels);  // Make sure it's always >= 1
 
-  for(auto i = 0; i < m_frameNodes.size(); ++i)
+  for(size_t i = 0; i < m_frameNodes.size(); ++i)
   {
     const auto& rootNode = m_frameNodes[i];
 
@@ -470,9 +470,9 @@ void ElementProfiler::renderBarChart(View& view)
   ImGui::SameLine();
   ImGui::CheckboxFlags("Stacked", (unsigned int*)&view.state->barChart.stacked, ImPlotBarGroupsFlags_Stacked);
 
-  for(auto i = 0; i < m_frameNodes.size(); ++i)
+  for(size_t n = 0; n < m_frameNodes.size(); ++n)
   {
-    const auto& rootNode = m_frameNodes[i];
+    const auto& rootNode = m_frameNodes[n];
 
     // each root node is a timeline
     if(!rootNode.child.empty())
@@ -492,15 +492,15 @@ void ElementProfiler::renderBarChart(View& view)
         data1[i]   = node.child[i].gpuTime;
       }
 
-      if(gridMode && i % 2 != 0)
+      if(gridMode && n % 2 != 0)
         ImGui::SameLine();
 
       // use different color palette for better legibility
-      if(i % 3 == 0)
+      if(n % 3 == 0)
         ImPlot::PushColormap(ImPlotColormap_Deep);
-      if(i % 3 == 1)
+      if(n % 3 == 1)
         ImPlot::PushColormap(ImPlotColormap_Pastel);
-      if(i % 3 == 2)
+      if(n % 3 == 2)
         ImPlot::PushColormap(ImPlotColormap_Viridis);
 
       if(ImPlot::BeginPlot(rootNode.name.c_str(), ImVec2(width, (float)view.state->plotHeight), ImPlotFlags_NoMouseText))
@@ -538,10 +538,73 @@ void ElementProfiler::renderLineChart(View& view)
   ImGui::Checkbox("GPU lines", &view.state->lineChart.gpuLines);
   ImGui::SameLine();
   ImGui::Checkbox("GPU fills", &view.state->lineChart.gpuFills);
-
-  for(auto i = 0; i < m_frameNodes.size(); ++i)
+  if(m_frameNodes.size() > 1)
   {
-    const auto& rootNode = m_frameNodes[i];
+    ImGui::SameLine();
+    ImGui::Checkbox("Common max", &view.state->lineChart.sharedMaxY);
+  }
+
+  if(m_frameNodes.size() != view.maxYs.size())
+  {
+    view.maxYs.resize(m_frameNodes.size(), 0.0f);
+  }
+
+  {
+    // compute common view.maxY
+
+    float avgTimeMax = 0.f;
+
+    for(size_t n = 0; n < m_frameNodes.size(); ++n)
+    {
+      const auto& rootNode = m_frameNodes[n];
+
+      if(!rootNode.child.empty())
+      {
+        float       avgTime = 0.0f;
+        const auto& node    = rootNode.child[0];
+        if(node.timerInfo.numAveraged > 0)
+        {
+          avgTime = view.state->lineChart.cpuLine ? float(node.timerInfo.cpu.average / 1000.0) :
+                                                    float(node.timerInfo.gpu.average / 1000.0);
+
+          avgTimeMax = std::max(avgTimeMax, avgTime);
+        }
+
+        if(view.maxYs[n] == 0.f)
+        {
+          view.maxYs[n] = avgTime;
+        }
+        else
+        {
+          const float PROFILER_GRAPH_TEMPORAL_SMOOTHING = 20.f;
+          view.maxYs[n] =
+              (PROFILER_GRAPH_TEMPORAL_SMOOTHING * view.maxYs[n] + avgTime) / (PROFILER_GRAPH_TEMPORAL_SMOOTHING + 1.f);
+        }
+      }
+    }
+
+    if(view.maxY == 0.f)
+    {
+      view.maxY = avgTimeMax;
+    }
+    else
+    {
+      const float PROFILER_GRAPH_TEMPORAL_SMOOTHING = 20.f;
+      view.maxY = (PROFILER_GRAPH_TEMPORAL_SMOOTHING * view.maxY + avgTimeMax) / (PROFILER_GRAPH_TEMPORAL_SMOOTHING + 1.f);
+    }
+
+    if(view.state->lineChart.sharedMaxY)
+    {
+      for(size_t n = 0; n < m_frameNodes.size(); ++n)
+      {
+        view.maxYs[n] = view.maxY;
+      }
+    }
+  }
+
+  for(size_t n = 0; n < m_frameNodes.size(); ++n)
+  {
+    const auto& rootNode = m_frameNodes[n];
 
     if(!rootNode.child.empty())
     {
@@ -550,8 +613,6 @@ void ElementProfiler::renderLineChart(View& view)
       std::vector<const char*>        gpuTimesLabels(node.child.size());
       std::vector<std::vector<float>> gpuTimes(node.child.size());
       std::vector<float>              cpuTimes(node.timerInfo.numAveraged);
-      float                           avgCpuTime = 0.f;
-      float                           avgGpuTime = 0.f;
 
       // filling the GPU times for each timer
       for(size_t i = 0; i < node.child.size(); i++)
@@ -576,9 +637,6 @@ void ElementProfiler::renderLineChart(View& view)
 
             gpuTimeSum += gpuTimes[i][j];
           }
-
-          if(child.timerInfo.numAveraged != 0)
-            avgGpuTime += gpuTimeSum / child.timerInfo.numAveraged;
         }
       }
 
@@ -587,39 +645,21 @@ void ElementProfiler::renderLineChart(View& view)
       {
         uint32_t index = (node.timerInfo.cpu.index - node.timerInfo.numAveraged + j) % nvutils::ProfilerTimeline::MAX_LAST_FRAMES;
         cpuTimes[j] = float(node.timerInfo.cpu.times[index] / 1000.0);
-        avgCpuTime += cpuTimes[j];
-      }
-
-      float avgTime = 0.f;
-
-      if(node.timerInfo.numAveraged > 0)
-      {
-        avgCpuTime /= node.timerInfo.numAveraged;
-        avgTime = view.state->lineChart.cpuLine ? avgCpuTime : avgGpuTime;
-      }
-      if(view.maxY == 0.f)
-      {
-        view.maxY = avgTime;
-      }
-      else
-      {
-        const float PROFILER_GRAPH_TEMPORAL_SMOOTHING = 20.f;
-        view.maxY = (PROFILER_GRAPH_TEMPORAL_SMOOTHING * view.maxY + avgTime) / (PROFILER_GRAPH_TEMPORAL_SMOOTHING + 1.f);
       }
 
       // If there is something top plot: Let's plot !
       if(gpuTimes.size() > 0 && gpuTimes[0].size() > 0)
       {
 
-        if(gridMode && i % 2 != 0)
+        if(gridMode && n % 2 != 0)
           ImGui::SameLine();
 
         // use different color palette for better legibility
-        if(i % 3 == 0)
+        if(n % 3 == 0)
           ImPlot::PushColormap(ImPlotColormap_Deep);
-        if(i % 3 == 1)
+        if(n % 3 == 1)
           ImPlot::PushColormap(ImPlotColormap_Pastel);
-        if(i % 3 == 2)
+        if(n % 3 == 2)
           ImPlot::PushColormap(ImPlotColormap_Viridis);
 
         const ImPlotFlags     plotFlags = ImPlotFlags_NoBoxSelect | ImPlotFlags_NoMouseText | ImPlotFlags_Crosshairs;
@@ -629,7 +669,8 @@ void ElementProfiler::renderLineChart(View& view)
         {
           ImPlot::SetupLegend(ImPlotLocation_NorthEast, ImPlotLegendFlags_Outside);
           ImPlot::SetupAxes(nullptr, "Count", axesFlags | ImPlotAxisFlags_NoTickLabels, axesFlags);
-          ImPlot::SetupAxesLimits(0, node.child[0].timerInfo.numAveraged, 0, view.maxY * 1.2, ImPlotCond_Always);
+          ImPlot::SetupAxesLimits(0, node.child[0].timerInfo.numAveraged, 0,
+                                  view.maxYs[n] * view.state->lineChart.scaleMaxY, ImPlotCond_Always);
 
           ImPlot::SetAxes(ImAxis_X1, ImAxis_Y1);
 

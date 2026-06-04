@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 *
-* SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+* SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 * SPDX-License-Identifier: Apache-2.0
 */
 
@@ -72,7 +72,7 @@ public:
 
   const Parameter<float>* add(const ParameterBase::Info& info,
                               float*                     destination,
-                              const float                minValue = std::numeric_limits<float>::min(),
+                              const float                minValue = std::numeric_limits<float>::lowest(),
                               const float                maxValue = std::numeric_limits<float>::max());
 
   // if min/max are left nullptr defaults to min/max numeric_limits
@@ -85,17 +85,17 @@ public:
 
   const Parameter<int32_t>* add(const ParameterBase::Info& info,
                                 int32_t*                   destination,
-                                const int32_t              minValue = std::numeric_limits<int32_t>::min(),
+                                const int32_t              minValue = std::numeric_limits<int32_t>::lowest(),
                                 const int32_t              maxValue = std::numeric_limits<int32_t>::max());
 
   const Parameter<int16_t>* add(const ParameterBase::Info& info,
                                 int16_t*                   destination,
-                                const int16_t              minValue = std::numeric_limits<int16_t>::min(),
+                                const int16_t              minValue = std::numeric_limits<int16_t>::lowest(),
                                 const int16_t              maxValue = std::numeric_limits<int16_t>::max());
 
   const Parameter<int8_t>* add(const ParameterBase::Info& info,
                                int8_t*                    destination,
-                               const int8_t               minValue = std::numeric_limits<int8_t>::min(),
+                               const int8_t               minValue = std::numeric_limits<int8_t>::lowest(),
                                const int8_t               maxValue = std::numeric_limits<int8_t>::max());
 
   // if min/max are left nullptr defaults to min/max numeric_limits
@@ -107,17 +107,17 @@ public:
 
   const Parameter<uint32_t>* add(const ParameterBase::Info& info,
                                  uint32_t*                  destination,
-                                 const uint32_t             minValue = std::numeric_limits<uint32_t>::min(),
+                                 const uint32_t             minValue = std::numeric_limits<uint32_t>::lowest(),
                                  const uint32_t             maxValue = std::numeric_limits<uint32_t>::max());
 
   const Parameter<uint16_t>* add(const ParameterBase::Info& info,
                                  uint16_t*                  destination,
-                                 const uint16_t             minValue = std::numeric_limits<uint16_t>::min(),
+                                 const uint16_t             minValue = std::numeric_limits<uint16_t>::lowest(),
                                  const uint16_t             maxValue = std::numeric_limits<uint16_t>::max());
 
   const Parameter<uint8_t>* add(const ParameterBase::Info& info,
                                 uint8_t*                   destination,
-                                const uint8_t              minValue = std::numeric_limits<uint8_t>::min(),
+                                const uint8_t              minValue = std::numeric_limits<uint8_t>::lowest(),
                                 const uint8_t              maxValue = std::numeric_limits<uint8_t>::max());
 
   // if min/max are left nullptr defaults to min/max numeric_limits
@@ -134,7 +134,7 @@ public:
   template <typename GLMVEC>
   const Parameter<GLMVEC>* addVector(const ParameterBase::Info& info,
                                      GLMVEC*                    destination,
-                                     GLMVEC minValue = GLMVEC(std::numeric_limits<typename GLMVEC::value_type>::min()),
+                                     GLMVEC minValue = GLMVEC(std::numeric_limits<typename GLMVEC::value_type>::lowest()),
                                      GLMVEC maxValue = GLMVEC(std::numeric_limits<typename GLMVEC::value_type>::max()))
   {
     static_assert(sizeof(GLMVEC) <= sizeof(ParameterBase::MinMaxData));

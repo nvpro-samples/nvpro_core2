@@ -36,8 +36,8 @@ class BufferSubAllocator
 {
 public:
   static constexpr uint32_t     MIN_ALIGNMENT      = 4;
-  static constexpr uint32_t     MAX_ALIGNMENT      = 1 << (sizeof(BufferSubAllocation::alignmentMinusOne) * 8);
-  static constexpr uint32_t     MAX_TOTAL_BLOCKS   = 1 << (sizeof(BufferSubAllocation::block) * 8);
+  static constexpr uint32_t     MAX_ALIGNMENT      = 1 << (sizeof(BufferSubAllocation::m_alignmentMinusOne) * 8);
+  static constexpr uint32_t     MAX_TOTAL_BLOCKS   = 1 << (sizeof(BufferSubAllocation::m_block) * 8);
   static constexpr VkDeviceSize DEFAULT_BLOCK_SIZE = VkDeviceSize(128) * 1024 * 1024;
   static constexpr uint32_t     DEFAULT_ALIGNMENT  = 16;
 
@@ -83,6 +83,10 @@ public:
     // Allocations that are greater than the blockSize will get their own allocation
     // that isn't counted against this limit.
     uint32_t keepBlockCount = 1;
+    // allows thread-safe access to `subRange` and `getBlockBuffer`
+    // warning requires reasonable low non-zero `maxAllocatedSize`
+    // as we allocate internal arrays for worst-case
+    bool threadSafeBlockAccess = false;
   };
 
   VkResult     init(const InitInfo& createInfo);
@@ -121,6 +125,9 @@ public:
 
   // get full block buffer
   const nvvk::Buffer& getBlockBuffer(const uint16_t blockIndex) const;
+
+  // get offset unit byte size, as used within `BufferSubAllocation`
+  uint32_t getOffsetUnitSize() const { return m_info.minAlignment; }
 
 protected:
   static constexpr uint32_t INVALID_BLOCK_INDEX = ~0u;

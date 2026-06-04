@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 *
-* SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+* SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 * SPDX-License-Identifier: Apache-2.0
 */
 
@@ -28,6 +28,7 @@ ManagedCommandPools::ManagedCommandPools(ManagedCommandPools&& other) noexcept
 {
   std::swap(m_device, other.m_device);
   std::swap(m_flags, other.m_flags);
+  std::swap(m_waitCount, other.m_waitCount);
   std::swap(m_managedPools, other.m_managedPools);
   std::swap(m_maxPoolCount, other.m_maxPoolCount);
   std::swap(m_acquisitionCounter, other.m_acquisitionCounter);
@@ -42,6 +43,7 @@ ManagedCommandPools& ManagedCommandPools::operator=(ManagedCommandPools&& other)
 
     std::swap(m_device, other.m_device);
     std::swap(m_flags, other.m_flags);
+    std::swap(m_waitCount, other.m_waitCount);
     std::swap(m_managedPools, other.m_managedPools);
     std::swap(m_maxPoolCount, other.m_maxPoolCount);
     std::swap(m_acquisitionCounter, other.m_acquisitionCounter);
@@ -136,6 +138,8 @@ VkResult ManagedCommandPools::acquireCommandBuffer(const nvvk::SemaphoreState& s
   // we reached the maximum
   if(size_t(m_maxPoolCount) == m_managedPools.size())
   {
+    m_waitCount++;
+
     assert(oldestManagedPool);
 
     ManagedCommandPool& managedPool = *oldestManagedPool;

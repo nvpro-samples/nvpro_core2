@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 *
-* SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+* SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 * SPDX-License-Identifier: Apache-2.0
 */
 
@@ -65,7 +65,7 @@ const Parameter<bool>* ParameterRegistry::add(const ParameterBase::Info& info, b
 
 const Parameter<float>* ParameterRegistry::add(const ParameterBase::Info& info,
                                                float*                     destination,
-                                               float minValue /*= std::numeric_limits<float>::min*/,
+                                               float minValue /*= std::numeric_limits<float>::lowest*/,
                                                float maxValue /*= std::numeric_limits<float>::max*/)
 {
   ParameterBase* parameter = addNewBase(info, ParameterBase::Type::FLOAT32, 1, destination);
@@ -78,7 +78,7 @@ const Parameter<float>* ParameterRegistry::add(const ParameterBase::Info& info,
 
 const Parameter<int8_t>* ParameterRegistry::add(const ParameterBase::Info& info,
                                                 int8_t*                    destination,
-                                                int8_t minValue /*= std::numeric_limits<int8_t>::min*/,
+                                                int8_t minValue /*= std::numeric_limits<int8_t>::lowest*/,
                                                 int8_t maxValue /*= std::numeric_limits<int8_t>::max*/)
 {
   ParameterBase* parameter = addNewBase(info, ParameterBase::Type::INT8, 1, destination);
@@ -92,7 +92,7 @@ const Parameter<int8_t>* ParameterRegistry::add(const ParameterBase::Info& info,
 
 const Parameter<int16_t>* ParameterRegistry::add(const ParameterBase::Info& info,
                                                  int16_t*                   destination,
-                                                 int16_t minValue /*= std::numeric_limits<int16_t>::min*/,
+                                                 int16_t minValue /*= std::numeric_limits<int16_t>::lowest*/,
                                                  int16_t maxValue /*= std::numeric_limits<int16_t>::max*/)
 {
   ParameterBase* parameter = addNewBase(info, ParameterBase::Type::INT16, 1, destination);
@@ -105,7 +105,7 @@ const Parameter<int16_t>* ParameterRegistry::add(const ParameterBase::Info& info
 
 const Parameter<int32_t>* ParameterRegistry::add(const ParameterBase::Info& info,
                                                  int32_t*                   destination,
-                                                 int32_t minValue /*= std::numeric_limits<int32_t>::min*/,
+                                                 int32_t minValue /*= std::numeric_limits<int32_t>::lowest*/,
                                                  int32_t maxValue /*= std::numeric_limits<int32_t>::max*/)
 {
   ParameterBase* parameter = addNewBase(info, ParameterBase::Type::INT32, 1, destination);
@@ -118,7 +118,7 @@ const Parameter<int32_t>* ParameterRegistry::add(const ParameterBase::Info& info
 
 const Parameter<uint8_t>* ParameterRegistry::add(const ParameterBase::Info& info,
                                                  uint8_t*                   destination,
-                                                 uint8_t minValue /*= std::numeric_limits<uint8_t>::min*/,
+                                                 uint8_t minValue /*= std::numeric_limits<uint8_t>::lowest*/,
                                                  uint8_t maxValue /*= std::numeric_limits<uint8_t>::max*/)
 {
   ParameterBase* parameter = addNewBase(info, ParameterBase::Type::UINT8, 1, destination);
@@ -132,7 +132,7 @@ const Parameter<uint8_t>* ParameterRegistry::add(const ParameterBase::Info& info
 
 const Parameter<uint16_t>* ParameterRegistry::add(const ParameterBase::Info& info,
                                                   uint16_t*                  destination,
-                                                  uint16_t minValue /*= std::numeric_limits<uint16_t>::min*/,
+                                                  uint16_t minValue /*= std::numeric_limits<uint16_t>::lowest*/,
                                                   uint16_t maxValue /*= std::numeric_limits<uint16_t>::max*/)
 {
   ParameterBase* parameter = addNewBase(info, ParameterBase::Type::UINT16, 1, destination);
@@ -146,7 +146,7 @@ const Parameter<uint16_t>* ParameterRegistry::add(const ParameterBase::Info& inf
 
 const Parameter<uint32_t>* ParameterRegistry::add(const ParameterBase::Info& info,
                                                   uint32_t*                  destination,
-                                                  uint32_t minValue /*= std::numeric_limits<uint32_t>::min*/,
+                                                  uint32_t minValue /*= std::numeric_limits<uint32_t>::lowest*/,
                                                   uint32_t maxValue /*= std::numeric_limits<uint32_t>::max*/)
 {
   ParameterBase* parameter = addNewBase(info, ParameterBase::Type::UINT32, 1, destination);
@@ -168,8 +168,8 @@ const ParameterBase* ParameterRegistry::addArray(const ParameterBase::Info& info
   ParameterBase* parameter = addNewBase(info, ParameterBase::Type::FLOAT32, arrayLength, destination);
   for(uint32_t i = 0; i < arrayLength; i++)
   {
-    parameter->minMaxValues[0].f32[i] = minValues ? minValues[i] : std::numeric_limits<float>::min();
-    parameter->minMaxValues[1].f32[i] = maxValues ? maxValues[i] : std::numeric_limits<float>::min();
+    parameter->minMaxValues[0].f32[i] = minValues ? minValues[i] : std::numeric_limits<float>::lowest();
+    parameter->minMaxValues[1].f32[i] = maxValues ? maxValues[i] : std::numeric_limits<float>::max();
   }
 
   return parameter;
@@ -186,7 +186,7 @@ const ParameterBase* ParameterRegistry::addArray(const ParameterBase::Info& info
   ParameterBase* parameter = addNewBase(info, ParameterBase::Type::INT32, arrayLength, destination);
   for(uint32_t i = 0; i < arrayLength; i++)
   {
-    parameter->minMaxValues[0].i32[i] = minValues ? minValues[i] : std::numeric_limits<int32_t>::min();
+    parameter->minMaxValues[0].i32[i] = minValues ? minValues[i] : std::numeric_limits<int32_t>::lowest();
     parameter->minMaxValues[1].i32[i] = maxValues ? maxValues[i] : std::numeric_limits<int32_t>::max();
   }
 
@@ -204,7 +204,7 @@ const ParameterBase* ParameterRegistry::addArray(const ParameterBase::Info& info
   ParameterBase* parameter = addNewBase(info, ParameterBase::Type::UINT32, arrayLength, destination);
   for(uint32_t i = 0; i < arrayLength; i++)
   {
-    parameter->minMaxValues[0].u32[i] = minValues ? minValues[i] : std::numeric_limits<uint32_t>::min();
+    parameter->minMaxValues[0].u32[i] = minValues ? minValues[i] : std::numeric_limits<uint32_t>::lowest();
     parameter->minMaxValues[1].u32[i] = maxValues ? maxValues[i] : std::numeric_limits<uint32_t>::max();
   }
 

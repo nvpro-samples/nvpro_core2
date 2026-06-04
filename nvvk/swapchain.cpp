@@ -34,6 +34,7 @@ VkResult nvvk::Swapchain::init(const InitInfo& info)
   m_device          = info.device;
   m_queue           = info.queue;
   m_surface         = info.surface;
+  m_imageUsage      = info.imageUsage;
   m_cmdPool         = info.cmdPool;
   m_preferredFormat = info.preferredFormat;
   if(info.preferredVsyncOffMode != VK_PRESENT_MODE_MAX_ENUM_KHR)
@@ -89,8 +90,22 @@ VkResult nvvk::Swapchain::initResources(VkExtent2D& outWindowSize, bool vSync)
   m_surfaceFormat = selectSwapSurfaceFormat(m_availableFormats);
 
   const VkPresentModeKHR presentMode = selectSwapPresentMode(presentModes, vSync);
-  // Set the window size according to the surface's current extent
-  outWindowSize = capabilities2.surfaceCapabilities.currentExtent;
+
+  // On Wayland (and similar compositors), currentExtent is UINT32_MAX to signal
+  // that the compositor does not enforce a size — the app must choose. In that
+  // case use the caller-supplied window size (glfwGetFramebufferSize) clamped to
+  // the surface's valid range. On X11/Win32, currentExtent always reflects the
+  // actual window size and is used directly.
+  const VkSurfaceCapabilitiesKHR& caps = capabilities2.surfaceCapabilities;
+  if(caps.currentExtent.width == UINT32_MAX)
+  {
+    outWindowSize.width  = std::clamp(outWindowSize.width, caps.minImageExtent.width, caps.maxImageExtent.width);
+    outWindowSize.height = std::clamp(outWindowSize.height, caps.minImageExtent.height, caps.maxImageExtent.height);
+  }
+  else
+  {
+    outWindowSize = caps.currentExtent;
+  }
 
   // Pick a swapchain image count: honour the user's preferred value but
   // clamp to the surface's [minImageCount, maxImageCount] bounds.
@@ -113,9 +128,9 @@ VkResult nvvk::Swapchain::initResources(VkExtent2D& outWindowSize, bool vSync)
       .minImageCount    = m_imageCount,
       .imageFormat      = m_surfaceFormat.surfaceFormat.format,
       .imageColorSpace  = m_surfaceFormat.surfaceFormat.colorSpace,
-      .imageExtent      = capabilities2.surfaceCapabilities.currentExtent,
+      .imageExtent      = outWindowSize,
       .imageArrayLayers = 1,
-      .imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+      .imageUsage       = m_imageUsage,
       .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
       .preTransform     = capabilities2.surfaceCapabilities.currentTransform,
       .compositeAlpha   = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
@@ -160,6 +175,9 @@ VkResult nvvk::Swapchain::initResources(VkExtent2D& outWindowSize, bool vSync)
     NVVK_DBG_NAME(m_images[i].imageView);
     NVVK_FAIL_RETURN(vkCreateSemaphore(m_device, &semaphoreCreateInfo, nullptr, &m_images[i].presentSemaphore));
     NVVK_DBG_NAME(m_images[i].presentSemaphore);
+    // Each image starts UNDEFINED and is transitioned lazily after it has been
+    // acquired (see cmdTransitionImage*).
+    m_images[i].currentLayout = VK_IMAGE_LAYOUT_UNDEFINED;
   }
 
   // Per-in-flight-slot storage: acquireSemaphore (consumed by acquire).
@@ -170,18 +188,23 @@ VkResult nvvk::Swapchain::initResources(VkExtent2D& outWindowSize, bool vSync)
     NVVK_DBG_NAME(m_frameResources[i].acquireSemaphore);
   }
 
-  // Transition images to present layout
-  {
-    VkCommandBuffer cmd{};
-    NVVK_FAIL_RETURN(nvvk::beginSingleTimeCommands(cmd, m_device, m_cmdPool));
-    for(uint32_t i = 0; i < m_imageCount; i++)
-    {
-      cmdImageMemoryBarrier(cmd, {m_images[i].image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR});
-    }
-    NVVK_FAIL_RETURN(nvvk::endSingleTimeCommands(cmd, m_device, m_cmdPool, m_queue.queue));
-  }
-
   return VK_SUCCESS;
+}
+
+void nvvk::Swapchain::cmdTransitionImageForOverwrite(VkCommandBuffer cmd, VkImageLayout newLayout)
+{
+  assert(m_frameImageIndex < m_images.size());
+  VkImageLayout& layout = m_images[m_frameImageIndex].currentLayout;
+  cmdImageMemoryBarrier(cmd, {m_images[m_frameImageIndex].image, VK_IMAGE_LAYOUT_UNDEFINED, newLayout});
+  layout = newLayout;
+}
+
+void nvvk::Swapchain::cmdTransitionImageForPresent(VkCommandBuffer cmd)
+{
+  assert(m_frameImageIndex < m_images.size());
+  VkImageLayout& layout = m_images[m_frameImageIndex].currentLayout;
+  cmdImageMemoryBarrier(cmd, {m_images[m_frameImageIndex].image, layout, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR});
+  layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 }
 
 VkResult nvvk::Swapchain::reinitResources(VkExtent2D& outWindowSize, bool vSync)

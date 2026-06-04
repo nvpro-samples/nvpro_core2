@@ -71,6 +71,8 @@ struct PbrMaterial
 
   float  diffuseTransmissionFactor;  // KHR_materials_diffuse_transmission
   float3 diffuseTransmissionColor;
+
+  float retroreflection;  // EXT_materials_retroreflection [0,1] MRM blend
 };
 
 /* 
@@ -120,6 +122,8 @@ PbrMaterial defaultPbrMaterial()
 
   mat.diffuseTransmissionFactor = 0.0F;
   mat.diffuseTransmissionColor  = float3(1.0F);
+
+  mat.retroreflection = 0.0F;
 
   return mat;
 }

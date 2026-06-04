@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -164,5 +164,6 @@ private:
 #define DBGUTIL_FILE_LINE() (__FILE__ ":" + std::to_string(__LINE__))
 
 #define NVVK_DBG_SCOPE(_cmd) nvvk::DebugUtil::ScopedCmdLabel scopedCmdLabel(_cmd, __FUNCTION__)
+#define NVVK_DBG_CUSTOM_NAME(object, name) nvvk::DebugUtil::getInstance().setObjectName((object), (name))
 #define NVVK_DBG_NAME(obj)                                                                                             \
   nvvk::DebugUtil::getInstance().setObjectName(obj, std::string(__FUNCTION__) + ":" #obj "(" + std::to_string(__LINE__) + ")")

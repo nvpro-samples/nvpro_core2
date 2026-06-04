@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -60,18 +60,21 @@ public:
     } pieChart;              // pieChart settings
     struct
     {
-      bool cpuLine  = true;  // draw higher level CPU timer
-      bool gpuLines = true;  // draw GPU timers as lines
-      bool gpuFills = true;  // draw GPU timers as filled areas
-    } lineChart;             // lineChart settings
+      bool  cpuLine    = true;   // draw higher level CPU timer
+      bool  gpuLines   = true;   // draw GPU timers as lines
+      bool  gpuFills   = true;   // draw GPU timers as filled areas
+      bool  sharedMaxY = false;  // use common maxY among all timelines
+      float scaleMaxY  = 1.2f;   // scale the plot maxY
+    } lineChart;                 // lineChart settings
   };
 
 private:
   // internal per view storage, hidden from the API
   struct View
   {
-    float maxY             = 0.0f;  // max Y axis size for lineChart
-    bool  selectDefaultTab = true;  // used to select the default tab at first draw
+    bool               selectDefaultTab = true;  // used to select the default tab at first draw
+    float              maxY             = 0.0f;  // common max Y axis size for lineChart
+    std::vector<float> maxYs;                    // individual max Y axis
 
     std::shared_ptr<ViewSettings> state;  // settings are used as view state
   };

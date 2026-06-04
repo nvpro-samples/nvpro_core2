@@ -294,7 +294,7 @@ protected:
   void            presentFrame();
   void            advanceFrame(uint32_t frameInFlights);
   void            waitForFrameCompletion() const;
-  void            beginDynamicRenderingToSwapchain(VkCommandBuffer cmd) const;
+  void            beginDynamicRenderingToSwapchain(VkCommandBuffer cmd);
   void            endDynamicRenderingToSwapchain(VkCommandBuffer cmd);
   void            resetFreeQueue(uint32_t size);
   void            freeResourcesQueue();
