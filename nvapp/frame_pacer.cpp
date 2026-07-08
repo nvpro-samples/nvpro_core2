@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,24 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "frame_pacer.hpp"
 
-#include <nvvk/check_error.hpp>
-
 #include <GLFW/glfw3.h>
-#include <volk/volk.h>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #undef APIENTRY  // GLFW defines this but Windows tries to redefine it
 #include <Windows.h>
-#include <timeapi.h>
+#include <timeapi.h>  // timeBeginPeriod()
 #endif
 
-#include <cassert>
 #include <cmath>
 #include <limits>
 #include <thread>

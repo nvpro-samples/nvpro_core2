@@ -169,6 +169,17 @@ if(NOT TARGET tinygltf)
   set_property(TARGET tinygltf PROPERTY FOLDER "ThirdParty")
 endif()
 
+# nlohmann_json (part of tinygltf)
+if(NOT TARGET nlohmann_json)
+  add_library(
+    nlohmann_json INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/tinygltf/json.hpp
+  )
+  target_include_directories(
+    nlohmann_json INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/tinygltf
+  )
+  set_property(TARGET nlohmann_json PROPERTY FOLDER "ThirdParty")
+endif()
+
 #fmt
 if(NOT TARGET fmt)
   add_library(fmt STATIC fmt/src/format.cc)
@@ -259,8 +270,11 @@ if(NOT TARGET zstd)
   set_property(TARGET libzstd_static clean-all uninstall PROPERTY FOLDER "ThirdParty")
 endif()
 
-# Basis Universal
-if(NOT TARGET basisu)
+# Basis Universal support in nvimageformats is enabled by default, but projects
+# can disable it before adding nvpro_core2 if they only need non-Basis KTX.
+option(NVPRO2_ENABLE_nvimageformats_basisu "Enable Basis Universal support in nvimageformats" ON)
+
+if(NVPRO2_ENABLE_nvimageformats_basisu AND NOT TARGET basisu)
   set(_BASISU_DIR ${CMAKE_CURRENT_LIST_DIR}/basis_universal)
   file(GLOB_RECURSE _BASISU_FILES "${_BASISU_DIR}/transcoder/*.*" "${_BASISU_DIR}/encoder/*.*")
   add_library(basisu STATIC ${_BASISU_FILES})

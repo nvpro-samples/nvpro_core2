@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -60,6 +60,7 @@ nvutils::IDPool& IDPool::operator=(IDPool&& other) noexcept
 //////////////////////////////////////////////////////////////////////////
 // most of the following code is taken from Emil Persson's MakeID
 // http://www.humus.name/3D/MakeID.h (v1.02)
+// NVIDIA added "fromBack" variants.
 
 void IDPool::init(const uint32_t poolSize)
 {
@@ -126,8 +127,50 @@ bool IDPool::createID(uint32_t& id)
   return false;
 }
 
+bool IDPool::createIDFromBack(uint32_t& id)
+{
+  if(m_count == 0)
+  {
+    return false;
+  }
+
+  int32_t i = static_cast<int32_t>(m_count) - 1;
+  while(i >= 0)
+  {
+    if(m_ranges[i].first <= m_ranges[i].last)
+    {
+      id = m_ranges[i].last;
+
+      // If current range is full and there is another one, that will become the new current range
+      if(m_ranges[i].first == m_ranges[i].last && m_count > 1)
+      {
+        destroyRange(static_cast<uint32_t>(i));
+      }
+      else if(m_ranges[i].first == m_ranges[i].last)
+      {
+        ++m_ranges[i].first;  // sentinel: first > last signals exhaustion, mirrors createID behavior
+      }
+      else
+      {
+        --m_ranges[i].last;
+      }
+
+      m_usedIDs++;
+      return true;
+    }
+    --i;
+  }
+
+  return false;
+}
+
 bool IDPool::createRangeID(uint32_t& id, const uint32_t count)
 {
+  if(count == 0)
+  {
+    return false;
+  }
+
   uint32_t i = 0;
   do
   {
@@ -156,8 +199,52 @@ bool IDPool::createRangeID(uint32_t& id, const uint32_t count)
   return false;
 }
 
+bool IDPool::createRangeIDFromBack(uint32_t& id, const uint32_t count)
+{
+  if(count == 0)
+  {
+    return false;
+  }
+
+  int32_t i = static_cast<int32_t>(m_count) - 1;
+  while(i >= 0)
+  {
+    const uint32_t range_count = 1 + m_ranges[i].last - m_ranges[i].first;
+    if(count <= range_count)
+    {
+      id = m_ranges[i].last - count + 1;
+
+      // If current range is full and there is another one, that will become the new current range
+      if(count == range_count && i > 0)
+      {
+        destroyRange(static_cast<uint32_t>(i));
+      }
+      else if(count == range_count)
+      {
+        m_ranges[i].first += count;  // sentinel: first > last signals exhaustion, mirrors createRangeID behavior
+      }
+      else
+      {
+        m_ranges[i].last -= count;
+      }
+
+      m_usedIDs += count;
+      return true;
+    }
+    --i;
+  }
+
+  // No range of free IDs was large enough to create the requested continuous ID sequence
+  return false;
+}
+
 bool IDPool::destroyRangeID(const uint32_t id, const uint32_t count)
 {
+  if(count == 0)
+  {
+    return false;
+  }
+
   const uint32_t end_id = id + count;
 
   assert(end_id <= m_maxID + 1);
@@ -339,14 +426,36 @@ void IDPool::destroyRange(const uint32_t index)
 [[maybe_unused]] static void usage_IDPool()
 {
   // let's allow up to 16-bit worth of textures
-  nvutils::IDPool idGen(1 << 16);
+  nvutils::IDPool idGenTextures(1 << 16);
 
   uint32_t bindlessTextureID;
-  idGen.createID(bindlessTextureID);
+  idGenTextures.createID(bindlessTextureID);
 
   // use bindlessTextureID to fill a descriptor array element
 
   // when the texture is deleted, return the ID
 
-  idGen.destroyID(bindlessTextureID);
+  idGenTextures.destroyID(bindlessTextureID);
+
+
+  // Imagine a scenario where we organize meshes in data-driven design in a flat
+  // buffer. We may want to put all data that is static at the end, so we can
+  // improve our buffer upload behavior. Now dynamic data is in the front of the buffer
+  // and we will typically upload a smaller portion of the buffer per-frame.
+  // If static and dynamic was mixed, we would have to use more sophisticated update
+  // mechanisms that are optimized for scattering, otherwise we risk uploading a lot of data.
+  nvutils::IDPool idGenMeshes(1 << 16);
+
+  uint32_t meshBaseID;
+  uint32_t meshCount    = 5;
+  bool     meshIsStatic = true;
+
+  if(meshIsStatic)
+  {
+    idGenMeshes.createRangeIDFromBack(meshBaseID, meshCount);
+  }
+  else
+  {
+    idGenMeshes.createRangeID(meshBaseID, meshCount);
+  }
 }

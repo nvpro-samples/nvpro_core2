@@ -149,29 +149,56 @@ public:
   void destroyBuffer(Buffer& buffer) const;
 
 
-  // A large buffer allows sizes > maxMemoryAllocationSize (often around 4 GB)
+  // A large buffer allows sizes > `maxMemoryAllocationSize` (often around 4 GB)
   // by using sparse binding and multiple smaller allocations.
-  // if no fence is provided, a vkQueueWaitIdle will be performed after the binding
-  // operation
+  // Furthermore large buffers can be resized, with their content preserved when a
+  // sparse buffer is used.
+
+  // `chunkSize` must be a multiple of 64 KiB
+  // A regular buffer is used if `size` is <= `chunkSize`.
+  // Otherwise the sparse buffer's reserved size is always rounded up to a multiple of `chunkSize`, so every
+  // chunk is the same size and `resizeLargeBuffer` can grow or shrink by whole chunks.
+  // If `initialChunkCount` is provided, we only allocate and bind a part of the buffer.
+  // When a sparse buffer is used `resizeLargeBuffer` can be used.
+  // The `sparseBindingQueue` and `sparseBindingFence` parameters are used for the sparse binding operations.
+  // If no fence is provided, a vkQueueWaitIdle will be performed after the binding
+  // operation.
 
   VkResult createLargeBuffer(LargeBuffer&              buffer,
                              VkDeviceSize              size,
                              VkBufferUsageFlags2KHR    usage,
                              VkQueue                   sparseBindingQueue,
                              VkFence                   sparseBindingFence = VK_NULL_HANDLE,
-                             VkDeviceSize              maxChunkSize       = DEFAULT_LARGE_CHUNK_SIZE,
+                             VkDeviceSize              chunkSize          = DEFAULT_LARGE_CHUNK_SIZE,
                              VmaMemoryUsage            memoryUsage        = VMA_MEMORY_USAGE_AUTO,
                              VmaAllocationCreateFlags  flags              = {},
                              VkDeviceSize              minAlignment       = 0,
-                             std::span<const uint32_t> queueFamilies      = {}) const;
+                             std::span<const uint32_t> queueFamilies      = {},
+                             uint32_t                  initialChunkCount  = 0) const;
 
   VkResult createLargeBuffer(LargeBuffer&                   buffer,
                              const VkBufferCreateInfo&      bufferInfo,
                              const VmaAllocationCreateInfo& allocInfo,
                              VkQueue                        sparseBindingQueue,
                              VkFence                        sparseBindingFence = VK_NULL_HANDLE,
-                             VkDeviceSize                   maxChunkSize       = DEFAULT_LARGE_CHUNK_SIZE,
-                             VkDeviceSize                   minAlignment       = 0) const;
+                             VkDeviceSize                   chunkSize          = DEFAULT_LARGE_CHUNK_SIZE,
+                             VkDeviceSize                   minAlignment       = 0,
+                             uint32_t                       initialChunkCount  = 0) const;
+
+  // Only valid for sparse large buffers, can resize the buffer's allocated space while preserving content.
+  // Will allocate or free chunks so the new size can fit within, and bind or unbind the allocations to/from the buffer.
+  // The chunk size is inferred from the previous allocations, and `newSize` must be > 0 and <= `buffer.reservedSize`.
+  // If the allocated space can account for the newSize, `neededBinds` will be set to false, otherwise we need
+  // to trigger binding or unbinding the buffer memory and `neededBinds` will be set to true.
+  // The `sparseBindingQueue` and `sparseBindingFence` parameters are used for the sparse binding operations.
+  // If no fence is provided, a vkQueueWaitIdle will be performed after the binding operation.
+  // When shrinking a buffer, we will always trigger a vkQueueWaitIdle prior deletion of the
+  // unused resources.
+  VkResult resizeLargeBuffer(LargeBuffer& buffer,
+                             VkDeviceSize newSize,
+                             bool&        neededBinds,
+                             VkQueue      sparseBindingQueue,
+                             VkFence      sparseBindingFence = VK_NULL_HANDLE) const;
 
   void destroyLargeBuffer(LargeBuffer& buffer) const;
 
@@ -263,6 +290,29 @@ private:
   // Adds "nvvkAllocID: <id>" name to the vma allocation, useful for vma's leak detection
   // (see comments around m_leakID)
   void addLeakDetection(VmaAllocation allocation) const;
+
+  // Used for large buffers. Allocates `chunkCount` many `chunkSize` allocations into the outAllocations array
+  // as well as the allocationInfos vector.
+  VkResult allocateLargeBufferChunks(const VkMemoryRequirements&     memReqs,
+                                     const VmaAllocationCreateInfo&  allocInfo,
+                                     VkDeviceSize                    chunkSize,
+                                     size_t                          chunkCount,
+                                     VmaAllocation*                  outAllocations,
+                                     std::vector<VmaAllocationInfo>& allocationInfos) const;
+
+  // Used for large buffers. Binds the provided `alloctionInfos` chunks to the sparse
+  // buffer. All chunks have the same `chunkSize` and with `firstChunk` we provide the
+  // relative offset into the buffer's address space. Without `sparseBindingFence` we trigger a vkQueueWaitIdle.
+  // When `unbind` is true, we bind a null-address to the range of the buffer's address space instead,
+  // and the `alloctionInfos` can be null.
+  VkResult bindLargeBufferChunks(VkBuffer                 buffer,
+                                 VkDeviceSize             chunkSize,
+                                 size_t                   firstChunk,
+                                 size_t                   chunkCount,
+                                 const VmaAllocationInfo* allocationInfos,
+                                 bool                     unbind,
+                                 VkQueue                  sparseBindingQueue,
+                                 VkFence                  sparseBindingFence) const;
 
 private:
   VmaAllocator     m_allocator{};

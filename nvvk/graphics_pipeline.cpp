@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 *
-* SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+* SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 * SPDX-License-Identifier: Apache-2.0
 */
 
@@ -46,10 +46,14 @@ void GraphicsPipelineState::cmdApplyAllStates(VkCommandBuffer cmd) const
   vkCmdSetDepthTestEnable(cmd, depthStencilState.depthTestEnable);
   if(depthStencilState.depthTestEnable)
   {
-    vkCmdSetDepthBounds(cmd, depthStencilState.minDepthBounds, depthStencilState.maxDepthBounds);
-    vkCmdSetDepthBoundsTestEnable(cmd, depthStencilState.depthBoundsTestEnable);
     vkCmdSetDepthCompareOp(cmd, depthStencilState.depthCompareOp);
     vkCmdSetDepthWriteEnable(cmd, depthStencilState.depthWriteEnable);
+  }
+
+  vkCmdSetDepthBoundsTestEnable(cmd, depthStencilState.depthBoundsTestEnable);
+  if(depthStencilState.depthBoundsTestEnable)
+  {
+    vkCmdSetDepthBounds(cmd, depthStencilState.minDepthBounds, depthStencilState.maxDepthBounds);
   }
 
   vkCmdSetStencilTestEnable(cmd, depthStencilState.stencilTestEnable);
@@ -75,11 +79,9 @@ void GraphicsPipelineState::cmdApplyAllStates(VkCommandBuffer cmd) const
   vkCmdSetAlphaToCoverageEnableEXT(cmd, multisampleState.alphaToCoverageEnable);
   vkCmdSetAlphaToOneEnableEXT(cmd, multisampleState.alphaToOneEnable);
 
-  if(vertexBindings.size() && vertexAttributes.size())
-  {
-    vkCmdSetVertexInputEXT(cmd, static_cast<uint32_t>(vertexBindings.size()), vertexBindings.data(),
-                           static_cast<uint32_t>(vertexAttributes.size()), vertexAttributes.data());
-  }
+  // Empty vertex input is valid, but still needs to be set.
+  vkCmdSetVertexInputEXT(cmd, static_cast<uint32_t>(vertexBindings.size()), vertexBindings.data(),
+                         static_cast<uint32_t>(vertexAttributes.size()), vertexAttributes.data());
 
   assert(colorWriteMasks.size() == colorBlendEquations.size() && colorWriteMasks.size() == colorBlendEnables.size());
 
@@ -93,6 +95,13 @@ void GraphicsPipelineState::cmdApplyAllStates(VkCommandBuffer cmd) const
 
   vkCmdSetBlendConstants(cmd, colorBlendState.blendConstants);
   vkCmdSetLogicOpEnableEXT(cmd, colorBlendState.logicOpEnable);
+
+  // Fragment shading rate is an optional dynamic state. Guard on the volk function
+  // pointer so samples that don't enable VK_KHR_fragment_shading_rate are unaffected.
+  if(vkCmdSetFragmentShadingRateKHR != nullptr)
+  {
+    vkCmdSetFragmentShadingRateKHR(cmd, &fragmentShadingRateState.fragmentSize, fragmentShadingRateState.combinerOps);
+  }
 }
 
 void GraphicsPipelineState::cmdApplyDynamicStates(VkCommandBuffer cmd, std::span<const VkDynamicState> dynamicStates) const

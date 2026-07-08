@@ -255,6 +255,12 @@ float henyeyGreensteinPdf(float cosTheta, float g)
 #define LOBE_DIFFUSE_TRANSMISSION 6
 #define LOBE_COUNT 7
 
+// Helper function to check if a lobe is a reflection lobe (as opposed to a transmission lobe).
+bool isReflectionLobe(int lobe)
+{
+  return lobe != LOBE_SPECULAR_TRANSMISSION && lobe != LOBE_DIFFUSE_TRANSMISSION;
+}
+
 // The Fresnel factor depends on the cosine between the view vector k1 and the
 // half vector, H = normalize(k1 + k2). But during sampling, we don't have k2
 // until we sample a microfacet. So instead, we approximate it.
@@ -1025,8 +1031,9 @@ void brdf_sheen_sample(NVSHADERS_INOUT_TYPE(BsdfSampleData) data, PbrMaterial ma
 /*-------------------------------------------------------------------------------------------------
 # Function `bsdfEvaluateCore`
 > Single-path BSDF evaluation (forward or retro view direction in `data.k1`).
+> Returns the stochastically selected lobe index.
 -------------------------------------------------------------------------------------------------*/
-void bsdfEvaluateCore(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data, PbrMaterial mat)
+int bsdfEvaluateCore(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data, PbrMaterial mat)
 {
   float3 tint       = mat.baseColor;
   float  VdotN      = dot(data.k1, mat.N);
@@ -1073,6 +1080,8 @@ void bsdfEvaluateCore(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data, PbrMaterial m
   // Occlusion effect (glTF occlusion texture)
   data.bsdf_diffuse *= mat.occlusion;
   data.bsdf_glossy *= mat.occlusion;
+
+  return lobe;
 }
 
 /*-------------------------------------------------------------------------------------------------
@@ -1111,10 +1120,10 @@ the sampling code will return this direction will be returned in `data.pdf`.
 void bsdfEvaluate(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data, PbrMaterial mat)
 {
   // Evaluate forward directly into the output; no dForward copy.
-  bsdfEvaluateCore(data, mat);
-
+  const int   lobe  = bsdfEvaluateCore(data, mat);
   const float blend = mat.retroreflection;
-  if(blend > 0.0f)
+  // Portsmouth et al. Sec. 5 / MaterialX: MRM applies to reflection lobes only; keep regular BTDF.
+  if(blend > 0.0f && isReflectionLobe(lobe))
   {
     bsdfEvaluateRetroreflectionBlend(data, mat, blend);
   }
@@ -1122,14 +1131,11 @@ void bsdfEvaluate(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data, PbrMaterial mat)
 
 
 /*-------------------------------------------------------------------------------------------------
-# Function `bsdfSampleCore`
-> Single-path BSDF sample (forward or retro view direction in `data.k1`).
+# Function `bsdfSampleLobe`
+> Samples a pre-selected BSDF lobe (forward or retro view direction in `data.k1`).
 -------------------------------------------------------------------------------------------------*/
-void bsdfSampleCore(NVSHADERS_INOUT_TYPE(BsdfSampleData) data, PbrMaterial mat)
+void bsdfSampleLobe(NVSHADERS_INOUT_TYPE(BsdfSampleData) data, PbrMaterial mat, int lobe, float3 tint)
 {
-  float3 tint        = mat.baseColor;
-  float  VdotN       = dot(data.k1, mat.N);
-  int    lobe        = findLobe(mat, VdotN, data.xi.z, tint);
   data.pdf           = 0;
   data.bsdf_over_pdf = float3(0.0F);
   data.event_type    = BSDF_EVENT_ABSORB;
@@ -1225,18 +1231,21 @@ There are two things you should check after calling this function:
 -------------------------------------------------------------------------------------------------*/
 void bsdfSample(NVSHADERS_INOUT_TYPE(BsdfSampleData) data, PbrMaterial mat)
 {
-  // Minimal Retroreflection Model sampling: randomly choose forward vs. retroreflective path,
-  // and modify the view direction for the rest of the sampling accordingly.
+  // Select lobe with the forward view direction, then optionally apply MRM only on reflection lobes.
+  float3 tint  = mat.baseColor;
+  float  VdotN = dot(data.k1, mat.N);
+  int    lobe  = findLobe(mat, VdotN, data.xi.z, tint);
+
   float       pathProb = 1.0f;
   const float blend    = mat.retroreflection;
-  const bool  hasRetro = blend > 0.0f;
+  const bool  hasRetro = blend > 0.0f && isReflectionLobe(lobe);
   if(hasRetro)
   {
-    pathProb = bsdfSampleRetroreflectionPath(data, mat, blend);
+    data.xi.z = rerandomize(data.xi.z);
+    pathProb  = bsdfSampleRetroreflectionPath(data, mat, blend);
   }
 
-  // Sample forward or retro BSDF as chosen above, directly into the output; no dForward copy.
-  bsdfSampleCore(data, mat);
+  bsdfSampleLobe(data, mat, lobe, tint);
 
   // If we have retroreflection and we didn't get absorption, account for the path selection probability.
   if(hasRetro && pathProb > 0.0f && data.event_type != BSDF_EVENT_ABSORB)

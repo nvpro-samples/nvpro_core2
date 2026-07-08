@@ -202,37 +202,125 @@ void nvvk::ResourceAllocator::destroyBuffer(nvvk::Buffer& buffer) const
   buffer = {};
 }
 
+
+VkResult nvvk::ResourceAllocator::allocateLargeBufferChunks(const VkMemoryRequirements&     memReqs,
+                                                            const VmaAllocationCreateInfo&  allocInfo,
+                                                            VkDeviceSize                    chunkSize,
+                                                            size_t                          chunkCount,
+                                                            VmaAllocation*                  outAllocations,
+                                                            std::vector<VmaAllocationInfo>& allocationInfos) const
+{
+  allocationInfos.resize(chunkCount);
+
+  VkMemoryRequirements reqs = memReqs;
+  reqs.size                 = chunkSize;
+  VkResult result = vmaAllocateMemoryPages(m_allocator, &reqs, &allocInfo, chunkCount, outAllocations, allocationInfos.data());
+  if(result != VK_SUCCESS)
+  {
+    return result;
+  }
+
+  for(size_t i = 0; i < chunkCount; ++i)
+  {
+    addLeakDetection(outAllocations[i]);
+  }
+
+  return VK_SUCCESS;
+}
+
+VkResult nvvk::ResourceAllocator::bindLargeBufferChunks(VkBuffer                 buffer,
+                                                        VkDeviceSize             chunkSize,
+                                                        size_t                   firstChunk,
+                                                        size_t                   chunkCount,
+                                                        const VmaAllocationInfo* allocationInfos,
+                                                        bool                     unbind,
+                                                        VkQueue                  sparseBindingQueue,
+                                                        VkFence                  sparseBindingFence) const
+{
+  std::vector<VkSparseMemoryBind> sparseBinds(chunkCount);
+
+  for(size_t j = 0; j < chunkCount; ++j)
+  {
+    const size_t        chunkIndex = firstChunk + j;
+    VkSparseMemoryBind& sparseBind = sparseBinds[j];
+    sparseBind.flags               = 0;
+    sparseBind.resourceOffset      = chunkIndex * chunkSize;
+    sparseBind.size                = chunkSize;
+
+    if(unbind)
+    {
+      sparseBind.memory       = VK_NULL_HANDLE;
+      sparseBind.memoryOffset = 0;
+    }
+    else
+    {
+      sparseBind.memory       = allocationInfos[j].deviceMemory;
+      sparseBind.memoryOffset = allocationInfos[j].offset;
+    }
+  }
+
+  VkSparseBufferMemoryBindInfo sparseBufferMemoryBindInfo{};
+  sparseBufferMemoryBindInfo.buffer    = buffer;
+  sparseBufferMemoryBindInfo.bindCount = uint32_t(sparseBinds.size());
+  sparseBufferMemoryBindInfo.pBinds    = sparseBinds.data();
+
+  VkBindSparseInfo bindSparseInfo{VK_STRUCTURE_TYPE_BIND_SPARSE_INFO};
+  bindSparseInfo.bufferBindCount = 1;
+  bindSparseInfo.pBufferBinds    = &sparseBufferMemoryBindInfo;
+
+  VkResult result = NVVK_FAIL_REPORT(vkQueueBindSparse(sparseBindingQueue, 1, &bindSparseInfo, sparseBindingFence));
+  if(result != VK_SUCCESS)
+  {
+    return result;
+  }
+
+  if(!sparseBindingFence)
+  {
+    result = NVVK_FAIL_REPORT(vkQueueWaitIdle(sparseBindingQueue));
+  }
+
+  return result;
+}
+
 VkResult nvvk::ResourceAllocator::createLargeBuffer(LargeBuffer&                   largeBuffer,
                                                     const VkBufferCreateInfo&      bufferInfo,
                                                     const VmaAllocationCreateInfo& allocInfo,
                                                     VkQueue                        sparseBindingQueue,
                                                     VkFence                        sparseBindingFence,
-                                                    VkDeviceSize                   maxChunkSize,
-                                                    VkDeviceSize                   minAlignment) const
+                                                    VkDeviceSize                   chunkSize,
+                                                    VkDeviceSize                   minAlignment,
+                                                    uint32_t                       initialChunkCount) const
 {
   assert(sparseBindingQueue);
+  assert(chunkSize % 0x10000 == 0);
 
   largeBuffer = {};
 
-  maxChunkSize = std::min(m_maxMemoryAllocationSize, maxChunkSize);
 
-  if(bufferInfo.size <= maxChunkSize)
+  if(bufferInfo.size <= chunkSize)
   {
+    assert(initialChunkCount == 0);
+
     Buffer buffer;
     NVVK_FAIL_RETURN(createBuffer(buffer, bufferInfo, allocInfo, minAlignment));
 
-    largeBuffer.buffer      = buffer.buffer;
-    largeBuffer.bufferSize  = buffer.bufferSize;
-    largeBuffer.address     = buffer.address;
-    largeBuffer.allocations = {buffer.allocation};
+    largeBuffer.buffer       = buffer.buffer;
+    largeBuffer.bufferSize   = buffer.bufferSize;
+    largeBuffer.reservedSize = 0;
+    largeBuffer.chunkSize    = buffer.bufferSize;
+    largeBuffer.address      = buffer.address;
+    largeBuffer.allocations  = {buffer.allocation};
 
     return VK_SUCCESS;
   }
   else
   {
     VkBufferCreateInfo createInfo = bufferInfo;
-
     createInfo.flags |= VK_BUFFER_CREATE_SPARSE_BINDING_BIT;
+
+    // to allow resizing, the buffer size must be a multiple of chunkSize
+    const size_t totalChunkCount = ((bufferInfo.size + chunkSize - 1) / chunkSize);
+    createInfo.size              = totalChunkCount * chunkSize;
 
     NVVK_FAIL_RETURN(vkCreateBuffer(m_device, &createInfo, nullptr, &largeBuffer.buffer));
 
@@ -247,21 +335,28 @@ VkResult nvvk::ResourceAllocator::createLargeBuffer(LargeBuffer&                
     vkGetBufferMemoryRequirements2(m_device, &bufferReqs, &memReqs);
     memReqs.memoryRequirements.alignment = std::max(minAlignment, memReqs.memoryRequirements.alignment);
 
-    // align maxChunkSize to required alignment
     size_t pageAlignment = memReqs.memoryRequirements.alignment;
-    maxChunkSize         = (maxChunkSize + pageAlignment - 1) & ~(pageAlignment - 1);
+    if(chunkSize % pageAlignment != 0)
+    {
+      // due to dx12 64kb is enforced on most devices, we could recreate the buffer and derive
+      // an aligned chunk size as well, but chose to go with the simpler option.
+      LOGE("ResourceAllocator::createLargeBuffer(): chunkSize %zu must be a multiple of the page alignment %zu",
+           size_t(chunkSize), pageAlignment);
+      vkDestroyBuffer(m_device, largeBuffer.buffer, nullptr);
+      largeBuffer = {};
+      return VK_ERROR_INITIALIZATION_FAILED;
+    }
 
-    // get chunk count
-    size_t fullChunkCount  = bufferInfo.size / maxChunkSize;
-    size_t totalChunkCount = (bufferInfo.size + maxChunkSize - 1) / maxChunkSize;
+    const size_t chunkCount = initialChunkCount > 0 ? std::min(totalChunkCount, size_t(initialChunkCount)) : totalChunkCount;
 
-    largeBuffer.allocations.resize(totalChunkCount);
-    std::vector<VmaAllocationInfo> allocationInfos(totalChunkCount);
+    largeBuffer.bufferSize   = initialChunkCount > 0 ? chunkCount * chunkSize : bufferInfo.size;
+    largeBuffer.reservedSize = totalChunkCount * chunkSize;
+    largeBuffer.chunkSize    = chunkSize;
+    largeBuffer.allocations.resize(chunkCount);
+    std::vector<VmaAllocationInfo> allocationInfos;
 
-    // full chunks first
-    memReqs.memoryRequirements.size = maxChunkSize;
-    VkResult result = vmaAllocateMemoryPages(m_allocator, &memReqs.memoryRequirements, &allocInfo, fullChunkCount,
-                                             largeBuffer.allocations.data(), allocationInfos.data());
+    VkResult result = allocateLargeBufferChunks(memReqs.memoryRequirements, allocInfo, chunkSize, chunkCount,
+                                                largeBuffer.allocations.data(), allocationInfos);
     if(result != VK_SUCCESS)
     {
       vkDestroyBuffer(m_device, largeBuffer.buffer, nullptr);
@@ -269,48 +364,8 @@ VkResult nvvk::ResourceAllocator::createLargeBuffer(LargeBuffer&                
       return result;
     }
 
-    // tail chunk last
-    if(fullChunkCount != totalChunkCount)
-    {
-      memReqs.memoryRequirements.size = createInfo.size - fullChunkCount * maxChunkSize;
-      memReqs.memoryRequirements.size = (memReqs.memoryRequirements.size + pageAlignment - 1) & ~(pageAlignment - 1);
-
-      result = vmaAllocateMemoryPages(m_allocator, &memReqs.memoryRequirements, &allocInfo, 1,
-                                      largeBuffer.allocations.data() + fullChunkCount, allocationInfos.data() + fullChunkCount);
-      if(result != VK_SUCCESS)
-      {
-        vmaFreeMemoryPages(m_allocator, fullChunkCount, largeBuffer.allocations.data());
-        vkDestroyBuffer(m_device, largeBuffer.buffer, nullptr);
-        largeBuffer = {};
-        return result;
-      }
-    }
-
-    std::vector<VkSparseMemoryBind> sparseBinds(totalChunkCount);
-
-    for(uint32_t i = 0; i < totalChunkCount; i++)
-    {
-      VkSparseMemoryBind& sparseBind = sparseBinds[i];
-      sparseBind.flags               = 0;
-      sparseBind.memory              = allocationInfos[i].deviceMemory;
-      sparseBind.memoryOffset        = allocationInfos[i].offset;
-      sparseBind.resourceOffset      = i * maxChunkSize;
-      sparseBind.size                = std::min(maxChunkSize, createInfo.size - i * maxChunkSize);
-      sparseBind.size                = (sparseBind.size + pageAlignment - 1) & ~(pageAlignment - 1);
-
-      addLeakDetection(largeBuffer.allocations[i]);
-    }
-
-    VkSparseBufferMemoryBindInfo sparseBufferMemoryBindInfo{};
-    sparseBufferMemoryBindInfo.buffer    = largeBuffer.buffer;
-    sparseBufferMemoryBindInfo.bindCount = uint32_t(sparseBinds.size());
-    sparseBufferMemoryBindInfo.pBinds    = sparseBinds.data();
-
-    VkBindSparseInfo bindSparseInfo{VK_STRUCTURE_TYPE_BIND_SPARSE_INFO};
-    bindSparseInfo.bufferBindCount = 1;
-    bindSparseInfo.pBufferBinds    = &sparseBufferMemoryBindInfo;
-
-    result = NVVK_FAIL_REPORT(vkQueueBindSparse(sparseBindingQueue, 1, &bindSparseInfo, sparseBindingFence));
+    result = bindLargeBufferChunks(largeBuffer.buffer, chunkSize, 0, chunkCount, allocationInfos.data(), false,
+                                   sparseBindingQueue, sparseBindingFence);
     if(result != VK_SUCCESS)
     {
       vkDestroyBuffer(m_device, largeBuffer.buffer, nullptr);
@@ -319,43 +374,28 @@ VkResult nvvk::ResourceAllocator::createLargeBuffer(LargeBuffer&                
       return result;
     }
 
-    if(!sparseBindingFence)
-    {
-      result = NVVK_FAIL_REPORT(vkQueueWaitIdle(sparseBindingQueue));
-      if(result != VK_SUCCESS)
-      {
-        if(result != VK_ERROR_DEVICE_LOST)
-        {
-          vkDestroyBuffer(m_device, largeBuffer.buffer, nullptr);
-          vmaFreeMemoryPages(m_allocator, largeBuffer.allocations.size(), largeBuffer.allocations.data());
-          largeBuffer = {};
-        }
-        return result;
-      }
-    }
-
     // Get the GPU address of the buffer
     const VkBufferDeviceAddressInfo info = {
         .sType  = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
         .buffer = largeBuffer.buffer,
     };
-    largeBuffer.address    = vkGetBufferDeviceAddress(m_device, &info);
-    largeBuffer.bufferSize = createInfo.size;
+    largeBuffer.address = vkGetBufferDeviceAddress(m_device, &info);
 
     return VK_SUCCESS;
   }
 }
 
-VkResult nvvk::ResourceAllocator::createLargeBuffer(LargeBuffer&           largeBuffer,
-                                                    VkDeviceSize           size,
-                                                    VkBufferUsageFlags2KHR usage,
-                                                    VkQueue                sparseBindingQueue,
-                                                    VkFence                sparseBindingFence /*= VK_NULL_HANDLE*/,
-                                                    VkDeviceSize           maxChunkSize /*= DEFAULT_LARGE_CHUNK_SIZE*/,
-                                                    VmaMemoryUsage         memoryUsage /*= VMA_MEMORY_USAGE_AUTO*/,
+VkResult nvvk::ResourceAllocator::createLargeBuffer(LargeBuffer&              largeBuffer,
+                                                    VkDeviceSize              size,
+                                                    VkBufferUsageFlags2KHR    usage,
+                                                    VkQueue                   sparseBindingQueue,
+                                                    VkFence                   sparseBindingFence /*= VK_NULL_HANDLE*/,
+                                                    VkDeviceSize              chunkSize /*= DEFAULT_LARGE_CHUNK_SIZE*/,
+                                                    VmaMemoryUsage            memoryUsage /*= VMA_MEMORY_USAGE_AUTO*/,
                                                     VmaAllocationCreateFlags  flags /*= {}*/,
                                                     VkDeviceSize              minAlignment /*= 0*/,
-                                                    std::span<const uint32_t> queueFamilies /*= {}*/) const
+                                                    std::span<const uint32_t> queueFamilies /*= {}*/,
+                                                    uint32_t                  initialChunkCount /*= 0*/) const
 {
   const VkBufferUsageFlags2CreateInfo bufferUsageFlags2CreateInfo{
       .sType = VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO,
@@ -379,14 +419,126 @@ VkResult nvvk::ResourceAllocator::createLargeBuffer(LargeBuffer&           large
   allocInfo.usage          = VMA_MEMORY_USAGE_UNKNOWN;
   allocInfo.memoryTypeBits = 1 << memoryTypeIndex;
 
-  return createLargeBuffer(largeBuffer, bufferInfo, allocInfo, sparseBindingQueue, sparseBindingFence, maxChunkSize, minAlignment);
+  return createLargeBuffer(largeBuffer, bufferInfo, allocInfo, sparseBindingQueue, sparseBindingFence, chunkSize,
+                           minAlignment, initialChunkCount);
 }
 
-void nvvk::ResourceAllocator::destroyLargeBuffer(LargeBuffer& buffer) const
+VkResult nvvk::ResourceAllocator::resizeLargeBuffer(LargeBuffer& largeBuffer,
+                                                    VkDeviceSize newSize,
+                                                    bool&        neededBinds,
+                                                    VkQueue      sparseBindingQueue,
+                                                    VkFence      sparseBindingFence) const
 {
-  vkDestroyBuffer(m_device, buffer.buffer, nullptr);
-  vmaFreeMemoryPages(m_allocator, buffer.allocations.size(), buffer.allocations.data());
-  buffer = {};
+  assert(largeBuffer.buffer);
+  assert(sparseBindingQueue);
+  assert(!largeBuffer.allocations.empty());
+
+  neededBinds = false;
+
+  if(!largeBuffer.isResizable())
+  {
+    LOGE("LargeBuffer must be resizable");
+    return VK_ERROR_UNKNOWN;
+  }
+
+  if(newSize == 0)
+  {
+    LOGE("New size must not be 0");
+    return VK_ERROR_UNKNOWN;
+  }
+
+  if(newSize > largeBuffer.reservedSize)
+  {
+    LOGE("New size exceeds the reserved buffer size");
+    return VK_ERROR_UNKNOWN;
+  }
+
+  // check if we are using the same number of cunks with the new size as before,
+  // if yes, we can early out and don't need to change the sparse bindings.
+  const VkDeviceSize chunkSize  = largeBuffer.chunkSize;
+  const size_t       chunkCount = static_cast<size_t>((newSize + chunkSize - 1) / chunkSize);
+
+  if(chunkCount == largeBuffer.allocations.size())
+  {
+    largeBuffer.bufferSize = newSize;
+    return VK_SUCCESS;
+  }
+
+  neededBinds = true;
+
+  VkMemoryRequirements2           memReqs{VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2};
+  VkMemoryDedicatedRequirements   dedicatedRegs{VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS};
+  VkBufferMemoryRequirementsInfo2 bufferReqs{VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2};
+
+  memReqs.pNext     = &dedicatedRegs;
+  bufferReqs.buffer = largeBuffer.buffer;
+  vkGetBufferMemoryRequirements2(m_device, &bufferReqs, &memReqs);
+
+  // less chunks than before, let's free memory
+  if(chunkCount < largeBuffer.allocations.size())
+  {
+    const size_t removedChunkCount = largeBuffer.allocations.size() - chunkCount;
+
+    VkResult result = bindLargeBufferChunks(largeBuffer.buffer, chunkSize, chunkCount, removedChunkCount, nullptr, true,
+                                            sparseBindingQueue, sparseBindingFence);
+    if(result != VK_SUCCESS)
+    {
+      return result;
+    }
+
+    VkResult waitResult = NVVK_FAIL_REPORT(vkQueueWaitIdle(sparseBindingQueue));
+    if(waitResult != VK_SUCCESS)
+    {
+      return waitResult;
+    }
+
+    vmaFreeMemoryPages(m_allocator, removedChunkCount, largeBuffer.allocations.data() + chunkCount);
+    largeBuffer.allocations.resize(chunkCount);
+  }
+  else
+  {
+    // append new chunks
+    const size_t oldChunkCount = largeBuffer.allocations.size();
+    const size_t newChunkCount = chunkCount - oldChunkCount;
+
+    VmaAllocationInfo existingInfo{};
+    vmaGetAllocationInfo(m_allocator, largeBuffer.allocations.front(), &existingInfo);
+
+    VmaAllocationCreateInfo allocInfo{};
+    allocInfo.usage          = VMA_MEMORY_USAGE_UNKNOWN;
+    allocInfo.memoryTypeBits = 1u << existingInfo.memoryType;
+
+    largeBuffer.allocations.resize(chunkCount);
+    std::vector<VmaAllocationInfo> allocationInfos;
+
+    VkResult result = allocateLargeBufferChunks(memReqs.memoryRequirements, allocInfo, chunkSize, newChunkCount,
+                                                largeBuffer.allocations.data() + oldChunkCount, allocationInfos);
+    if(result != VK_SUCCESS)
+    {
+      largeBuffer.allocations.resize(oldChunkCount);
+      return result;
+    }
+
+    result = bindLargeBufferChunks(largeBuffer.buffer, chunkSize, oldChunkCount, newChunkCount, allocationInfos.data(),
+                                   false, sparseBindingQueue, sparseBindingFence);
+    if(result != VK_SUCCESS)
+    {
+      vmaFreeMemoryPages(m_allocator, newChunkCount, largeBuffer.allocations.data() + oldChunkCount);
+      largeBuffer.allocations.resize(oldChunkCount);
+      return result;
+    }
+  }
+
+  largeBuffer.bufferSize = newSize;
+
+  return VK_SUCCESS;
+}
+
+void nvvk::ResourceAllocator::destroyLargeBuffer(LargeBuffer& largeBuffer) const
+{
+  vkDestroyBuffer(m_device, largeBuffer.buffer, nullptr);
+  vmaFreeMemoryPages(m_allocator, largeBuffer.allocations.size(), largeBuffer.allocations.data());
+  largeBuffer = {};
 }
 
 VkResult nvvk::ResourceAllocator::createImage(nvvk::Image& image, const VkImageCreateInfo& imageInfo, const VmaAllocationCreateInfo& allocInfo) const

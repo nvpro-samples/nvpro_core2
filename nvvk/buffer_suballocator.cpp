@@ -167,6 +167,8 @@ uint32_t BufferSubAllocator::acquireBlockIndex()
     m_blocks.push_back({});
   }
 
+  assert(freeBlockIndex < MAX_TOTAL_BLOCKS);
+
   return freeBlockIndex;
 }
 
@@ -437,10 +439,23 @@ BufferRange BufferSubAllocator::subRange(const BufferSubAllocation& subAllocatio
   return info;
 }
 
-const nvvk::Buffer& BufferSubAllocator::getBlockBuffer(const uint16_t blockIndex) const
+const nvvk::Buffer& BufferSubAllocator::getBlockBuffer(const uint32_t blockIndex) const
 {
-  assert(m_blocks[blockIndex].buffer.buffer && "invalid blockIndex");
+  assert(isBlockValid(blockIndex) && "invalid blockIndex");
   return m_blocks[blockIndex].buffer;
+}
+
+bool BufferSubAllocator::isBlockValid(uint32_t blockIndex) const
+{
+  if(blockIndex >= m_blocks.size())
+    return false;
+
+  return m_blocks[blockIndex].buffer.buffer != nullptr;
+}
+
+uint32_t BufferSubAllocator::getBlockCount() const
+{
+  return uint32_t(m_blocks.size());
 }
 
 VkResult BufferSubAllocator::createNewBuffer(nvvk::Buffer& buffer, VkDeviceSize size, uint32_t alignment, uint32_t blockIndex)

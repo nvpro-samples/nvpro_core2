@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -75,12 +75,30 @@ struct BufferTyped : Buffer
 };
 
 // Allows to represent >= 4 GB buffers using sparse bindings
+// The `bufferSize` is the valid to access size of the buffer.
+// If the buffer is sparse, than `reservedSize` is the total virtual address space
+// that is available. It is managed in `chunkSize`-sized allocations.
+// Sparse buffers can be dynamically resized up to their `reservedSize`.
 struct LargeBuffer
 {
-  VkBuffer                   buffer{};
-  VkDeviceSize               bufferSize{};
-  VkDeviceAddress            address{};
+  VkBuffer buffer{};
+  // current size the user requested, considered valid to access
+  VkDeviceSize    bufferSize{};
+  VkDeviceAddress address{};
+
+  // Reserved virtual address space for the sparse buffer, rounded
+  // up to a multiple of chunk size to allow resizing.
+  // 0 when a regular buffer is used.
+  VkDeviceSize reservedSize{};
+
+  // The size of each allocation.
+  // Valid for both regular and sparse buffers.
+  VkDeviceSize chunkSize{};
+
   std::vector<VmaAllocation> allocations;
+
+  VkDeviceSize getAllocatedSize() const { return chunkSize * allocations.size(); }
+  bool         isResizable() const { return reservedSize != 0; }
 };
 
 //-----------------------------------------------------------------

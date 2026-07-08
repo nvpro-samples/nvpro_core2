@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 *
-* SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+* SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 * SPDX-License-Identifier: Apache-2.0
 */
 
@@ -159,6 +159,12 @@ public:
   VkPipelineTessellationDomainOriginStateCreateInfo tessellationDomainOriginState{
       .sType        = VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_DOMAIN_ORIGIN_STATE_CREATE_INFO,
       .domainOrigin = VK_TESSELLATION_DOMAIN_ORIGIN_UPPER_LEFT,
+  };
+
+  VkPipelineFragmentShadingRateStateCreateInfoKHR fragmentShadingRateState{
+      .sType        = VK_STRUCTURE_TYPE_PIPELINE_FRAGMENT_SHADING_RATE_STATE_CREATE_INFO_KHR,
+      .fragmentSize = {1, 1},
+      .combinerOps  = {VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR, VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR},
   };
 
   // by default we enable 1 color attachment with disabled blending
@@ -374,6 +380,11 @@ inline bool GraphicsPipelineState::cmdApplyDynamicState(VkCommandBuffer cmd, VkD
       return false;
     case VK_DYNAMIC_STATE_LINE_STIPPLE_ENABLE_EXT:
       vkCmdSetLineStippleEnableEXT(cmd, rasterizationLineState.stippledLineEnable);
+      return false;
+    case VK_DYNAMIC_STATE_FRAGMENT_SHADING_RATE_KHR:
+      if(vkCmdSetFragmentShadingRateKHR == nullptr)
+        return true;
+      vkCmdSetFragmentShadingRateKHR(cmd, &fragmentShadingRateState.fragmentSize, fragmentShadingRateState.combinerOps);
       return false;
     default:
       return true;

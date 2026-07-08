@@ -21,7 +21,7 @@ target_link_libraries(
     glfw   # Windowing library (Application needs it)
     glm    # Math library
     vma    # Vulkan Memory Allocator
-    imgui  # Because GBuffer needs it (returns the ImTexture and uses ImGui_ImplVulkan_AddTexture
+    imgui  # ImGui Vulkan backend: Application init + ImGui_ImplVulkan_AddTexture (also nvapp::ImTexture)
     implot # For Implot
     fmt    # For formatting strings
 )
