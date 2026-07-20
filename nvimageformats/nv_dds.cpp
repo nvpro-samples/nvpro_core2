@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2016-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2016-2025 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2016-2026 NVIDIA CORPORATION
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -941,8 +941,46 @@ Subresource& Image::subresource(uint32_t mip, uint32_t layer, uint32_t face)
   return const_cast<Subresource&>(const_cast<const Image*>(this)->subresource(mip, layer, face));
 }
 
+const SubresourceLayout& Image::getSubresourceLayout(uint32_t mip, uint32_t layer, uint32_t face) const
+{
+  return const_cast<Image*>(this)->subresourceLayout(mip, layer, face);
+}
+
+SubresourceLayout& Image::subresourceLayout(uint32_t mip, uint32_t layer, uint32_t face)
+{
+  return m_subresourceLayouts[(size_t(mip) * m_numLayers + layer) * m_numFaces + face];
+}
+
+size_t Image::getSubresourceByteSizeSum(const SubresourceRange& range) const
+{
+  size_t       sum                = 0;
+  const size_t subresourcesPerMip = size_t(range.numLayers) * range.numFaces;
+  for(uint32_t mip = range.firstMip; mip < range.firstMip + range.numMips; mip++)
+  {
+    // All subresources for a given mip have the same size, so we can do this:
+    sum += getSubresourceByteSize(mip) * subresourcesPerMip;
+  }
+  return sum;
+}
+
+size_t Image::getMipByteSizeSum(uint32_t mip) const
+{
+  return size_t(getSubresourceByteSize(mip)) * m_numLayers * m_numFaces;
+}
+
 ErrorWithText Image::readHeaderFromStream(std::istream& input, const ReadSettings& readSettings)
 {
+  const std::streampos startPos            = input.tellg();
+  size_t               validationInputSize = 0;
+  if(readSettings.validateInputSize)
+  {
+    const std::streampos initialPos = input.tellg();
+    input.seekg(0, std::ios_base::end);
+    const std::streampos endPos = input.tellg();
+    validationInputSize         = endPos - initialPos;
+    input.seekg(initialPos, std::ios_base::beg);
+  }
+
   // Read the file marker to ensure we have a DDS file.
   uint32_t fileCode{};
   READ_OR_ERROR(input, fileCode, "Reached the end of the input while trying to read the first four characters of the input. Is the input truncated?");
@@ -1423,66 +1461,16 @@ ErrorWithText Image::readHeaderFromStream(std::istream& input, const ReadSetting
     }
   }
 
-  return {};
-}
-
-ErrorWithText Image::readHeaderFromFile(const char* filename, const ReadSettings& readSettings)
-{
-  try
-  {
-    std::ifstream file(filename, std::ios::binary | std::ios::in);
-    return readHeaderFromStream(file, readSettings);
-  }
-  catch(const std::exception& e)
-  {
-    return "I/O error opening " + std::string(filename) + ": " + std::string(e.what());
-  }
-}
-
-ErrorWithText Image::readHeaderFromMemory(const char* buffer, size_t bufferSize, const ReadSettings& readSettings)
-{
-  if(bufferSize > static_cast<size_t>(std::numeric_limits<std::streamsize>::max()))
-  {
-    return "The `bufferSize` parameter was too large to be stored in an std::streamsize.";
-  }
-  MemoryStream stream(buffer, static_cast<std::streamsize>(bufferSize));
-  return readHeaderFromStream(stream, readSettings);
-}
-
-ErrorWithText Image::readFromStream(std::istream& input, const ReadSettings& readSettings)
-{
-  UNWRAP_ERROR(readHeaderFromStream(input, readSettings));
-
-  size_t validationInputSize = 0;
-  if(readSettings.validateInputSize)
-  {
-    const std::streampos initialPos = input.tellg();
-    input.seekg(0, std::ios_base::end);
-    const std::streampos endPos = input.tellg();
-    validationInputSize         = endPos - initialPos;
-    input.seekg(initialPos, std::ios_base::beg);
-  }
-
-  // Create a short alias for m_fileInfo
-  const FileInfo& i = m_fileInfo;
-
-  // Crop the output to fewer mips if readSettings.mips was specified
-  const uint32_t mipsInFile = m_numMips;
-  if(!readSettings.mips)
-  {
-    m_numMips = 1;
-  }
-
-  // Allocate space
+  // Build the subresource layout table.
   {
     size_t totalSubresources = 0;
     if(!checked_math::mul3(m_numFaces, m_numMips, m_numLayers, totalSubresources)
-       || totalSubresources > readSettings.maxSubresourceSizeBytes / sizeof(Subresource))
+       || totalSubresources > readSettings.maxSizeBytes / sizeof(Subresource))
     {
       return "This DDS file is too large: it had " + std::to_string(m_numFaces) + " faces, " + std::to_string(m_numMips)
              + " requested mips to read, and " + std::to_string(m_numLayers)
              + " elements. Their product, the number of subresources in the table of subresources, would require more than the reader's byte limit ("
-             + std::to_string(readSettings.maxSubresourceSizeBytes) + " bytes) to store.";
+             + std::to_string(readSettings.maxSizeBytes) + " bytes) to store.";
     }
     if(readSettings.validateInputSize && (totalSubresources + 7) / 8 > validationInputSize)
     {
@@ -1490,23 +1478,16 @@ ErrorWithText Image::readFromStream(std::istream& input, const ReadSettings& rea
              + " subresources, but the input was only " + std::to_string(validationInputSize)
              + " bytes long. This would not be possible even if the input was an array of 1x1 DXGI_FORMAT_A1 textures.";
     }
+    UNWRAP_ERROR(resizeVectorOrError(m_subresourceLayouts, totalSubresources));
   }
-  UNWRAP_ERROR(allocate(m_numMips, m_numLayers, m_numFaces));
 
-  // Precompute bitmasking weights, in case we use bitmasking.
-  std::array<BitmaskMultiplier, 4> bitmaskMults;
-  bitmaskMults[0] = getMultiplierFromChannelMask(i.ddsh.ddspf.dwRBitMask, i.bitmaskWasBumpDuDv);
-  bitmaskMults[1] = getMultiplierFromChannelMask(i.ddsh.ddspf.dwGBitMask, i.bitmaskWasBumpDuDv);
-  bitmaskMults[2] = getMultiplierFromChannelMask(i.ddsh.ddspf.dwBBitMask, i.bitmaskWasBumpDuDv);
-  bitmaskMults[3] = getMultiplierFromChannelMask(i.ddsh.ddspf.dwABitMask, i.bitmaskWasBumpDuDv);
-
-  // Iterate over images in the DDS file. Read those images we want to
-  // read and skip over the rest.
+  uint64_t fileOffset            = static_cast<uint64_t>(input.tellg() - startPos);
+  size_t   remainingBytesAllowed = readSettings.maxSizeBytes;
   for(uint32_t layer = 0; layer < m_numLayers; layer++)
   {
     for(uint32_t face = 0; face < m_numFaces; face++)
     {
-      for(uint32_t inputMip = 0; inputMip < mipsInFile; inputMip++)
+      for(uint32_t inputMip = 0; inputMip < m_numMips; inputMip++)
       {
         // Compute the size of this image
         const uint32_t mipWidth  = getWidth(inputMip);
@@ -1517,8 +1498,7 @@ ErrorWithText Image::readFromStream(std::istream& input, const ReadSettings& rea
         // directly from the format and size; it's hard for writers to get
         // that wrong. If there is no format, we use dwRGBBitCount here if it
         // is nonzero. If it's not there, use dwPitchOrLinearSize.
-        size_t   fileTexSize           = 0;
-        uint32_t bitmaskedBitsPerPixel = 0;
+        size_t fileTexSize = 0;
         if(!i.wasBitmasked && dxgiFormat != 0)
         {
           if(!dxgiExportSize(mipWidth, mipHeight, mipDepth, dxgiFormat, fileTexSize))
@@ -1530,8 +1510,8 @@ ErrorWithText Image::readFromStream(std::istream& input, const ReadSettings& rea
         }
         else if(i.ddsh.ddspf.dwRGBBitCount != 0)
         {
-          bitmaskedBitsPerPixel  = i.ddsh.ddspf.dwRGBBitCount;
-          size_t fileTexSizeBits = 0;
+          i.bitmaskedBitsPerPixel = i.ddsh.ddspf.dwRGBBitCount;
+          size_t fileTexSizeBits  = 0;
           if(!checked_math::mul4(i.ddsh.ddspf.dwRGBBitCount, mipWidth, mipHeight, mipDepth, fileTexSizeBits)
              || fileTexSizeBits > std::numeric_limits<size_t>::max() - 7)
           {
@@ -1551,14 +1531,23 @@ ErrorWithText Image::readFromStream(std::istream& input, const ReadSettings& rea
           {
             return "This file is probably not valid: it didn't seem to contain DXGI format information, and its dwRGBBitCount was 0. In this situation, dwPitchOrLinearSize should be the number of bits in each scanline of mip 0 - but it wasn't evenly divisible by mip 0's width.";
           }
-          bitmaskedBitsPerPixel = i.ddsh.dwPitchOrLinearSize / mip0Width;
-          const uint32_t pitch  = bitmaskedBitsPerPixel * mipWidth;
+          i.bitmaskedBitsPerPixel = i.ddsh.dwPitchOrLinearSize / mip0Width;
+          const uint32_t pitch    = i.bitmaskedBitsPerPixel * mipWidth;
           if(!checked_math::mul3(pitch, mipHeight, mipDepth, fileTexSize))
           {
             return "This file is probably not valid: mip " + std::to_string(inputMip) + " (" + std::to_string(mipWidth)
                    + " x " + std::to_string(mipHeight) + " x " + std::to_string(mipDepth)
                    + ", pitch == " + std::to_string(pitch) + " had more bytes than would fit in a size_t.";
           }
+        }
+
+        // Compute the size of the output data.
+        size_t outputTexSize = fileTexSize;
+        if(i.wasBitmasked && !dxgiExportSize(mipWidth, mipHeight, mipDepth, dxgiFormat, outputTexSize))
+        {
+          return "This file was bitmasked and would have been decompressed to DXGI format " + std::to_string(dxgiFormat)
+                 + ", but the size of mip " + std::to_string(inputMip) + " (" + std::to_string(mipWidth) + " x "
+                 + std::to_string(mipHeight) + " x " + std::to_string(mipDepth) + ") with that format couldn't be determined.";
         }
 
         // Regardless of what we wind up with, a texture size of 0 is bad.
@@ -1579,12 +1568,14 @@ ErrorWithText Image::readFromStream(std::istream& input, const ReadSettings& rea
                  + " would contain using the largest DDS format, RGBA32F (which uses 16 bytes per pixel). Is a DDS format missing from the header of this file?";
         }
         // Or impermissibly large.
-        if(fileTexSize > readSettings.maxSubresourceSizeBytes)
         {
-          return "Mip " + std::to_string(inputMip) + " (" + std::to_string(mipWidth) + " x " + std::to_string(mipHeight)
-                 + " x " + std::to_string(mipDepth) + ") had more bytes (" + std::to_string(fileTexSize)
-                 + ") than the maximum allowed in the DDS reader's parameters ("
-                 + std::to_string(readSettings.maxSubresourceSizeBytes) + ").";
+          const size_t limiter = std::max(fileTexSize, outputTexSize);
+          if(remainingBytesAllowed < limiter)
+          {
+            return "This file would use more bytes than the maximum allowed in the DDS reader's parameters ("
+                   + std::to_string(readSettings.maxSizeBytes) + ").";
+          }
+          remainingBytesAllowed -= limiter;
         }
         // Additionally, if we're reading mip 0, double-check that the file can
         // reasonably contain at least mip 0's data.
@@ -1595,18 +1586,97 @@ ErrorWithText Image::readFromStream(std::istream& input, const ReadSettings& rea
                  + " faces, but the input is only " + std::to_string(validationInputSize) + " bytes long.";
         }
 
-        const bool readData = (inputMip < m_numMips);
-        if(!readData)
+        subresourceLayout(inputMip, layer, face) =
+            SubresourceLayout{.fileOffset = fileOffset, .fileByteSize = fileTexSize, .uncompressedByteSize = outputTexSize};
+
+        fileOffset += fileTexSize;
+      }
+    }
+  }
+
+  return {};
+}
+
+ErrorWithText Image::readSubresourcesFromStream(std::istream& input, const SubresourceRange& range, SubresourceTarget* outSubresources)
+{
+  // The app could have given us incorrect `range` and `outSubresources`,
+  // so check them against what we know.
+  {
+    if(range.numMips == 0 || range.numLayers == 0 || range.numFaces == 0)
+    {
+      return {};  // Nothing to do
+    }
+
+    if(!outSubresources)
+    {
+      return "`outSubresources` was null.";
+    }
+
+    if(range.firstMip > m_numMips || range.numMips > m_numMips - range.firstMip)
+    {
+      return "Requested range is out-of-bounds (requested " + std::to_string(range.numMips) + " starting at mip "
+             + std::to_string(range.firstMip) + ", but the image only contains " + std::to_string(m_numMips) + " mips).";
+    }
+
+    if(range.firstLayer > m_numLayers || range.numLayers > m_numLayers - range.firstLayer)
+    {
+      return "Requested range is out-of-bounds (requested " + std::to_string(range.numLayers) + " starting at layer "
+             + std::to_string(range.firstLayer) + ", but the image only contains " + std::to_string(m_numLayers) + " layers).";
+    }
+
+    if(range.firstFace > m_numFaces || range.numFaces > m_numFaces - range.firstFace)
+    {
+      return "Requested range is out-of-bounds (requested " + std::to_string(range.numFaces) + " starting at face "
+             + std::to_string(range.firstFace) + ", but the image only contains " + std::to_string(m_numFaces) + " faces).";
+    }
+  }
+
+  // Ok, now we read normally!
+  const std::streampos startPos = input.tellg();
+
+  // Create a short alias for m_fileInfo
+  const FileInfo& i = m_fileInfo;
+
+  // Precompute bitmasking weights, in case we use bitmasking.
+  std::array<BitmaskMultiplier, 4> bitmaskMults;
+  bitmaskMults[0] = getMultiplierFromChannelMask(i.ddsh.ddspf.dwRBitMask, i.bitmaskWasBumpDuDv);
+  bitmaskMults[1] = getMultiplierFromChannelMask(i.ddsh.ddspf.dwGBitMask, i.bitmaskWasBumpDuDv);
+  bitmaskMults[2] = getMultiplierFromChannelMask(i.ddsh.ddspf.dwBBitMask, i.bitmaskWasBumpDuDv);
+  bitmaskMults[3] = getMultiplierFromChannelMask(i.ddsh.ddspf.dwABitMask, i.bitmaskWasBumpDuDv);
+
+  // Iterate over images we want to read.
+  for(uint32_t layer = range.firstLayer; layer < range.firstLayer + range.numLayers; layer++)
+  {
+    for(uint32_t face = range.firstFace; face < range.firstFace + range.numFaces; face++)
+    {
+      for(uint32_t mip = range.firstMip; mip < range.firstMip + range.numMips; mip++)
+      {
+        const SubresourceLayout& source = getSubresourceLayout(mip, layer, face);
+
+        const size_t outSubresourceIdx =
+            (size_t(mip - range.firstMip) * range.numLayers + (layer - range.firstLayer)) * range.numFaces
+            + (face - range.firstFace);
+        SubresourceTarget& target = outSubresources[outSubresourceIdx];
+
+        // Make sure the target is valid:
+        if(!target.data)
         {
-          // Just go to the next image.
-          if(!input.seekg(static_cast<std::streamoff>(fileTexSize), std::ios::cur))
-          {
-            return "Seeking to an image in a DDS input failed. Is the input truncated?";
-          }
-          continue;
+          return "outSubresources[" + std::to_string(outSubresourceIdx) + "].data was null.";
+        }
+        if(target.capacityInBytes < source.uncompressedByteSize)
+        {
+          return "outSubresources[" + std::to_string(outSubresourceIdx) + "] was too small to contain the "
+                 + std::to_string(source.uncompressedByteSize) + " bytes of data for mip " + std::to_string(mip)
+                 + ", layer " + std::to_string(layer) + ", face " + std::to_string(face) + ".";
         }
 
-        Subresource& resource = subresource(inputMip, layer, face);
+        // Seek to where this subresource is in the file:
+        if(!input.seekg(source.fileOffset + startPos, std::ios::beg))
+        {
+          return "Seeking to the start of mip " + std::to_string(mip) + ", layer " + std::to_string(layer) + ", face "
+                 + std::to_string(face) + " failed! Is the file truncated?";
+        }
+
         if(i.wasBitmasked)
         {
           // Read old-style DDS format from bitmasks.
@@ -1618,33 +1688,19 @@ ErrorWithText Image::readFromStream(std::istream& input, const ReadSettings& rea
           // across boundaries. (This is because if we read at a bit offset of
           // 1, we'll read 31 bits from bytes 0-3, and load in 1 bit from bytes
           // 4-7.)
-          if(fileTexSize > std::numeric_limits<size_t>::max() - 7)
+          if(source.fileByteSize > std::numeric_limits<size_t>::max() - 7)
           {
-            return "This file is probably not valid: mip " + std::to_string(inputMip)
+            return "This file is probably not valid: mip " + std::to_string(mip)
                    + " declared it contained so much data that if 7 more bytes were added, its size would overflow a size_t.";
           }
           std::vector<uint8_t> fileData;
-          UNWRAP_ERROR(resizeVectorOrError(fileData, fileTexSize + 7));
-          if(!input.read(reinterpret_cast<char*>(fileData.data()), static_cast<std::streamsize>(fileTexSize)))
+          UNWRAP_ERROR(resizeVectorOrError(fileData, source.fileByteSize + 7));
+          if(!input.read(reinterpret_cast<char*>(fileData.data()), static_cast<std::streamsize>(source.fileByteSize)))
           {
             return "Reading bitmasked data for an image in a DDS input failed. Is the input truncated?";
           }
 
-          // Before we allocate data for the output, make sure it's also not
-          // too large.
-          assert(dxgiFormat == DXGI_FORMAT_R8G8B8A8_UNORM || dxgiFormat == DXGI_FORMAT_R32G32B32A32_FLOAT);
-          size_t outputTexSize = 0;
-          if(!dxgiExportSize(mipWidth, mipHeight, mipDepth, dxgiFormat, outputTexSize) || outputTexSize > readSettings.maxSubresourceSizeBytes)
-          {
-            return "Mip " + std::to_string(inputMip) + " (" + std::to_string(mipWidth) + " x " + std::to_string(mipHeight)
-                   + " x " + std::to_string(mipDepth) + ") was bitmasked and would have been decompressed to DXGI format "
-                   + std::to_string(dxgiFormat) + "; that would have used more bytes than the maximum allowed in the DDS reader's parameters ("
-                   + std::to_string(readSettings.maxSubresourceSizeBytes) + ").";
-          }
-
-          // Allocate the output:
-          UNWRAP_ERROR(resource.create(outputTexSize, nullptr));
-          char* outputData = resource.data.data();
+          char* outputData = reinterpret_cast<char*>(target.data);
 
           // Now iterate over pixels:
           size_t          bitPosition   = 0;
@@ -1652,6 +1708,10 @@ ErrorWithText Image::readFromStream(std::istream& input, const ReadSettings& rea
           const uint32_t* fileDataBuf32 = reinterpret_cast<uint32_t*>(fileData.data());
 
           std::array<float, 4> pixel = {0.0F, 0.0F, 0.0F, 1.0F};
+
+          const uint32_t mipWidth  = getWidth(mip);
+          const uint32_t mipHeight = getHeight(mip);
+          const uint32_t mipDepth  = getDepth(mip);
 
           for(size_t z = 0; z < mipDepth; ++z)
           {
@@ -1710,7 +1770,7 @@ ErrorWithText Image::readFromStream(std::istream& input, const ReadSettings& rea
                   }
                 }
 
-                bitPosition += bitmaskedBitsPerPixel;
+                bitPosition += i.bitmaskedBitsPerPixel;
                 pixelIdx++;
               }
             }
@@ -1720,8 +1780,7 @@ ErrorWithText Image::readFromStream(std::istream& input, const ReadSettings& rea
         {
           // Fast path: not bitmasked; read it directly from the input into
           // the subresource.
-          UNWRAP_ERROR(resource.create(fileTexSize, nullptr));
-          if(!input.read(resource.data.data(), static_cast<std::streamsize>(fileTexSize)))
+          if(!input.read(reinterpret_cast<char*>(target.data), static_cast<std::streamsize>(source.fileByteSize)))
           {
             return "Copying data for an image in a DDS input failed. Is the input truncated?";
           }
@@ -1730,6 +1789,97 @@ ErrorWithText Image::readFromStream(std::istream& input, const ReadSettings& rea
     }
   }
   return {};  // Success!
+}
+
+ErrorWithText Image::readFromStream(std::istream& input, const ReadSettings& readSettings)
+{
+  const std::streampos startPos = input.tellg();
+
+  UNWRAP_ERROR(readHeaderFromStream(input, readSettings));
+
+  // In the high-level API, we write to our own subresource buffer. Set that up:
+  if(!readSettings.mips)
+  {
+    m_numMips = 1;  // This is valid because of the mip-major layout of m_subresourceLayouts
+  }
+  UNWRAP_ERROR(allocate(m_numMips, m_numLayers, m_numFaces));
+
+  const SubresourceRange readRange{.numMips = m_numMips, .numLayers = m_numLayers, .numFaces = m_numFaces};
+
+  std::vector<SubresourceTarget> targets;
+  UNWRAP_ERROR(resizeVectorOrError(targets, m_data.size()));
+  size_t subresourceIdx = 0;
+  for(uint32_t mip = 0; mip < m_numMips; mip++)
+  {
+    for(uint32_t layer = 0; layer < m_numLayers; layer++)
+    {
+      for(uint32_t face = 0; face < m_numFaces; face++)
+      {
+        Subresource& dst = subresource(mip, layer, face);
+        UNWRAP_ERROR(dst.create(getSubresourceLayout(mip, layer, face).uncompressedByteSize, nullptr));
+        targets[subresourceIdx] = SubresourceTarget{.data = dst.data.data(), .capacityInBytes = dst.data.size()};
+        subresourceIdx++;
+      }
+    }
+  }
+
+  // Rewind to where we started, then read the contents:
+  input.seekg(startPos, std::ios::beg);
+  return readSubresourcesFromStream(input, readRange, targets.data());
+}
+
+ErrorWithText Image::readHeaderFromFile(const char* filename, const ReadSettings& readSettings)
+{
+  try
+  {
+    std::ifstream file(filename, std::ios::binary | std::ios::in);
+    return readHeaderFromStream(file, readSettings);
+  }
+  catch(const std::exception& e)
+  {
+    return "I/O error opening " + std::string(filename) + ": " + std::string(e.what());
+  }
+}
+
+ErrorWithText Image::readHeaderFromMemory(const char* buffer, size_t bufferSize, const ReadSettings& readSettings)
+{
+  if(!buffer)
+  {
+    return "`buffer` was null.";
+  }
+  if(bufferSize > static_cast<size_t>(std::numeric_limits<std::streamsize>::max()))
+  {
+    return "The `bufferSize` parameter was too large to be stored in an std::streamsize.";
+  }
+  MemoryStream stream(buffer, static_cast<std::streamsize>(bufferSize));
+  return readHeaderFromStream(stream, readSettings);
+}
+
+ErrorWithText Image::readSubresourcesFromFile(const char* filename, const SubresourceRange& range, SubresourceTarget* outSubresources)
+{
+  try
+  {
+    std::ifstream file(filename, std::ios::binary | std::ios::in);
+    return readSubresourcesFromStream(file, range, outSubresources);
+  }
+  catch(const std::exception& e)
+  {
+    return "I/O error opening " + std::string(filename) + ": " + std::string(e.what());
+  }
+}
+
+ErrorWithText Image::readSubresourcesFromMemory(const char* buffer, size_t bufferSize, const SubresourceRange& range, SubresourceTarget* outSubresources)
+{
+  if(!buffer)
+  {
+    return "`buffer` was null.";
+  }
+  if(bufferSize > static_cast<size_t>(std::numeric_limits<std::streamsize>::max()))
+  {
+    return "The `bufferSize` parameter was too large to be stored in an std::streamsize.";
+  }
+  MemoryStream stream(buffer, static_cast<std::streamsize>(bufferSize));
+  return readSubresourcesFromStream(stream, range, outSubresources);
 }
 
 ErrorWithText Image::readFromFile(const char* filename, const ReadSettings& readSettings)
@@ -1747,6 +1897,10 @@ ErrorWithText Image::readFromFile(const char* filename, const ReadSettings& read
 
 ErrorWithText Image::readFromMemory(const char* buffer, size_t bufferSize, const ReadSettings& readSettings)
 {
+  if(!buffer)
+  {
+    return "`buffer` was null.";
+  }
   if(bufferSize > static_cast<size_t>(std::numeric_limits<std::streamsize>::max()))
   {
     return "The `bufferSize` parameter was too large to be stored in an std::streamsize.";
@@ -1844,7 +1998,7 @@ ErrorWithText Image::writeToStream(std::ostream& output, const WriteSettings& wr
   // can tell that they're reading files written with the newest version of
   // NVDDS.
   header.dwReserved1[9]  = FOURCC_LIBRARY_NVPS;
-  header.dwReserved1[10] = (2 << 16) | (1 << 8) | 2;
+  header.dwReserved1[10] = (2 << 16) | (2 << 8) | 0;
 
   //---------------------------------------------------------------------------
   // DDS Pixel Format

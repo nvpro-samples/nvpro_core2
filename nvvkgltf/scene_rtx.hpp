@@ -69,6 +69,9 @@ public:
   // Return the constructed acceleration structure
   VkAccelerationStructureKHR tlas();
 
+  // Return the constructed acceleration structure
+  const nvvk::AccelerationStructure& tlasAccel() const { return m_tlasAccel; }
+
   // Destroy all acceleration structures
   void destroy();
   void destroyScratchBuffers();

@@ -19,7 +19,7 @@
 
 /*-----------------------------------------------------------------------------
  
-nv_ktx 1.1.0
+nv_ktx 2.0.0
 
 This is a mostly self-contained reader and writer for KTX2 files and reader
 for KTX1 files. It only relies on Vulkan (for KTX2), GL (for KTX1), and the
@@ -31,6 +31,18 @@ Define `NVP_SUPPORTS_ZSTD`, `NVP_SUPPORTS_GZLIB`, and `NVP_SUPPORTS_BASISU` to
 include the Zstd, Zlib, and Basis Universal headers respectively, and to
 enable reading these formats. This will also enable writing Zstd and
 Basis Universal-compressed formats.
+
+Changelog for nv_ktx 2.0.0:
+- Adds functions that let you read only the header, so you can copy data
+directly to the GPU or even potentially undo supercompression there.
+- [API break] WriteSupercompressionType and KTXImage::InputSupercompression
+are now SupercompressionScheme. In particular, KTXImage::input_supercompression
+is now in the read-only KTXImage::getFileInfo()::supercompression_scheme.
+- [API break] getKTXVersion() is now in the read-only KTXImage::getFileInfo().
+- [API break] ReadSettings::max_resource_size_in_bytes has been replaced by
+ReadSettings::max_size_in_bytes, which limits the total uncompressed size of
+all subresources together. This protects against resource exhaustion attacks
+when there are many subresources.
 
 -----------------------------------------------------------------------------*/
 
@@ -76,27 +88,39 @@ struct ReadSettings
   // byte per subresource. This will involve seeking to the end of the stream
   // to determine the length of the stream or file.
   bool validate_input_size = true;
-  // Limits the maximum uncompressed image size size per mip and
-  // supercompression global data size in bytes; produces errors for any files
-  // with a larger size. This allows certain types of issues with
-  // supercompression to be caught before the rest of the file is loaded. If
-  // one wants to allow larger images, they should set this to a larger value
-  // (such as UINT64_MAX).
-  uint64_t max_resource_size_in_bytes = 1ULL << 30;
+  // Limits the maximum total uncompressed image size and supercompression
+  // global data size in bytes; produces errors for any files with a larger size.
+  size_t max_size_in_bytes = size_t(1) << 30;
   // By default, UASTC is transcoded to BC7 instead of ASTC. Setting this to
   // true will transcode UASTC to ASTC.
   bool device_supports_astc = false;
 };
 
-enum class WriteSupercompressionType
+// Names for the KTX2 supercompression schemes
+// (so you don't need to use the raw values from
+// https://registry.khronos.org/KTX/specs/2.0/ktxspec.v2.html#_supercompressionscheme )
+enum class SupercompressionScheme : uint32_t
 {
-  NONE,  // Apply no supercompression, or use the supercompression included with ETC1S.
-  ZSTD,  // ZStandard
+  eNone    = 0,  // Apply no supercompression.
+  eBasisLZ = 1,  // UASTC or ETC1S.
+  eZstd    = 2,  // Zstandard.
+  eZlib    = 3,  // Zlib.
+};
+
+// Describes the four valid combinations of ETC1S slices in the KTX2
+// specification. These are listed in the order they appear there.
+enum class ETC1SCombination
+{
+  RGB,   // One slice, RGB
+  RGBA,  // Two slices, RGB + AAA
+  R,     // One slice, RRR
+  RG     // Two slices, RRR + GGG
 };
 
 enum class EncodeRGBA8ToFormat
 {
   NO,  // Don't encode the data to a Basis Universal format.
+  // Note that an option other than NO overrides the SupercompressionType when writing.
   // For the following modes, the image format must be VK_FORMAT_B8G8R8A8_SRGB
   // or VK_FORMAT_B8G8R8A8_UNORM. Basis Universal will then be called to encode
   // the data and write the KTX2 file.
@@ -119,7 +143,7 @@ enum class UASTCEncodingQuality
 struct WriteSettings
 {
   // Type of supercompression to apply if any
-  WriteSupercompressionType supercompression = WriteSupercompressionType::NONE;
+  SupercompressionScheme supercompression = SupercompressionScheme::eNone;
   // Supercompression quality level for Zstandard, which is supported by all
   // formats other than ETC1s. This ranges from ZSTD_minCLevel() to
   // ZSTD_maxCLevel().
@@ -153,13 +177,52 @@ enum class KTX_SWIZZLE
   A
 };
 
-// Represents the inflated contents of a KTX or KTX2 file. This includes:
-// - the VkFormat of the image data,
-// - the formatted (i.e. encoded/compressed) image data for
-// each element, mip level, and face,
-// - and the table of key/value pairs.
-// The stored data is not supercompressed, as we supercompress and inflate when
-// writing and reading to and from KTX files.
+// A range of subresources given by their mips, layers, and faces.
+struct SubresourceRange
+{
+  uint32_t firstMip   = 0;
+  uint32_t numMips    = 1;
+  uint32_t firstLayer = 0;
+  uint32_t numLayers  = 1;
+  uint32_t firstFace  = 0;
+  uint32_t numFaces   = 1;
+};
+
+// For each subresource, lists its position/layout info.
+// Also matches the byte layout of a KTX2 level index.
+struct SubresourceLayout
+{
+  // These two parameters specify the start and length of bytes, relative to
+  // the start of the file, containing the (possibly supercompressed) data
+  // for this resource.
+  // This is mainly useful when there's no supercompression, because it tells
+  // you where to memcpy each subresource from. In the special cases of ZSTD
+  // and ZLIB supercompression, which apply compression to entire mip levels,
+  // this spans the entire mip's data.
+  uint64_t fileOffset{};
+  uint64_t fileByteSize{};
+  // The size in bytes of a single subresource, after undoing any
+  // supercompression. All subresources within a mip have the same size.
+  uint64_t uncompressedByteSize{};
+};
+
+// Where data for a subresource should be copied to, when using
+// readSubresources*().
+struct SubresourceTarget
+{
+  // The first byte of the target buffer.
+  void* data = nullptr;
+  // The size of the target buffer, so readSubresources*() can make sure it's
+  // large enough.
+  size_t capacityInBytes = 0;
+};
+
+// Represents a KTX or KTX2 file. This includes:
+// - header information like the VkFormat of the image data,
+// - the table of key/value pairs,
+// - and optionally the formatted (i.e. encoded/compressed, but not
+// supercompressed -- we supercompress data when reading from/writing to files)
+// image data for each mip level, array element, and face.
 struct KTXImage
 {
 public:
@@ -185,16 +248,13 @@ public:
       // The number of faces in the image (1 for a 2D texture, 6 for a cube map)
       uint32_t _num_faces = 1);
 
-  // Clears all stored image and table data.
+  // Clears all stored image data.
   void clear();
 
   // Determines the VkImageType corresponding to this KTXImage based on the
   // dimensions, according to Table 4.1 of the KTX 2.0 specification.
   // In the invalid case where mip_0_width == 0, returns VK_IMAGE_TYPE_1D.
   VkImageType getImageType() const;
-
-  // Returns whether the loaded file was a KTX1 (1) or KTX2 (2) file.
-  uint32_t getKTXVersion() const;
 
   // Mutably accesses the subresource at the given mip, layer, and face. If the
   // given indices are out of range, throws an std::out_of_range exception.
@@ -203,11 +263,11 @@ public:
   // Reads this structure from a KTX stream, advancing the stream as well.
   // Returns an optional error message if the read failed.
   ErrorWithText readFromStream(std::istream&       input,          // The input stream, at the start of the KTX data
-                               const ReadSettings& readSettings);  // Settings for the reader
+                               const ReadSettings& readSettings);  // Settings for the reader.
 
   // Wrapper for readFromStream for a filename.
   ErrorWithText readFromFile(const char*         filename,       // The .ktx or .ktx2 file to read from.
-                             const ReadSettings& readSettings);  // Settings for the reader
+                             const ReadSettings& readSettings);  // Settings for the reader.
 
   // Wrapper for readFromStream for a buffer in memory.
   ErrorWithText readFromMemory(const char*         buffer,         // The buffer in memory.
@@ -216,14 +276,106 @@ public:
 
   // Writes this structure in KTX2 format to a stream.
   ErrorWithText writeKTX2Stream(std::ostream&        output,  // The output stream, at the point to start writing
-                                const WriteSettings& writeSettings);  // Settings for the writer
+                                const WriteSettings& writeSettings);  // Settings for the writer.
 
   // Wrapper for writeKTX2Stream for a filename. Customarily, the filename ends
   // in .ktx2.
   ErrorWithText writeKTX2File(const char*          filename,        // The output stream, at the point to start writing
-                              const WriteSettings& writeSettings);  // Settings for the writer
+                              const WriteSettings& writeSettings);  // Settings for the writer.
+
+  // Read-only info from the file header.
+  struct FileInfo
+  {
+    // Whether the loaded file was a KTX1 (1) or KTX2 (2) file.
+    uint32_t read_ktx_version = 1;
+    // The KTX2 supercompression scheme and supercompression global data.
+    // This should be one of the values from SupercompressionType,
+    // unless the file used something new.
+    uint32_t ktx2_supercompression_scheme = 0;
+    uint64_t ktx2_global_data_offset      = 0;
+    uint64_t ktx2_global_data_byte_size   = 0;
+    // KTX2 Basis ETC1S textures can have 1 or 2 slices:
+    size_t           ktx2_basis_etc1s_num_slices  = 1;
+    ETC1SCombination ktx2_basis_etc1s_combination = {};
+    // The KTX2 Khronos Data Format color model. This is mainly important for
+    // the cases 163 (ETC1S) and 166 (UASTC).
+    uint8_t ktx2_color_model = 0;
+    // KTX1 data might be encoded in a way that requires you to swap element
+    // endianness.
+    // These two fields contain the info you need to do the swap yourself:
+    // Whether the KTX1 data is endian swapped relative to this system:
+    bool ktx1_needs_endian_swap = false;
+    // KTX1 endian swap element size (glTypeSize from the header).
+    uint32_t ktx1_gl_type_size = 0;
+  };
+
+  const FileInfo& getFileInfo() const { return m_file_info; }
+
+  //---------------------------------------------------------------------------
+  // We also provide a lower-level API where you can read the file header
+  // and then copy/decompress subresources however you want (e.g. copying
+  // data directly from a memory-mapped file to GPU memory if the file doesn't
+  // use supercompression, or even inflate data on the GPU).
+
+  // Reads only the header of a KTX stream (does not read textures), advancing
+  // the stream as well. Returns an optional error message if the read failed.
+  // This is useful if your code can copy non-supercompressed textures
+  // directly to GPU memory.
+  ErrorWithText readHeaderFromStream(std::istream&       input,  // The input stream, at the start of the KTX data
+                                     const ReadSettings& readSettings);  // Settings for the reader.
+
+  // Wrapper for readHeaderFromStream for a filename.
+  ErrorWithText readHeaderFromFile(const char*         filename,       // The .ktx or .ktx2 file to read from.
+                                   const ReadSettings& readSettings);  // Settings for the reader.
+
+  // Wrapper for readHeaderFromStream for a buffer in memory.
+  ErrorWithText readHeaderFromMemory(const char*         buffer,         // The buffer in memory.
+                                     size_t              bufferSize,     // Its length in bytes.
+                                     const ReadSettings& readSettings);  // Settings for the reader.
+
+  // Returns whether subresources within the file require additional steps
+  // (e.g. KTX2 supercompression inflation or KTX1 endian swapping) before they
+  // can be used as subresources of the KTX file's `format` on a GPU.
+  bool requiresComplexDecoding() const;
+
+  // Returns where a subresource's (possibly supercompressed) data exists in the file.
+  const SubresourceLayout& getSubresourceLayout(uint32_t mip, uint32_t layer, uint32_t face) const;
+
+  // Returns the number of bytes for a single subresource within a single mip,
+  // without supercompression.
+  size_t getSubresourceByteSize(uint32_t mip) const { return getSubresourceLayout(mip, 0, 0).uncompressedByteSize; }
+
+  // Returns the total number of bytes required to store all the subresources
+  // within the given range, assuming there's no padding between them, without supercompression.
+  // `range` must be in-bounds, and the calculation assumes size_t
+  // does not overflow.
+  size_t getSubresourceByteSizeSum(const SubresourceRange& range) const;
+
+  // Returns the total number of bytes required to store all the subresources
+  // within a given mip, assuming there's no padding between them, without supercompression.
+  // `getSubresourceByteLengthSum` is more flexible, but this is the usual use case.
+  size_t getMipByteSizeSum(uint32_t mip) const;
+
+  // Given a stream set to the start of a KTX file (i.e. at the start of the
+  // 12-byte magic number), extracts the subresources within the range of
+  // mips, layers, and faces given by `range`, inflating any supercompression,
+  // and writes each one to the corresponding SubresourceTarget.
+  //
+  // `outSubresources` must be in [mip, layer, face] order; i.e. it must be
+  // an array of length `range.numMips * range.numLayers * range.numFaces`,
+  // and the data for the subresource at mip `range.firstMip + i`,
+  // layer `range.firstLayer + j`, face `range.firstFace + k` will be inflated
+  // to outSubresources[(i * range.numLayers + j) * range.numFaces + k].
+  ErrorWithText readSubresourcesFromStream(std::istream& input, const SubresourceRange& range, SubresourceTarget* outSubresources);
+
+  // Wrapper for readSubresourcesFromStream for a file.
+  ErrorWithText readSubresourcesFromFile(const char* filename, const SubresourceRange& range, SubresourceTarget* outSubresources);
+
+  // Wrapper for readSubresourcesFromStream for a buffer in memory.
+  ErrorWithText readSubresourcesFromMemory(const char* buffer, size_t bufferSize, const SubresourceRange& range, SubresourceTarget* outSubresources);
 
 public:
+  //---------------------------------------------------------------------------
   // These members can be freely modified.
 
   // The format of the data in this image. When reading a KTX1 file (which
@@ -278,31 +430,24 @@ public:
   // ktxSwizzle key! This is to make Basis Universal usage easier in the future.
   std::array<KTX_SWIZZLE, 4> swizzle = {KTX_SWIZZLE::R, KTX_SWIZZLE::G, KTX_SWIZZLE::B, KTX_SWIZZLE::A};
 
-  // The loader will transcode supercompressed files to an appropriate format
-  // when supercompression libraries are available, so a loaded supercompressed
-  // file typically looks like a regular BC4, BC7 or ASTC file. One can read
-  // this field to determine what the original supercompressed format was.
-  enum class InputSupercompression
-  {
-    eNone,
-    eBasisUASTC,
-    eBasisETC1S
-  } input_supercompression = InputSupercompression::eNone;
-
 private:
-  // Private functions used by readFromStream after it determines whether the
-  // stream is a KTX1 or KTX2 stream.
-  ErrorWithText readFromKTX1Stream(std::istream& input, const ReadSettings& readSettings);
-  ErrorWithText readFromKTX2Stream(std::istream& input, const ReadSettings& readSettings);
+  // Internal functions.
+  SubresourceLayout& subresourceLayout(uint32_t mip, uint32_t layer, uint32_t face);
 
-  // Whether the loaded file was a KTX1 (1) or KTX2 (2) file.
-  uint32_t read_ktx_version = 1;
+  ErrorWithText readHeaderFromKTX1Stream(std::istream& input, const ReadSettings& readSettings);
+  ErrorWithText readSubresourcesFromKTX1Stream(std::istream& input, const SubresourceRange& range, SubresourceTarget* outSubresources);
+
+  ErrorWithText readHeaderFromKTX2Stream(std::istream& input, const ReadSettings& readSettings);
+  ErrorWithText readSubresourcesFromKTX2Stream(std::istream& input, const SubresourceRange& range, SubresourceTarget* outSubresources);
 
 private:
   // A structure containing all the image's encoded, non-supercompressed
   // image data. We store this in a buffer with an entry per subresource, and
   // provide accessors to it.
-  std::vector<std::vector<char>> data;
+  std::vector<std::vector<char>> m_data;
+  std::vector<SubresourceLayout> m_level_indices;
+  std::vector<SubresourceLayout> m_subresource_layouts;
+  FileInfo                       m_file_info{};
 };
 
 }  // namespace nv_ktx

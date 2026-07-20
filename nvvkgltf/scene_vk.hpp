@@ -64,6 +64,11 @@ struct SkinningWorkspace
   void clear();
 };
 
+// Translate a glTF sampler (model.samplers[samplerIndex]) into a VkSamplerCreateInfo.
+// Pass samplerIndex < 0 to get the default sampler (linear/linear, repeat wrapping).
+// Exposed so bindless renderers can build their own sampler heap from the scene's samplers.
+VkSamplerCreateInfo getVkSamplerCreateInfo(const tinygltf::Model& model, int samplerIndex);
+
 // Create the Vulkan version of the Scene
 // Allocate the buffers, etc.
 class SceneVk

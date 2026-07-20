@@ -364,6 +364,52 @@ bool IDPool::isRangeAvailable(uint32_t searchCount) const
   return false;
 }
 
+void IDPool::getUsedBounds(uint32_t& frontUsedEnd, uint32_t& backUsedBegin) const
+{
+  const uint32_t poolSize = m_maxID + 1;
+
+  // No IDs in use: the whole pool is a single free gap.
+  if(m_usedIDs == 0)
+  {
+    frontUsedEnd  = 0;
+    backUsedBegin = poolSize;
+    return;
+  }
+
+  // Pick the widest valid free range as the divider between the front- and
+  // back-allocated regions. Any smaller free holes remain inside one of the
+  // regions and are simply scanned as empty slots by the caller, so coverage of
+  // all in-use IDs is preserved even when allocations are fragmented.
+  uint32_t bestFirst = 0;
+  uint32_t bestLast  = 0;
+  uint32_t bestLen   = 0;
+  for(uint32_t i = 0; i < m_count; i++)
+  {
+    // Skip sentinel/exhausted ranges, which encode emptiness as first > last.
+    if(m_ranges[i].first > m_ranges[i].last)
+      continue;
+
+    const uint32_t len = m_ranges[i].last - m_ranges[i].first + 1;
+    if(len > bestLen)
+    {
+      bestLen   = len;
+      bestFirst = m_ranges[i].first;
+      bestLast  = m_ranges[i].last;
+    }
+  }
+
+  // Pool full: no free gap. Treat the entire pool as the front region.
+  if(bestLen == 0)
+  {
+    frontUsedEnd  = poolSize;
+    backUsedBegin = poolSize;
+    return;
+  }
+
+  frontUsedEnd  = bestFirst;
+  backUsedBegin = bestLast + 1;
+}
+
 void IDPool::printRanges() const
 {
   uint32_t i = 0;

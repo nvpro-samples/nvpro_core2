@@ -456,19 +456,15 @@ void ElementGpuMonitor::imguiDeviceInfo(uint32_t deviceIndex)
     imguiNvmlField(deviceInfo.computeMode, "Compute mode");
 
 
-    imguiNvmlField(deviceInfo.clockDefaultGraphics, "Default clock graphics", "MHz");
     imguiNvmlField(deviceInfo.clockMaxGraphics, "Max clock graphics", "MHz");
     imguiNvmlField(deviceInfo.clockBoostGraphics, "Boost clock graphics", "MHz");
 
-    imguiNvmlField(deviceInfo.clockDefaultSM, "Default clock SM", "MHz");
     imguiNvmlField(deviceInfo.clockMaxSM, "Max clock SM", "MHz");
     imguiNvmlField(deviceInfo.clockBoostSM, "Boost clock SM", "MHz");
 
-    imguiNvmlField(deviceInfo.clockDefaultMem, "Default clock memory", "MHz");
     imguiNvmlField(deviceInfo.clockMaxMem, "Max clock memory", "MHz");
     imguiNvmlField(deviceInfo.clockBoostMem, "Boost clock memory", "MHz");
 
-    imguiNvmlField(deviceInfo.clockDefaultVideo, "Default clock video", "MHz");
     imguiNvmlField(deviceInfo.clockMaxVideo, "Max clock video", "MHz");
     imguiNvmlField(deviceInfo.clockBoostVideo, "Boost clock video", "MHz");
 

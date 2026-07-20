@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026 NVIDIA CORPORATION & AFFILIATES.
  * SPDX-License-Identifier: LicenseRef-NvidiaProprietary
  *
  * NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
@@ -81,11 +81,6 @@ public:
     NVMLField<int32_t>                                          computeCapabilityMinor;
     NVMLField<uint32_t>                                         pcieLinkGen;
     NVMLField<uint32_t>                                         pcieLinkWidth;
-
-    NVMLField<uint32_t> clockDefaultGraphics;
-    NVMLField<uint32_t> clockDefaultSM;
-    NVMLField<uint32_t> clockDefaultMem;
-    NVMLField<uint32_t> clockDefaultVideo;
 
     NVMLField<uint32_t> clockMaxGraphics;
     NVMLField<uint32_t> clockMaxSM;

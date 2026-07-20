@@ -181,9 +181,15 @@ VkResult DescriptorHeapWriter::writeSamplerDescriptor(const VkSamplerCreateInfo&
 }
 
 //--------------------------------------------------------------------------------------------------
-VkResult DescriptorHeapWriter::writeImageDescriptor(VkImage image, VkFormat format, VkImageLayout layout, void* dst, VkImageViewType viewType) const
+VkResult DescriptorHeapWriter::writeImageDescriptor(VkImage          image,
+                                                    VkFormat         format,
+                                                    VkImageLayout    layout,
+                                                    void*            dst,
+                                                    VkImageViewType  viewType,
+                                                    VkDescriptorType type) const
 {
   assert(m_device != nullptr && dst != nullptr);
+  assert(type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE || type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
 
   VkImageSubresourceRange subresourceRange{
       .aspectMask     = imageAspectMaskForFormat(format),
@@ -209,7 +215,7 @@ VkResult DescriptorHeapWriter::writeImageDescriptor(VkImage image, VkFormat form
 
   VkResourceDescriptorInfoEXT resInfo{
       .sType = VK_STRUCTURE_TYPE_RESOURCE_DESCRIPTOR_INFO_EXT,
-      .type  = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+      .type  = type,
       .data  = {.pImage = &imageDescInfo},
   };
 

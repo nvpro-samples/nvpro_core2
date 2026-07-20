@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025 NVIDIA CORPORATION & AFFILIATES.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026 NVIDIA CORPORATION & AFFILIATES.
  * SPDX-License-Identifier: LicenseRef-NvidiaProprietary
  *
  * NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
@@ -323,21 +323,15 @@ void NvmlMonitor::DeviceInfo::refresh(void* dev)
   CHECK_NVML_SUPPORT(nvmlDeviceGetCurrPcieLinkGeneration(device, &pcieLinkGen.get()), pcieLinkGen);
   CHECK_NVML_SUPPORT(nvmlDeviceGetCurrPcieLinkWidth(device, &pcieLinkWidth.get()), pcieLinkWidth);
 
-  CHECK_NVML_SUPPORT(nvmlDeviceGetDefaultApplicationsClock(device, NVML_CLOCK_GRAPHICS, &clockDefaultGraphics.get()),
-                     clockDefaultGraphics);
   CHECK_NVML_SUPPORT(nvmlDeviceGetMaxClockInfo(device, NVML_CLOCK_GRAPHICS, &clockMaxGraphics.get()), clockMaxGraphics);
   CHECK_NVML_SUPPORT(nvmlDeviceGetMaxCustomerBoostClock(device, NVML_CLOCK_GRAPHICS, &clockBoostGraphics.get()), clockBoostGraphics);
 
-
-  CHECK_NVML_SUPPORT(nvmlDeviceGetDefaultApplicationsClock(device, NVML_CLOCK_SM, &clockDefaultSM.get()), clockDefaultSM);
   CHECK_NVML_SUPPORT(nvmlDeviceGetMaxClockInfo(device, NVML_CLOCK_SM, &clockMaxSM.get()), clockMaxSM);
   CHECK_NVML_SUPPORT(nvmlDeviceGetMaxCustomerBoostClock(device, NVML_CLOCK_SM, &clockBoostSM.get()), clockBoostSM);
 
-  CHECK_NVML_SUPPORT(nvmlDeviceGetDefaultApplicationsClock(device, NVML_CLOCK_MEM, &clockDefaultMem.get()), clockDefaultMem);
   CHECK_NVML_SUPPORT(nvmlDeviceGetMaxClockInfo(device, NVML_CLOCK_MEM, &clockMaxMem.get()), clockMaxMem);
   CHECK_NVML_SUPPORT(nvmlDeviceGetMaxCustomerBoostClock(device, NVML_CLOCK_MEM, &clockBoostMem.get()), clockBoostMem);
 
-  CHECK_NVML_SUPPORT(nvmlDeviceGetDefaultApplicationsClock(device, NVML_CLOCK_VIDEO, &clockDefaultVideo.get()), clockDefaultVideo);
   CHECK_NVML_SUPPORT(nvmlDeviceGetMaxClockInfo(device, NVML_CLOCK_VIDEO, &clockMaxVideo.get()), clockMaxVideo);
   CHECK_NVML_SUPPORT(nvmlDeviceGetMaxCustomerBoostClock(device, NVML_CLOCK_VIDEO, &clockBoostVideo.get()), clockBoostVideo);
 
@@ -383,9 +377,15 @@ void NvmlMonitor::DeviceInfo::refresh(void* dev)
   deviceName.get().resize(NVML_DEVICE_NAME_V2_BUFFER_SIZE);
   CHECK_NVML_SUPPORT(nvmlDeviceGetName(device, deviceName.get().data(), static_cast<uint32_t>(deviceName.get().size())), deviceName);
 
-  CHECK_NVML_SUPPORT(nvmlDeviceGetSupportedClocksThrottleReasons(device, reinterpret_cast<long long unsigned int*>(
-                                                                             &supportedClocksThrottleReasons.get())),
-                     supportedClocksThrottleReasons);
+  {
+    unsigned long long tmp = 0;
+#ifdef nvmlClocksEventReasonGpuIdle
+    CHECK_NVML_SUPPORT(nvmlDeviceGetSupportedClocksEventReasons(device, &tmp), supportedClocksThrottleReasons);
+#else
+    CHECK_NVML_SUPPORT(nvmlDeviceGetSupportedClocksThrottleReasons(device, &tmp), supportedClocksThrottleReasons);
+#endif
+    supportedClocksThrottleReasons.get() = static_cast<uint64_t>(tmp);
+  }
 
   vbiosVersion.get().resize(NVML_DEVICE_VBIOS_VERSION_BUFFER_SIZE);
   CHECK_NVML_SUPPORT(
@@ -513,9 +513,15 @@ void NvmlMonitor::DevicePerformanceState::refresh(void* dev, uint32_t offset)
   CHECK_NVML_SUPPORT(nvmlDeviceGetClockInfo(device, NVML_CLOCK_MEM, &clockMem.get()[offset]), clockMem);
   CHECK_NVML_SUPPORT(nvmlDeviceGetClockInfo(device, NVML_CLOCK_VIDEO, &clockVideo.get()[offset]), clockVideo);
 
+#ifdef nvmlClocksEventReasonGpuIdle
+  CHECK_NVML_SUPPORT(
+      nvmlDeviceGetCurrentClocksEventReasons(device, reinterpret_cast<unsigned long long*>(&throttleReasons.get()[offset])),
+      throttleReasons);
+#else
   CHECK_NVML_SUPPORT(nvmlDeviceGetCurrentClocksThrottleReasons(device, reinterpret_cast<unsigned long long*>(
                                                                            &throttleReasons.get()[offset])),
                      throttleReasons);
+#endif
 #endif
 }
 
@@ -598,7 +604,17 @@ void NvmlMonitor::DevicePowerState::refresh(void* dev, uint32_t offset)
 #if defined(NVML_SUPPORTED)
   nvmlDevice_t device = reinterpret_cast<nvmlDevice_t>(dev);
 
+#ifdef nvmlTemperature_v1
+  {
+    nvmlTemperature_t tempInfo = {};
+    tempInfo.version           = nvmlTemperature_v1;
+    tempInfo.sensorType        = NVML_TEMPERATURE_GPU;
+    CHECK_NVML_SUPPORT(nvmlDeviceGetTemperatureV(device, &tempInfo), temperature);
+    temperature.get()[offset] = static_cast<uint32_t>(tempInfo.temperature);
+  }
+#else
   CHECK_NVML_SUPPORT(nvmlDeviceGetTemperature(device, NVML_TEMPERATURE_GPU, &temperature.get()[offset]), temperature);
+#endif
   CHECK_NVML_SUPPORT(nvmlDeviceGetPowerUsage(device, &power.get()[offset]), power);
   // Milliwatt to watt
   power.get()[offset] /= 1000;

@@ -296,12 +296,13 @@ void DescriptorHeap::markResourceBufferDirty(VkDeviceSize byteOffset, VkDeviceSi
 }
 
 //--------------------------------------------------------------------------------------------------
-VkResult DescriptorHeap::writeImageDescriptor(uint32_t        localImageIndex,
-                                              VkImage         image,
-                                              VkFormat        format,
-                                              VkImageLayout   layout,
-                                              void*           resourceHeapBase,
-                                              VkImageViewType viewType)
+VkResult DescriptorHeap::writeImageDescriptorRegion(uint32_t         localImageIndex,
+                                                    VkImage          image,
+                                                    VkFormat         format,
+                                                    VkImageLayout    layout,
+                                                    VkDescriptorType type,
+                                                    void*            resourceHeapBase,
+                                                    VkImageViewType  viewType)
 {
   assert(m_info.isInitialized());
   assert(localImageIndex < m_maxImages && "localImageIndex out of range");
@@ -314,13 +315,37 @@ VkResult DescriptorHeap::writeImageDescriptor(uint32_t        localImageIndex,
 
   const VkDeviceSize imgSize = m_info.imageDescriptorSize();
   void*              dst     = static_cast<uint8_t*>(resourceHeapBase) + m_imageRegionStartBytes
-              + static_cast<size_t>(localImageIndex) * static_cast<size_t>(imgSize);
-  VkResult result = m_info.writeImageDescriptor(image, format, layout, dst, viewType);
+                               + static_cast<size_t>(localImageIndex) * static_cast<size_t>(imgSize);
+  const VkResult     result  = m_info.writeImageDescriptor(image, format, layout, dst, viewType, type);
   if(result != VK_SUCCESS)
     return result;
 
   markResourceImageDirty(m_imageRegionStartBytes + static_cast<VkDeviceSize>(localImageIndex) * imgSize, imgSize);
   return VK_SUCCESS;
+}
+
+//--------------------------------------------------------------------------------------------------
+VkResult DescriptorHeap::writeSampledImageDescriptor(uint32_t        localImageIndex,
+                                                     VkImage         image,
+                                                     VkFormat        format,
+                                                     VkImageLayout   layout,
+                                                     void*           resourceHeapBase,
+                                                     VkImageViewType viewType)
+{
+  return writeImageDescriptorRegion(localImageIndex, image, format, layout, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                                    resourceHeapBase, viewType);
+}
+
+//--------------------------------------------------------------------------------------------------
+VkResult DescriptorHeap::writeStorageImageDescriptor(uint32_t        localImageIndex,
+                                                     VkImage         image,
+                                                     VkFormat        format,
+                                                     VkImageLayout   layout,
+                                                     void*           resourceHeapBase,
+                                                     VkImageViewType viewType)
+{
+  return writeImageDescriptorRegion(localImageIndex, image, format, layout, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                                    resourceHeapBase, viewType);
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -341,8 +366,8 @@ VkResult DescriptorHeap::writeBufferDescriptor(uint32_t         localBufferIndex
 
   const VkDeviceSize bufSize = m_info.bufferDescriptorSize();
   void*              dst     = static_cast<uint8_t*>(resourceHeapBase) + m_bufferRegionStartBytes
-              + static_cast<size_t>(localBufferIndex) * static_cast<size_t>(bufSize);
-  VkResult result = m_info.writeBufferDescriptor(bufferAddress, bufferSize, type, dst);
+                               + static_cast<size_t>(localBufferIndex) * static_cast<size_t>(bufSize);
+  VkResult           result  = m_info.writeBufferDescriptor(bufferAddress, bufferSize, type, dst);
   if(result != VK_SUCCESS)
     return result;
 
@@ -516,13 +541,13 @@ void DescriptorHeap::cmdBindHeaps(VkCommandBuffer cmd, VkDeviceAddress samplerHe
   // descriptor slots being updated.
   void* resMapping = resourceHeapBuffer.mapping;
 
-  NVVK_CHECK(heap.writeImageDescriptor(0, image, format, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, resMapping));
+  NVVK_CHECK(heap.writeSampledImageDescriptor(0, image, format, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, resMapping));
   // nvvk::Image convenience overload
   nvvk::Image nvImage{};
   nvImage.image                  = image;
   nvImage.format                 = format;
   nvImage.descriptor.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-  NVVK_CHECK(heap.writeImageDescriptor(1, nvImage, resMapping));
+  NVVK_CHECK(heap.writeSampledImageDescriptor(1, nvImage, resMapping));
 
   NVVK_CHECK(heap.writeBufferDescriptor(0, sceneUBO, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, resMapping));
   NVVK_CHECK(heap.writeBufferDescriptor(1, storageBuffer, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, resMapping));
@@ -559,7 +584,7 @@ void DescriptorHeap::cmdBindHeaps(VkCommandBuffer cmd, VkDeviceAddress samplerHe
   // 6. Incremental update — dirty range tracking
   // =====================================================================
   heap.clearResourceDirty();
-  NVVK_CHECK(heap.writeImageDescriptor(2, image, format, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, resMapping));
+  NVVK_CHECK(heap.writeSampledImageDescriptor(2, image, format, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, resMapping));
   NVVK_CHECK(heap.writeBufferDescriptor(1, storageBuffer, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, resMapping));
   DescriptorHeap::DirtyRange dirtyImages  = heap.getResourceImageDirtyRange();
   DescriptorHeap::DirtyRange dirtyBuffers = heap.getResourceBufferDirtyRange();

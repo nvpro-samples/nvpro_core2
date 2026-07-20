@@ -97,6 +97,11 @@ namespace tinygltf {
           // integer:
           // https://github.com/KhronosGroup/glTF/blob/b9884a2fd45130b4d673dd6c8a706ee21ee5c5f7/specification/2.0/schema/accessor.schema.json#L22
 
+// glTF 2.1 - additional accessor component type definitions.
+#define TINYGLTF_COMPONENT_TYPE_HALF_FLOAT (5131)
+#define TINYGLTF_COMPONENT_TYPE_INT64 (5134)
+#define TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT64 (5135)
+
 #define TINYGLTF_TEXTURE_FILTER_NEAREST (9728)
 #define TINYGLTF_TEXTURE_FILTER_LINEAR (9729)
 #define TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_NEAREST (9984)
@@ -213,6 +218,12 @@ static inline int32_t GetComponentSizeInBytes(uint32_t componentType) {
   } else if (componentType == TINYGLTF_COMPONENT_TYPE_FLOAT) {
     return 4;
   } else if (componentType == TINYGLTF_COMPONENT_TYPE_DOUBLE) {
+    return 8;
+  } else if (componentType == TINYGLTF_COMPONENT_TYPE_HALF_FLOAT) {
+    return 2;
+  } else if (componentType == TINYGLTF_COMPONENT_TYPE_INT64) {
+    return 8;
+  } else if (componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT64) {
     return 8;
   } else {
     // Unknown component type
@@ -565,6 +576,7 @@ struct AnimationSampler {
 
 struct Animation {
   std::string name;
+  std::string uid;  // glTF 2.1 unique ID (child-of-root)
   std::vector<AnimationChannel> channels;
   std::vector<AnimationSampler> samplers;
   Value extras;
@@ -581,6 +593,7 @@ struct Animation {
 
 struct Skin {
   std::string name;
+  std::string uid;              // glTF 2.1 unique ID (child-of-root)
   int inverseBindMatrices{-1};  // required here but not in the spec
   int skeleton{-1};             // The index of the node used as a skeleton root
   std::vector<int> joints;      // Indices of skeleton nodes
@@ -599,6 +612,7 @@ struct Skin {
 
 struct Sampler {
   std::string name;
+  std::string uid;  // glTF 2.1 unique ID (child-of-root)
   // glTF 2.0 spec does not define default value for `minFilter` and
   // `magFilter`. Set -1 in TinyGLTF(issue #186)
   int minFilter =
@@ -630,6 +644,7 @@ struct Sampler {
 
 struct Image {
   std::string name;
+  std::string uid;  // glTF 2.1 unique ID (child-of-root)
   int width{-1};
   int height{-1};
   int component{-1};
@@ -663,6 +678,7 @@ struct Image {
 
 struct Texture {
   std::string name;
+  std::string uid;  // glTF 2.1 unique ID (child-of-root)
 
   int sampler{-1};
   int source{-1};
@@ -761,6 +777,7 @@ struct PbrMetallicRoughness {
 // to keep a single material model
 struct Material {
   std::string name;
+  std::string uid;  // glTF 2.1 unique ID (child-of-root)
 
   std::vector<double> emissiveFactor{0.0, 0.0, 0.0};  // length 3. default [0, 0, 0]
   std::string alphaMode{"OPAQUE"}; // default "OPAQUE"
@@ -945,6 +962,7 @@ struct OrthographicCamera {
 struct Camera {
   std::string type;  // required. "perspective" or "orthographic"
   std::string name;
+  std::string uid;  // glTF 2.1 unique ID (child-of-root)
 
   PerspectiveCamera perspective;
   OrthographicCamera orthographic;
@@ -988,6 +1006,7 @@ struct Primitive {
 
 struct Mesh {
   std::string name;
+  std::string uid;  // glTF 2.1 unique ID (child-of-root)
   std::vector<Primitive> primitives;
   std::vector<double> weights;  // weights to be applied to the Morph Targets
   ExtensionMap extensions;
@@ -1002,6 +1021,27 @@ struct Mesh {
   bool operator==(const Mesh &) const;
 };
 
+// glTF 2.1 - a node bounding volume: an implicit shape (index into Model::shapes), optionally
+// transformed, that encloses the node's content. Node hierarchies of these form a bounding volume
+// hierarchy (BVH). Considered present on a node when `shape != -1`.
+struct BoundingVolume {
+  int shape{-1};                    // index into Model::shapes (required when present)
+  std::vector<double> translation;  // length 0 or 3
+  std::vector<double> rotation;     // length 0 or 4
+  std::vector<double> scale;        // length 0 or 3
+
+  ExtensionMap extensions;
+  Value extras;
+
+  // Filled when SetStoreOriginalJSONForExtrasAndExtensions is enabled.
+  std::string extras_json_string;
+  std::string extensions_json_string;
+
+  BoundingVolume() = default;
+  DEFAULT_METHODS(BoundingVolume)
+  bool operator==(const BoundingVolume &) const;
+};
+
 class Node {
  public:
   Node() = default;
@@ -1013,10 +1053,13 @@ class Node {
   int camera{-1};  // the index of the camera referenced by this node
 
   std::string name;
+  std::string uid;  // glTF 2.1 unique ID (child-of-root)
   int skin{-1};
   int mesh{-1};
   int light{-1};    // light source index (KHR_lights_punctual)
   int emitter{-1};  // audio emitter index (KHR_audio)
+  int externalAsset{-1};  // external asset index (glTF 2.1 external assets)
+  BoundingVolume boundingVolume;  // glTF 2.1 bounding volume
   std::vector<int> lods; // level of detail nodes (MSFT_lod)
   std::vector<int> children;
   std::vector<double> rotation;     // length must be 0 or 4
@@ -1057,6 +1100,7 @@ struct Asset {
   std::string generator;
   std::string minVersion;
   std::string copyright;
+  int thumbnail{-1};  // glTF 2.1 - index into Model::images for a preview thumbnail
   ExtensionMap extensions;
   Value extras;
 
@@ -1071,6 +1115,7 @@ struct Asset {
 
 struct Scene {
   std::string name;
+  std::string uid;  // glTF 2.1 unique ID (child-of-root)
   std::vector<int> nodes;
   std::vector<int> audioEmitters;  // KHR_audio global emitters
 
@@ -1084,6 +1129,172 @@ struct Scene {
   Scene() = default;
   DEFAULT_METHODS(Scene)
   bool operator==(const Scene &) const;
+};
+
+// glTF 2.1 - unified file references (top-level "files" array).
+// An alias remaps an inner `uri` of a referenced glTF/glb file to another
+// entry in Model::files. Aliases are not inherited from the parent asset.
+struct FileAlias {
+  std::string name;
+  std::string alias;  // string matched against an inner path (required)
+  int file{-1};       // index into Model::files (required)
+
+  ExtensionMap extensions;
+  Value extras;
+
+  // Filled when SetStoreOriginalJSONForExtrasAndExtensions is enabled.
+  std::string extras_json_string;
+  std::string extensions_json_string;
+
+  FileAlias() = default;
+  DEFAULT_METHODS(FileAlias)
+  bool operator==(const FileAlias &) const;
+};
+
+// glTF 2.1 - a file reference to external file data. The data is either stored
+// externally and referenced by `uri`, or stored in a buffer and referenced by
+// `bufferView` (exactly one of the two). `mimeType` is required.
+struct File {
+  std::string name;
+  std::string uri;       // external file URI/IRI (exclusive with bufferView)
+  std::string mimeType;  // media type of the file (required)
+  int bufferView{-1};    // buffer view index (exclusive with uri)
+  std::vector<FileAlias> aliases;  // inner-URI overrides (gltf/glb files only)
+
+  ExtensionMap extensions;
+  Value extras;
+
+  // Filled when SetStoreOriginalJSONForExtrasAndExtensions is enabled.
+  std::string extras_json_string;
+  std::string extensions_json_string;
+
+  File() = default;
+  DEFAULT_METHODS(File)
+  bool operator==(const File &) const;
+};
+
+// glTF 2.1 - an external glTF asset (top-level "externalAssets" array),
+// referenced by a node's `externalAsset` property.
+struct ExternalAsset {
+  std::string name;
+  int file{-1};  // index into Model::files (required)
+
+  ExtensionMap extensions;
+  Value extras;
+
+  // Filled when SetStoreOriginalJSONForExtrasAndExtensions is enabled.
+  std::string extras_json_string;
+  std::string extensions_json_string;
+
+  ExternalAsset() = default;
+  DEFAULT_METHODS(ExternalAsset)
+  bool operator==(const ExternalAsset &) const;
+};
+
+// glTF 2.1 - implicit shape parameter blocks, selected by Shape::type.
+struct BoxShape {
+  std::vector<double> size;  // [x, y, z]; default [1, 1, 1]
+
+  ExtensionMap extensions;
+  Value extras;
+
+  // Filled when SetStoreOriginalJSONForExtrasAndExtensions is enabled.
+  std::string extras_json_string;
+  std::string extensions_json_string;
+
+  BoxShape() = default;
+  DEFAULT_METHODS(BoxShape)
+  bool operator==(const BoxShape &) const;
+};
+
+struct SphereShape {
+  double radius{0.5};
+
+  ExtensionMap extensions;
+  Value extras;
+
+  // Filled when SetStoreOriginalJSONForExtrasAndExtensions is enabled.
+  std::string extras_json_string;
+  std::string extensions_json_string;
+
+  SphereShape() = default;
+  DEFAULT_METHODS(SphereShape)
+  bool operator==(const SphereShape &) const;
+};
+
+struct CapsuleShape {
+  double height{1.0};
+  double radiusBottom{0.5};
+  double radiusTop{0.5};
+
+  ExtensionMap extensions;
+  Value extras;
+
+  // Filled when SetStoreOriginalJSONForExtrasAndExtensions is enabled.
+  std::string extras_json_string;
+  std::string extensions_json_string;
+
+  CapsuleShape() = default;
+  DEFAULT_METHODS(CapsuleShape)
+  bool operator==(const CapsuleShape &) const;
+};
+
+struct CylinderShape {
+  double height{2.0};
+  double radiusBottom{0.5};
+  double radiusTop{0.5};
+
+  ExtensionMap extensions;
+  Value extras;
+
+  // Filled when SetStoreOriginalJSONForExtrasAndExtensions is enabled.
+  std::string extras_json_string;
+  std::string extensions_json_string;
+
+  CylinderShape() = default;
+  DEFAULT_METHODS(CylinderShape)
+  bool operator==(const CylinderShape &) const;
+};
+
+struct PlaneShape {
+  double sizeX{-1.0};  // extents along X; negative = infinite
+  double sizeZ{-1.0};  // extents along Z; negative = infinite
+
+  ExtensionMap extensions;
+  Value extras;
+
+  // Filled when SetStoreOriginalJSONForExtrasAndExtensions is enabled.
+  std::string extras_json_string;
+  std::string extensions_json_string;
+
+  PlaneShape() = default;
+  DEFAULT_METHODS(PlaneShape)
+  bool operator==(const PlaneShape &) const;
+};
+
+// glTF 2.1 - an implicit shape (top-level "shapes" array). `type` selects one of
+// "box" / "sphere" / "capsule" / "cylinder" / "plane"; the matching sub-object holds its
+// parameters.
+struct Shape {
+  std::string type;  // required. one of the implicit shape types
+  std::string name;
+
+  BoxShape box;
+  SphereShape sphere;
+  CapsuleShape capsule;
+  CylinderShape cylinder;
+  PlaneShape plane;
+
+  ExtensionMap extensions;
+  Value extras;
+
+  // Filled when SetStoreOriginalJSONForExtrasAndExtensions is enabled.
+  std::string extras_json_string;
+  std::string extensions_json_string;
+
+  Shape() = default;
+  DEFAULT_METHODS(Shape)
+  bool operator==(const Shape &) const;
 };
 
 struct SpotLight {
@@ -1104,6 +1315,7 @@ struct SpotLight {
 
 struct Light {
   std::string name;
+  std::string uid;  // glTF 2.1 unique ID (child-of-root)
   std::vector<double> color;
   double intensity{1.0};
   std::string type;
@@ -1229,6 +1441,9 @@ class Model {
   std::vector<Light> lights;
   std::vector<AudioEmitter> audioEmitters;
   std::vector<AudioSource> audioSources;
+  std::vector<File> files;                    // glTF 2.1 unified file references
+  std::vector<ExternalAsset> externalAssets;  // glTF 2.1 external assets
+  std::vector<Shape> shapes;                  // glTF 2.1 implicit shapes
 
   int defaultScene{-1};
   std::vector<std::string> extensionsUsed;
@@ -1454,22 +1669,28 @@ class TinyGLTF {
   ///
   bool LoadBinaryFromMemory(Model *model, std::string *err, std::string *warn,
                             const unsigned char *bytes,
-                            const unsigned int length,
+                            const size_t length,
                             const std::string &base_dir = "",
                             unsigned int check_sections = REQUIRE_VERSION);
 
   ///
   /// Write glTF to stream, buffers and images will be embedded
   ///
+  /// When `writeBinary` is true, `writeBinaryV3` selects glTF 2.1 GLB binary
+  /// version 3 (64-bit lengths). Defaults to version 2 for compatibility.
   bool WriteGltfSceneToStream(const Model *model, std::ostream &stream,
-                              bool prettyPrint, bool writeBinary);
+                              bool prettyPrint = true, bool writeBinary = false,
+                              bool writeBinaryV3 = false);
 
   ///
   /// Write glTF to file.
   ///
+  /// When `writeBinary` is true, `writeBinaryV3` selects glTF 2.1 GLB binary
+  /// version 3 (64-bit lengths). Defaults to version 2 for compatibility.
   bool WriteGltfSceneToFile(const Model *model, const std::string &filename,
-                            bool embedImages, bool embedBuffers,
-                            bool prettyPrint, bool writeBinary);
+                            bool embedImages = false, bool embedBuffers = false,
+                            bool prettyPrint = true, bool writeBinary = false,
+                            bool writeBinaryV3 = false);
 
   ///
   /// Sets the parsing strictness.
@@ -1726,7 +1947,11 @@ class TinyGLTF {
 #endif  // __GNUC__
 
 #ifndef TINYGLTF_NO_INCLUDE_JSON
-#ifndef TINYGLTF_USE_RAPIDJSON
+#ifdef TINYGLTF_USE_CUSTOM_JSON
+#ifndef TINYGLTF_NO_INCLUDE_CUSTOM_JSON
+#include "tinygltf_json.h"
+#endif
+#elif !defined(TINYGLTF_USE_RAPIDJSON)
 #include "json.hpp"
 #else
 #ifndef TINYGLTF_NO_INCLUDE_RAPIDJSON
@@ -1814,7 +2039,10 @@ class TinyGLTF {
 
 namespace tinygltf {
 namespace detail {
-#ifdef TINYGLTF_USE_RAPIDJSON
+#ifdef TINYGLTF_USE_CUSTOM_JSON
+// Types and JsonParse are provided by tinygltf_json.h (already included above)
+// via 'namespace tinygltf { namespace detail { ... } }' declarations.
+#elif defined(TINYGLTF_USE_RAPIDJSON)
 
 #ifdef TINYGLTF_USE_RAPIDJSON_CRTALLOCATOR
 // This uses the RapidJSON CRTAllocator.  It is thread safe and multiple
@@ -1886,6 +2114,7 @@ using json_const_array_iterator = json_const_iterator;
 using JsonDocument = json;
 #endif
 
+#ifndef TINYGLTF_USE_CUSTOM_JSON
 void JsonParse(JsonDocument &doc, const char *str, size_t length,
                bool throwExc = false) {
 #ifdef TINYGLTF_USE_RAPIDJSON
@@ -1895,6 +2124,7 @@ void JsonParse(JsonDocument &doc, const char *str, size_t length,
   doc = detail::json::parse(str, str + length, nullptr, throwExc);
 #endif
 }
+#endif  // !TINYGLTF_USE_CUSTOM_JSON
 }  // namespace detail
 }  // namespace tinygltf
 
@@ -2086,14 +2316,75 @@ bool Model::operator==(const Model &other) const {
          this->lights == other.lights && this->materials == other.materials &&
          this->meshes == other.meshes && this->nodes == other.nodes &&
          this->samplers == other.samplers && this->scenes == other.scenes &&
-         this->skins == other.skins && this->textures == other.textures;
+         this->skins == other.skins && this->textures == other.textures &&
+         this->files == other.files &&
+         this->externalAssets == other.externalAssets &&
+         this->shapes == other.shapes;
+}
+bool BoundingVolume::operator==(const BoundingVolume &other) const {
+  return this->shape == other.shape &&
+         Equals(this->translation, other.translation) &&
+         Equals(this->rotation, other.rotation) &&
+         Equals(this->scale, other.scale) &&
+         this->extensions == other.extensions && this->extras == other.extras;
+}
+bool FileAlias::operator==(const FileAlias &other) const {
+  return this->name == other.name && this->alias == other.alias &&
+         this->file == other.file && this->extensions == other.extensions &&
+         this->extras == other.extras;
+}
+bool File::operator==(const File &other) const {
+  return this->name == other.name && this->uri == other.uri &&
+         this->mimeType == other.mimeType &&
+         this->bufferView == other.bufferView &&
+         this->aliases == other.aliases &&
+         this->extensions == other.extensions && this->extras == other.extras;
+}
+bool ExternalAsset::operator==(const ExternalAsset &other) const {
+  return this->name == other.name && this->file == other.file &&
+         this->extensions == other.extensions && this->extras == other.extras;
+}
+bool BoxShape::operator==(const BoxShape &other) const {
+  return Equals(this->size, other.size) &&
+         this->extensions == other.extensions && this->extras == other.extras;
+}
+bool SphereShape::operator==(const SphereShape &other) const {
+  return TINYGLTF_DOUBLE_EQUAL(this->radius, other.radius) &&
+         this->extensions == other.extensions && this->extras == other.extras;
+}
+bool CapsuleShape::operator==(const CapsuleShape &other) const {
+  return TINYGLTF_DOUBLE_EQUAL(this->height, other.height) &&
+         TINYGLTF_DOUBLE_EQUAL(this->radiusBottom, other.radiusBottom) &&
+         TINYGLTF_DOUBLE_EQUAL(this->radiusTop, other.radiusTop) &&
+         this->extensions == other.extensions && this->extras == other.extras;
+}
+bool CylinderShape::operator==(const CylinderShape &other) const {
+  return TINYGLTF_DOUBLE_EQUAL(this->height, other.height) &&
+         TINYGLTF_DOUBLE_EQUAL(this->radiusBottom, other.radiusBottom) &&
+         TINYGLTF_DOUBLE_EQUAL(this->radiusTop, other.radiusTop) &&
+         this->extensions == other.extensions && this->extras == other.extras;
+}
+bool PlaneShape::operator==(const PlaneShape &other) const {
+  return TINYGLTF_DOUBLE_EQUAL(this->sizeX, other.sizeX) &&
+         TINYGLTF_DOUBLE_EQUAL(this->sizeZ, other.sizeZ) &&
+         this->extensions == other.extensions && this->extras == other.extras;
+}
+bool Shape::operator==(const Shape &other) const {
+  return this->type == other.type && this->name == other.name &&
+         this->box == other.box && this->sphere == other.sphere &&
+         this->capsule == other.capsule && this->cylinder == other.cylinder &&
+         this->plane == other.plane &&
+         this->extensions == other.extensions && this->extras == other.extras;
 }
 bool Node::operator==(const Node &other) const {
   return this->camera == other.camera && this->children == other.children &&
          this->extensions == other.extensions && this->extras == other.extras &&
          Equals(this->matrix, other.matrix) && this->mesh == other.mesh &&
          (this->light == other.light) && (this->emitter == other.emitter) &&
-         this->name == other.name && Equals(this->rotation, other.rotation) &&
+         this->name == other.name && this->uid == other.uid &&
+         this->externalAsset == other.externalAsset &&
+         this->boundingVolume == other.boundingVolume &&
+         this->lods == other.lods && Equals(this->rotation, other.rotation) &&
          Equals(this->scale, other.scale) && this->skin == other.skin &&
          Equals(this->translation, other.translation) &&
          Equals(this->weights, other.weights);
@@ -2215,6 +2506,26 @@ static void swap4(unsigned int *val) {
   dst[1] = src[2];
   dst[2] = src[1];
   dst[3] = src[0];
+#endif
+}
+
+// glTF 2.1 GLB binary version 3 uses 64-bit length fields.
+static void swap8(uint64_t *val) {
+#ifdef TINYGLTF_LITTLE_ENDIAN
+  (void)val;
+#else
+  uint64_t tmp = *val;
+  unsigned char *dst = reinterpret_cast<unsigned char *>(val);
+  unsigned char *src = reinterpret_cast<unsigned char *>(&tmp);
+
+  dst[0] = src[7];
+  dst[1] = src[6];
+  dst[2] = src[5];
+  dst[3] = src[4];
+  dst[4] = src[3];
+  dst[5] = src[2];
+  dst[6] = src[1];
+  dst[7] = src[0];
 #endif
 }
 
@@ -2534,9 +2845,8 @@ inline unsigned char from_hex(unsigned char ch) {
 }
 
 static const std::string urldecode(const std::string &str) {
-  using namespace std;
-  string result;
-  string::size_type i;
+  std::string result;
+  std::string::size_type i;
   for (i = 0; i < str.size(); ++i) {
     if (str[i] == '+') {
       result += ' ';
@@ -3532,6 +3842,7 @@ bool DecodeDataURI(std::vector<unsigned char> *out, std::string &mime_type,
   return true;
 }
 
+#ifndef TINYGLTF_USE_CUSTOM_JSON
 namespace detail {
 bool GetInt(const detail::json &o, int &val) {
 #ifdef TINYGLTF_USE_RAPIDJSON
@@ -3755,6 +4066,7 @@ std::string JsonToString(const detail::json &o, int spacing = -1) {
 }
 
 }  // namespace detail
+#endif  // !TINYGLTF_USE_CUSTOM_JSON
 
 static bool ParseJsonAsValue(Value *ret, const detail::json &o) {
   Value val{};
@@ -4385,6 +4697,10 @@ static bool ParseAsset(Asset *asset, std::string *err, const detail::json &o,
   ParseStringProperty(&asset->minVersion, err, o, "minVersion", false, "Asset");
   ParseStringProperty(&asset->copyright, err, o, "copyright", false, "Asset");
 
+  int thumbnail = -1;
+  ParseIntegerProperty(&thumbnail, err, o, "thumbnail", false);
+  asset->thumbnail = thumbnail;
+
   ParseExtrasAndExtensions(asset, err, o,
                            store_original_json_for_extras_and_extensions);
   return true;
@@ -4406,6 +4722,7 @@ static bool ParseImage(Image *image, const int image_idx, std::string *err,
   bool hasURI = detail::FindMember(o, "uri", it);
 
   ParseStringProperty(&image->name, err, o, "name", false);
+  ParseStringProperty(&image->uid, err, o, "uid", false);
 
   if (hasBufferView && hasURI) {
     // Should not both defined.
@@ -4555,6 +4872,7 @@ static bool ParseTexture(Texture *texture, std::string *err,
                            store_original_json_for_extras_and_extensions);
 
   ParseStringProperty(&texture->name, err, o, "name", false);
+  ParseStringProperty(&texture->uid, err, o, "uid", false);
 
   return true;
 }
@@ -5261,6 +5579,7 @@ static bool ParseMesh(Mesh *mesh, Model *model,
                       bool store_original_json_for_extras_and_extensions,
                       ParseStrictness strictness) {
   ParseStringProperty(&mesh->name, err, o, "name", false);
+  ParseStringProperty(&mesh->uid, err, o, "uid", false);
 
   mesh->primitives.clear();
   detail::json_const_iterator primObject;
@@ -5290,9 +5609,27 @@ static bool ParseMesh(Mesh *mesh, Model *model,
   return true;
 }
 
+static bool ParseBoundingVolume(
+    BoundingVolume *bv, std::string *err, const detail::json &o,
+    bool store_original_json_for_extras_and_extensions) {
+  if (!ParseIntegerProperty(&bv->shape, err, o, "shape", /* required */ true,
+                            "BoundingVolume")) {
+    return false;
+  }
+
+  ParseNumberArrayProperty(&bv->translation, err, o, "translation", false);
+  ParseNumberArrayProperty(&bv->rotation, err, o, "rotation", false);
+  ParseNumberArrayProperty(&bv->scale, err, o, "scale", false);
+
+  ParseExtrasAndExtensions(bv, err, o,
+                           store_original_json_for_extras_and_extensions);
+  return true;
+}
+
 static bool ParseNode(Node *node, std::string *err, const detail::json &o,
                       bool store_original_json_for_extras_and_extensions) {
   ParseStringProperty(&node->name, err, o, "name", false);
+  ParseStringProperty(&node->uid, err, o, "uid", false);
 
   int skin = -1;
   ParseIntegerProperty(&skin, err, o, "skin", false);
@@ -5312,6 +5649,22 @@ static bool ParseNode(Node *node, std::string *err, const detail::json &o,
   int mesh = -1;
   ParseIntegerProperty(&mesh, err, o, "mesh", false);
   node->mesh = mesh;
+
+  int externalAsset = -1;
+  ParseIntegerProperty(&externalAsset, err, o, "externalAsset", false);
+  node->externalAsset = externalAsset;
+
+  {
+    detail::json_const_iterator bvIt;
+    if (detail::FindMember(o, "boundingVolume", bvIt) &&
+        detail::IsObject(detail::GetValue(bvIt))) {
+      if (!ParseBoundingVolume(&node->boundingVolume, err,
+                               detail::GetValue(bvIt),
+                               store_original_json_for_extras_and_extensions)) {
+        return false;
+      }
+    }
+  }
 
   node->children.clear();
   ParseIntegerArrayProperty(&node->children, err, o, "children", false);
@@ -5379,6 +5732,7 @@ static bool ParseNode(Node *node, std::string *err, const detail::json &o,
 static bool ParseScene(Scene *scene, std::string *err, const detail::json &o,
                        bool store_original_json_for_extras_and_extensions) {
   ParseStringProperty(&scene->name, err, o, "name", false);
+  ParseStringProperty(&scene->uid, err, o, "uid", false);
   ParseIntegerArrayProperty(&scene->nodes, err, o, "nodes", false);
 
   ParseExtrasAndExtensions(scene, err, o,
@@ -5402,6 +5756,164 @@ static bool ParseScene(Scene *scene, std::string *err, const detail::json &o,
     }
   }
 
+  return true;
+}
+
+static bool ParseFileAlias(FileAlias *alias, std::string *err,
+                           const detail::json &o,
+                           bool store_original_json_for_extras_and_extensions) {
+  ParseStringProperty(&alias->name, err, o, "name", false);
+  ParseStringProperty(&alias->alias, err, o, "alias", true);
+
+  int file = -1;
+  ParseIntegerProperty(&file, err, o, "file", true);
+  alias->file = file;
+
+  ParseExtrasAndExtensions(alias, err, o,
+                           store_original_json_for_extras_and_extensions);
+  return true;
+}
+
+static bool ParseFile(File *file, std::string *err, const detail::json &o,
+                      bool store_original_json_for_extras_and_extensions) {
+  ParseStringProperty(&file->name, err, o, "name", false);
+  ParseStringProperty(&file->uri, err, o, "uri", false);
+  ParseStringProperty(&file->mimeType, err, o, "mimeType", true);
+
+  int bufferView = -1;
+  ParseIntegerProperty(&bufferView, err, o, "bufferView", false);
+  file->bufferView = bufferView;
+
+  file->aliases.clear();
+  detail::json_const_iterator aliasesObject;
+  if (detail::FindMember(o, "aliases", aliasesObject) &&
+      detail::IsArray(detail::GetValue(aliasesObject))) {
+    detail::json_const_array_iterator aliasesEnd =
+        detail::ArrayEnd(detail::GetValue(aliasesObject));
+    for (detail::json_const_array_iterator i =
+             detail::ArrayBegin(detail::GetValue(aliasesObject));
+         i != aliasesEnd; ++i) {
+      if (!detail::IsObject(*i)) {
+        if (err) {
+          (*err) += "`aliases' does not contain a JSON object.";
+        }
+        return false;
+      }
+      FileAlias alias;
+      if (!ParseFileAlias(&alias, err, *i,
+                          store_original_json_for_extras_and_extensions)) {
+        return false;
+      }
+      file->aliases.emplace_back(std::move(alias));
+    }
+  }
+
+  ParseExtrasAndExtensions(file, err, o,
+                           store_original_json_for_extras_and_extensions);
+  return true;
+}
+
+static bool ParseExternalAsset(
+    ExternalAsset *asset, std::string *err, const detail::json &o,
+    bool store_original_json_for_extras_and_extensions) {
+  ParseStringProperty(&asset->name, err, o, "name", false);
+
+  int file = -1;
+  ParseIntegerProperty(&file, err, o, "file", true);
+  asset->file = file;
+
+  ParseExtrasAndExtensions(asset, err, o,
+                           store_original_json_for_extras_and_extensions);
+  return true;
+}
+
+static bool ParseBoxShape(BoxShape *shape, std::string *err,
+                          const detail::json &o,
+                          bool store_original_json_for_extras_and_extensions) {
+  ParseNumberArrayProperty(&shape->size, err, o, "size", false);
+  ParseExtrasAndExtensions(shape, err, o,
+                           store_original_json_for_extras_and_extensions);
+  return true;
+}
+
+static bool ParseSphereShape(
+    SphereShape *shape, std::string *err, const detail::json &o,
+    bool store_original_json_for_extras_and_extensions) {
+  ParseNumberProperty(&shape->radius, err, o, "radius", false);
+  ParseExtrasAndExtensions(shape, err, o,
+                           store_original_json_for_extras_and_extensions);
+  return true;
+}
+
+static bool ParseCapsuleShape(
+    CapsuleShape *shape, std::string *err, const detail::json &o,
+    bool store_original_json_for_extras_and_extensions) {
+  ParseNumberProperty(&shape->height, err, o, "height", false);
+  ParseNumberProperty(&shape->radiusBottom, err, o, "radiusBottom", false);
+  ParseNumberProperty(&shape->radiusTop, err, o, "radiusTop", false);
+  ParseExtrasAndExtensions(shape, err, o,
+                           store_original_json_for_extras_and_extensions);
+  return true;
+}
+
+static bool ParseCylinderShape(
+    CylinderShape *shape, std::string *err, const detail::json &o,
+    bool store_original_json_for_extras_and_extensions) {
+  ParseNumberProperty(&shape->height, err, o, "height", false);
+  ParseNumberProperty(&shape->radiusBottom, err, o, "radiusBottom", false);
+  ParseNumberProperty(&shape->radiusTop, err, o, "radiusTop", false);
+  ParseExtrasAndExtensions(shape, err, o,
+                           store_original_json_for_extras_and_extensions);
+  return true;
+}
+
+static bool ParseShape(Shape *shape, std::string *err, const detail::json &o,
+                       bool store_original_json_for_extras_and_extensions) {
+  if (!ParseStringProperty(&shape->type, err, o, "type", true, "Shape")) {
+    return false;
+  }
+  ParseStringProperty(&shape->name, err, o, "name", false);
+
+  detail::json_const_iterator subIt;
+  if (shape->type.compare("box") == 0 && detail::FindMember(o, "box", subIt) &&
+      detail::IsObject(detail::GetValue(subIt))) {
+    if (!ParseBoxShape(&shape->box, err, detail::GetValue(subIt),
+                       store_original_json_for_extras_and_extensions)) {
+      return false;
+    }
+  } else if (shape->type.compare("sphere") == 0 &&
+             detail::FindMember(o, "sphere", subIt) &&
+             detail::IsObject(detail::GetValue(subIt))) {
+    if (!ParseSphereShape(&shape->sphere, err, detail::GetValue(subIt),
+                          store_original_json_for_extras_and_extensions)) {
+      return false;
+    }
+  } else if (shape->type.compare("capsule") == 0 &&
+             detail::FindMember(o, "capsule", subIt) &&
+             detail::IsObject(detail::GetValue(subIt))) {
+    if (!ParseCapsuleShape(&shape->capsule, err, detail::GetValue(subIt),
+                           store_original_json_for_extras_and_extensions)) {
+      return false;
+    }
+  } else if (shape->type.compare("cylinder") == 0 &&
+             detail::FindMember(o, "cylinder", subIt) &&
+             detail::IsObject(detail::GetValue(subIt))) {
+    if (!ParseCylinderShape(&shape->cylinder, err, detail::GetValue(subIt),
+                            store_original_json_for_extras_and_extensions)) {
+      return false;
+    }
+  } else if (shape->type.compare("plane") == 0 &&
+             detail::FindMember(o, "plane", subIt) &&
+             detail::IsObject(detail::GetValue(subIt))) {
+    const detail::json &planeObj = detail::GetValue(subIt);
+    ParseNumberProperty(&shape->plane.sizeX, err, planeObj, "sizeX", false);
+    ParseNumberProperty(&shape->plane.sizeZ, err, planeObj, "sizeZ", false);
+    ParseExtrasAndExtensions(&shape->plane, err, planeObj,
+                             store_original_json_for_extras_and_extensions);
+  }
+
+  ParseExtrasAndExtensions(shape, err, o,
+                           store_original_json_for_extras_and_extensions);
   return true;
 }
 
@@ -5458,6 +5970,7 @@ static bool ParseMaterial(Material *material, std::string *err, std::string *war
                           bool store_original_json_for_extras_and_extensions,
                           ParseStrictness strictness) {
   ParseStringProperty(&material->name, err, o, "name", /* required */ false);
+  ParseStringProperty(&material->uid, err, o, "uid", false);
 
   if (ParseNumberArrayProperty(&material->emissiveFactor, err, o,
                                "emissiveFactor",
@@ -5712,6 +6225,7 @@ static bool ParseAnimation(Animation *animation, std::string *err,
   }
 
   ParseStringProperty(&animation->name, err, o, "name", false);
+  ParseStringProperty(&animation->uid, err, o, "uid", false);
 
   ParseExtrasAndExtensions(animation, err, o,
                            store_original_json_for_extras_and_extensions);
@@ -5723,6 +6237,7 @@ static bool ParseSampler(Sampler *sampler, std::string *err,
                          const detail::json &o,
                          bool store_original_json_for_extras_and_extensions) {
   ParseStringProperty(&sampler->name, err, o, "name", false);
+  ParseStringProperty(&sampler->uid, err, o, "uid", false);
 
   int minFilter = -1;
   int magFilter = -1;
@@ -5754,6 +6269,7 @@ static bool ParseSampler(Sampler *sampler, std::string *err,
 static bool ParseSkin(Skin *skin, std::string *err, const detail::json &o,
                       bool store_original_json_for_extras_and_extensions) {
   ParseStringProperty(&skin->name, err, o, "name", false, "Skin");
+  ParseStringProperty(&skin->uid, err, o, "uid", false);
 
   std::vector<int> joints;
   if (!ParseIntegerArrayProperty(&joints, err, o, "joints", false, "Skin")) {
@@ -5929,6 +6445,7 @@ static bool ParseCamera(Camera *camera, std::string *err, const detail::json &o,
   }
 
   ParseStringProperty(&camera->name, err, o, "name", false);
+  ParseStringProperty(&camera->uid, err, o, "uid", false);
 
   ParseExtrasAndExtensions(camera, err, o,
                            store_original_json_for_extras_and_extensions);
@@ -5970,6 +6487,7 @@ static bool ParseLight(Light *light, std::string *err, const detail::json &o,
   }
 
   ParseStringProperty(&light->name, err, o, "name", false);
+  ParseStringProperty(&light->uid, err, o, "uid", false);
   ParseNumberArrayProperty(&light->color, err, o, "color", false);
   ParseNumberProperty(&light->range, err, o, "range", false);
   ParseNumberProperty(&light->intensity, err, o, "intensity", false);
@@ -6459,6 +6977,79 @@ bool TinyGLTF::LoadFromString(Model *model, std::string *err, std::string *warn,
     }
   }
 
+  // 8b. Parse files (glTF 2.1 unified file references).
+  {
+    bool success = ForEachInArray(v, "files", [&](const detail::json &o) {
+      if (!detail::IsObject(o)) {
+        if (err) {
+          (*err) += "`files' does not contain an JSON object.";
+        }
+        return false;
+      }
+      File file;
+      if (!ParseFile(&file, err, o,
+                     store_original_json_for_extras_and_extensions_)) {
+        return false;
+      }
+
+      model->files.emplace_back(std::move(file));
+      return true;
+    });
+
+    if (!success) {
+      return false;
+    }
+  }
+
+  // 8c. Parse external assets (glTF 2.1).
+  {
+    bool success =
+        ForEachInArray(v, "externalAssets", [&](const detail::json &o) {
+          if (!detail::IsObject(o)) {
+            if (err) {
+              (*err) += "`externalAssets' does not contain an JSON object.";
+            }
+            return false;
+          }
+          ExternalAsset asset;
+          if (!ParseExternalAsset(&asset, err, o,
+                                  store_original_json_for_extras_and_extensions_)) {
+            return false;
+          }
+
+          model->externalAssets.emplace_back(std::move(asset));
+          return true;
+        });
+
+    if (!success) {
+      return false;
+    }
+  }
+
+  // 8d. Parse shapes (glTF 2.1).
+  {
+    bool success = ForEachInArray(v, "shapes", [&](const detail::json &o) {
+      if (!detail::IsObject(o)) {
+        if (err) {
+          (*err) += "`shapes' does not contain an JSON object.";
+        }
+        return false;
+      }
+      Shape shape;
+      if (!ParseShape(&shape, err, o,
+                      store_original_json_for_extras_and_extensions_)) {
+        return false;
+      }
+
+      model->shapes.emplace_back(std::move(shape));
+      return true;
+    });
+
+    if (!success) {
+      return false;
+    }
+  }
+
   // 9. Parse default scenes.
   {
     detail::json_const_iterator rootIt;
@@ -6853,7 +7444,7 @@ bool TinyGLTF::LoadASCIIFromFile(Model *model, std::string *err,
 bool TinyGLTF::LoadBinaryFromMemory(Model *model, std::string *err,
                                     std::string *warn,
                                     const unsigned char *bytes,
-                                    unsigned int size,
+                                    size_t size,
                                     const std::string &base_dir,
                                     unsigned int check_sections) {
   if (size < 20) {
@@ -6873,19 +7464,53 @@ bool TinyGLTF::LoadBinaryFromMemory(Model *model, std::string *err,
     return false;
   }
 
-  unsigned int version;        // 4 bytes
-  unsigned int length;         // 4 bytes
-  unsigned int chunk0_length;  // 4 bytes
-  unsigned int chunk0_format;  // 4 bytes;
-
+  unsigned int version = 0;  // 4 bytes
   memcpy(&version, bytes + 4, 4);
   swap4(&version);
-  memcpy(&length, bytes + 8, 4); // Total glb size, including header and all chunks.
-  swap4(&length);
-  memcpy(&chunk0_length, bytes + 12, 4);  // JSON data length
-  swap4(&chunk0_length);
-  memcpy(&chunk0_format, bytes + 16, 4);
-  swap4(&chunk0_format);
+
+  // glTF 2.1 introduces GLB binary version 3, which uses 64-bit length fields and adds a reserved
+  // chunk-encoding field (always 0 in glTF 2.1) to each chunk header. Version 2 keeps 32-bit
+  // lengths. Importers must support both. Layouts:
+  //   v2: header = magic(4) + version(4) + length(4)               = 12 bytes
+  //       chunk  = chunkLength(4) + chunkType(4)                    = 8 bytes
+  //   v3: header = magic(4) + version(4) + length(8)                = 16 bytes
+  //       chunk  = chunkLength(8) + chunkType(4) + chunkEncoding(4) = 16 bytes
+  const bool     isV3 = (version == 3);
+  const uint64_t headerSize = isV3 ? 16ull : 12ull;
+  const uint64_t chunkHeaderSize = isV3 ? 16ull : 8ull;
+
+  if (uint64_t(size) < headerSize + chunkHeaderSize) {
+    if (err) {
+      (*err) = "Too short data size for glTF Binary.";
+    }
+    return false;
+  }
+
+  uint64_t     length = 0;         // Total glb size, including header and all chunks.
+  uint64_t     chunk0_length = 0;  // JSON data length
+  unsigned int chunk0_format = 0;
+  if (isV3) {
+    memcpy(&length, bytes + 8, 8);
+    swap8(&length);
+    memcpy(&chunk0_length, bytes + headerSize, 8);
+    swap8(&chunk0_length);
+    memcpy(&chunk0_format, bytes + headerSize + 8, 4);
+    swap4(&chunk0_format);
+    // bytes[headerSize + 12 .. +16) is the reserved chunk-encoding field (0 in glTF 2.1).
+  } else {
+    unsigned int length32 = 0;
+    unsigned int chunk0_length32 = 0;
+    memcpy(&length32, bytes + 8, 4);
+    swap4(&length32);
+    memcpy(&chunk0_length32, bytes + headerSize, 4);
+    swap4(&chunk0_length32);
+    memcpy(&chunk0_format, bytes + headerSize + 4, 4);
+    swap4(&chunk0_format);
+    length = length32;
+    chunk0_length = chunk0_length32;
+  }
+
+  const uint64_t json_start = headerSize + chunkHeaderSize;
 
   // https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#binary-gltf-layout
   //
@@ -6895,10 +7520,18 @@ bool TinyGLTF::LoadBinaryFromMemory(Model *model, std::string *err,
   //
   // https://github.com/syoyo/tinygltf/issues/372
   // Use 64bit uint to avoid integer overflow.
-  uint64_t header_and_json_size = 20ull + uint64_t(chunk0_length);
+  uint64_t header_and_json_size = json_start + chunk0_length;
 
-  if (header_and_json_size > (std::numeric_limits<uint32_t>::max)()) {
-    // Do not allow 4GB or more GLB data.
+  if (isV3) {
+    // glTF 2.1: the most significant bit of every length must be zero (safe as signed 64-bit).
+    if (((length | chunk0_length) >> 63) != 0) {
+      if (err) {
+        (*err) = "Invalid glTF binary. GLB v3 length exceeds the 63-bit maximum.";
+      }
+      return false;
+    }
+  } else if (header_and_json_size > (std::numeric_limits<uint32_t>::max)()) {
+    // glTF 2.0 GLB (version 2) does not allow 4GB or more GLB data.
     if (err) {
       (*err) = "Invalid glTF binary. GLB data exceeds 4GB.";
     }
@@ -6942,24 +7575,30 @@ bool TinyGLTF::LoadBinaryFromMemory(Model *model, std::string *err,
     // So there is a situation that Chunk1(BIN) is composed of zero-sized BIN data
     // (chunksize(0) + binformat(BIN) = 8bytes).
     //
-    if ((header_and_json_size + 8ull) > uint64_t(length)) {
+    if ((header_and_json_size + chunkHeaderSize) > uint64_t(length)) {
       if (err) {
         (*err) =
-            "Insufficient storage space for Chunk1(BIN data). At least Chunk1 "
-            "Must have 8 or more bytes, but got " +
-            std::to_string((header_and_json_size + 8ull) - uint64_t(length)) +
-            ".\n";
+            "Insufficient storage space for Chunk1(BIN data). At least a full "
+            "Chunk1 header must be present.\n";
       }
       return false;
     }
 
-    unsigned int chunk1_length{0};  // 4 bytes
-    unsigned int chunk1_format{0};  // 4 bytes;
-    memcpy(&chunk1_length, bytes + header_and_json_size,
-           4);  // Bin data length
-    swap4(&chunk1_length);
-    memcpy(&chunk1_format, bytes + header_and_json_size + 4, 4);
-    swap4(&chunk1_format);
+    uint64_t     chunk1_length = 0;  // Bin data length
+    unsigned int chunk1_format = 0;
+    if (isV3) {
+      memcpy(&chunk1_length, bytes + header_and_json_size, 8);
+      swap8(&chunk1_length);
+      memcpy(&chunk1_format, bytes + header_and_json_size + 8, 4);
+      swap4(&chunk1_format);
+    } else {
+      unsigned int chunk1_length32 = 0;
+      memcpy(&chunk1_length32, bytes + header_and_json_size, 4);
+      swap4(&chunk1_length32);
+      memcpy(&chunk1_format, bytes + header_and_json_size + 4, 4);
+      swap4(&chunk1_format);
+      chunk1_length = chunk1_length32;
+    }
 
     if (chunk1_format != 0x004e4942) {
       if (err) {
@@ -6968,22 +7607,17 @@ bool TinyGLTF::LoadBinaryFromMemory(Model *model, std::string *err,
       return false;
     }
 
-    if (chunk1_length == 0) {
-
-      if (header_and_json_size + 8 > uint64_t(length)) {
-        if (err) {
-          (*err) = "BIN Chunk header location exceeds the GLB size.";
-        }
-        return false;
+    if (isV3 && ((chunk1_length >> 63) != 0)) {
+      if (err) {
+        (*err) =
+            "Invalid glTF binary. GLB v3 BIN length exceeds the 63-bit maximum.";
       }
+      return false;
+    }
 
+    if (chunk1_length == 0) {
       bin_data_ = nullptr;
-
     } else {
-
-      // When BIN chunk size is not zero, at least Chunk1 should have 12 bytes(8 bytes(header) + 4 bytes(bin
-      // payload could be 1~3 bytes, but need to be aligned to 4 bytes)
-
       if (chunk1_length < 4) {
         if (err) {
           (*err) = "Insufficient Chunk1(BIN) data size.";
@@ -6992,12 +7626,11 @@ bool TinyGLTF::LoadBinaryFromMemory(Model *model, std::string *err,
       }
 
       if ((chunk1_length % 4) != 0) {
-        if (strictness_==ParseStrictness::Permissive) {
+        if (strictness_ == ParseStrictness::Permissive) {
           if (warn) {
             (*warn) += "BIN Chunk end is not aligned to a 4-byte boundary.\n";
           }
-        }
-        else {
+        } else {
           if (err) {
             (*err) = "BIN Chunk end is not aligned to a 4-byte boundary.";
           }
@@ -7005,16 +7638,16 @@ bool TinyGLTF::LoadBinaryFromMemory(Model *model, std::string *err,
         }
       }
 
-      // +8 chunk1 header size.
-      if (uint64_t(chunk1_length) + header_and_json_size + 8 > uint64_t(length)) {
+      // Avoid overflow: rewrite chunk1_length + x > length as chunk1_length > length - x.
+      if (chunk1_length >
+          uint64_t(length) - header_and_json_size - chunkHeaderSize) {
         if (err) {
           (*err) = "BIN Chunk data length exceeds the GLB size.";
         }
         return false;
       }
 
-      bin_data_ = bytes + header_and_json_size +
-                  8;  // 4 bytes (bin_buffer_length) + 4 bytes(bin_buffer_format)
+      bin_data_ = bytes + header_and_json_size + chunkHeaderSize;
     }
 
     bin_size_ = size_t(chunk1_length);
@@ -7022,9 +7655,17 @@ bool TinyGLTF::LoadBinaryFromMemory(Model *model, std::string *err,
 
   is_binary_ = true;
 
+  if (chunk0_length > (std::numeric_limits<unsigned int>::max)()) {
+    if (err) {
+      (*err) = "JSON chunk too large to parse.";
+    }
+    return false;
+  }
+
   bool ret = LoadFromString(model, err, warn,
-                            reinterpret_cast<const char *>(&bytes[20]),
-                            chunk0_length, base_dir, check_sections);
+                            reinterpret_cast<const char *>(&bytes[json_start]),
+                            static_cast<unsigned int>(chunk0_length), base_dir,
+                            check_sections);
   if (!ret) {
     return ret;
   }
@@ -7062,7 +7703,7 @@ bool TinyGLTF::LoadBinaryFromFile(Model *model, std::string *err,
   std::string basedir = GetBaseDir(filename);
 
   bool ret = LoadBinaryFromMemory(model, err, warn, &data.at(0),
-                                  static_cast<unsigned int>(data.size()),
+                                  data.size(),
                                   basedir, check_sections);
 
   return ret;
@@ -7071,6 +7712,7 @@ bool TinyGLTF::LoadBinaryFromFile(Model *model, std::string *err,
 ///////////////////////
 // GLTF Serialization
 ///////////////////////
+#ifndef TINYGLTF_USE_CUSTOM_JSON
 namespace detail {
 detail::json JsonFromString(const char *s) {
 #ifdef TINYGLTF_USE_RAPIDJSON
@@ -7143,6 +7785,7 @@ void JsonReserveArray(detail::json &o, size_t s) {
   (void)(s);
 }
 }  // namespace detail
+#endif  // !TINYGLTF_USE_CUSTOM_JSON
 
 // typedef std::pair<std::string, detail::json> json_object_pair;
 
@@ -7155,7 +7798,11 @@ static void SerializeNumberProperty(const std::string &key, T number,
   detail::JsonAddMember(obj, key.c_str(), detail::json(number));
 }
 
-#ifdef TINYGLTF_USE_RAPIDJSON
+#if defined(TINYGLTF_USE_RAPIDJSON) || defined(TINYGLTF_USE_CUSTOM_JSON)
+// size_t needs an explicit cast to uint64_t: on platforms where size_t is
+// neither int64_t nor uint64_t (e.g. macOS ARM64 where it is unsigned long,
+// or 32-bit targets where it is unsigned int) constructing detail::json
+// directly from a size_t is an ambiguous overload.
 template <>
 void SerializeNumberProperty(const std::string &key, size_t number,
                              detail::json &obj) {
@@ -7573,6 +8220,9 @@ static void SerializeGltfAnimation(const Animation &animation,
     detail::JsonAddMember(o, "samplers", std::move(samplers));
   }
 
+  if (!animation.uid.empty()) {
+    SerializeStringProperty("uid", animation.uid, o);
+  }
   SerializeExtrasAndExtensions(animation, o);
 }
 
@@ -7594,6 +8244,10 @@ static void SerializeGltfAsset(const Asset &asset, detail::json &o) {
 
   // TODO(syoyo): Do we need to check if `version` is greater or equal to 2.0?
   SerializeStringProperty("version", version, o);
+
+  if (asset.thumbnail != -1) {
+    SerializeNumberProperty<int>("thumbnail", asset.thumbnail, o);
+  }
 
   SerializeExtrasAndExtensions(asset, o);
 }
@@ -7670,6 +8324,9 @@ static void SerializeGltfImage(const Image &image, const std::string &uri,
     SerializeStringProperty("name", image.name, o);
   }
 
+  if (!image.uid.empty()) {
+    SerializeStringProperty("uid", image.uid, o);
+  }
   SerializeExtrasAndExtensions(image, o);
 }
 
@@ -7813,6 +8470,9 @@ static void SerializeGltfMaterial(const Material &material, detail::json &o) {
   SerializeParameterMap(material.additionalValues, o);
 #endif
 
+  if (!material.uid.empty()) {
+    SerializeStringProperty("uid", material.uid, o);
+  }
   SerializeExtrasAndExtensions(material, o);
 
   // MSFT_lod
@@ -7906,6 +8566,9 @@ static void SerializeGltfMesh(const Mesh &mesh, detail::json &o) {
     SerializeStringProperty("name", mesh.name, o);
   }
 
+  if (!mesh.uid.empty()) {
+    SerializeStringProperty("uid", mesh.uid, o);
+  }
   SerializeExtrasAndExtensions(mesh, o);
 }
 
@@ -7927,6 +8590,9 @@ static void SerializeGltfLight(const Light &light, detail::json &o) {
     detail::json spot;
     SerializeSpotLight(light.spot, spot);
     detail::JsonAddMember(o, "spot", std::move(spot));
+  }
+  if (!light.uid.empty()) {
+    SerializeStringProperty("uid", light.uid, o);
   }
   SerializeExtrasAndExtensions(light, o);
 }
@@ -7985,6 +8651,21 @@ static void SerializeGltfAudioSource(const AudioSource &source,
   SerializeExtrasAndExtensions(source, o);
 }
 
+static void SerializeGltfBoundingVolume(const BoundingVolume &bv,
+                                        detail::json &o) {
+  SerializeNumberProperty<int>("shape", bv.shape, o);
+  if (bv.translation.size() == 3) {
+    SerializeNumberArrayProperty<double>("translation", bv.translation, o);
+  }
+  if (bv.rotation.size() == 4) {
+    SerializeNumberArrayProperty<double>("rotation", bv.rotation, o);
+  }
+  if (bv.scale.size() == 3) {
+    SerializeNumberArrayProperty<double>("scale", bv.scale, o);
+  }
+  SerializeExtrasAndExtensions(bv, o);
+}
+
 static void SerializeGltfNode(const Node &node, detail::json &o) {
   if (node.translation.size() > 0) {
     SerializeNumberArrayProperty<double>("translation", node.translation, o);
@@ -8014,6 +8695,19 @@ static void SerializeGltfNode(const Node &node, detail::json &o) {
     SerializeNumberArrayProperty<double>("weights", node.weights, o);
   }
 
+  if (node.externalAsset != -1) {
+    SerializeNumberProperty<int>("externalAsset", node.externalAsset, o);
+  }
+
+  if (node.boundingVolume.shape != -1) {
+    detail::json boundingVolume;
+    SerializeGltfBoundingVolume(node.boundingVolume, boundingVolume);
+    detail::JsonAddMember(o, "boundingVolume", std::move(boundingVolume));
+  }
+
+  if (!node.uid.empty()) {
+    SerializeStringProperty("uid", node.uid, o);
+  }
   SerializeExtrasAndExtensions(node, o);
 
   // Note(agnat): If the asset was loaded from disk, the node may already
@@ -8123,6 +8817,9 @@ static void SerializeGltfSampler(const Sampler &sampler, detail::json &o) {
   if (!sampler.name.empty()) {
     SerializeStringProperty("name", sampler.name, o);
   }
+  if (!sampler.uid.empty()) {
+    SerializeStringProperty("uid", sampler.uid, o);
+  }
   if (sampler.magFilter != -1) {
     SerializeNumberProperty("magFilter", sampler.magFilter, o);
   }
@@ -8166,6 +8863,9 @@ static void SerializeGltfCamera(const Camera &camera, detail::json &o) {
   if (!camera.name.empty()) {
     SerializeStringProperty("name", camera.name, o);
   }
+  if (!camera.uid.empty()) {
+    SerializeStringProperty("uid", camera.uid, o);
+  }
 
   if (camera.type.compare("orthographic") == 0) {
     detail::json orthographic;
@@ -8187,6 +8887,9 @@ static void SerializeGltfScene(const Scene &scene, detail::json &o) {
 
   if (scene.name.size()) {
     SerializeStringProperty("name", scene.name, o);
+  }
+  if (!scene.uid.empty()) {
+    SerializeStringProperty("uid", scene.uid, o);
   }
   SerializeExtrasAndExtensions(scene, o);
 
@@ -8239,6 +8942,9 @@ static void SerializeGltfSkin(const Skin &skin, detail::json &o) {
     SerializeStringProperty("name", skin.name, o);
   }
 
+  if (!skin.uid.empty()) {
+    SerializeStringProperty("uid", skin.uid, o);
+  }
   SerializeExtrasAndExtensions(skin, o);
 }
 
@@ -8252,7 +8958,121 @@ static void SerializeGltfTexture(const Texture &texture, detail::json &o) {
   if (texture.name.size()) {
     SerializeStringProperty("name", texture.name, o);
   }
+  if (!texture.uid.empty()) {
+    SerializeStringProperty("uid", texture.uid, o);
+  }
   SerializeExtrasAndExtensions(texture, o);
+}
+
+static void SerializeGltfFileAlias(const FileAlias &alias, detail::json &o) {
+  SerializeStringProperty("alias", alias.alias, o);
+  if (alias.file != -1) {
+    SerializeNumberProperty<int>("file", alias.file, o);
+  }
+  if (!alias.name.empty()) {
+    SerializeStringProperty("name", alias.name, o);
+  }
+  SerializeExtrasAndExtensions(alias, o);
+}
+
+static void SerializeGltfFile(const File &file, detail::json &o) {
+  if (!file.uri.empty()) {
+    SerializeStringProperty("uri", file.uri, o);
+  }
+  if (file.bufferView != -1) {
+    SerializeNumberProperty<int>("bufferView", file.bufferView, o);
+  }
+  SerializeStringProperty("mimeType", file.mimeType, o);
+  if (!file.aliases.empty()) {
+    detail::json aliases;
+    detail::JsonReserveArray(aliases, file.aliases.size());
+    for (unsigned int i = 0; i < file.aliases.size(); ++i) {
+      detail::json alias;
+      SerializeGltfFileAlias(file.aliases[i], alias);
+      detail::JsonPushBack(aliases, std::move(alias));
+    }
+    detail::JsonAddMember(o, "aliases", std::move(aliases));
+  }
+  if (!file.name.empty()) {
+    SerializeStringProperty("name", file.name, o);
+  }
+  SerializeExtrasAndExtensions(file, o);
+}
+
+static void SerializeGltfExternalAsset(const ExternalAsset &asset,
+                                       detail::json &o) {
+  if (asset.file != -1) {
+    SerializeNumberProperty<int>("file", asset.file, o);
+  }
+  if (!asset.name.empty()) {
+    SerializeStringProperty("name", asset.name, o);
+  }
+  SerializeExtrasAndExtensions(asset, o);
+}
+
+static void SerializeGltfBoxShape(const BoxShape &shape, detail::json &o) {
+  if (!shape.size.empty()) {
+    SerializeNumberArrayProperty<double>("size", shape.size, o);
+  }
+  SerializeExtrasAndExtensions(shape, o);
+}
+
+static void SerializeGltfSphereShape(const SphereShape &shape, detail::json &o) {
+  SerializeNumberProperty("radius", shape.radius, o);
+  SerializeExtrasAndExtensions(shape, o);
+}
+
+static void SerializeGltfCapsuleShape(const CapsuleShape &shape,
+                                      detail::json &o) {
+  SerializeNumberProperty("height", shape.height, o);
+  SerializeNumberProperty("radiusBottom", shape.radiusBottom, o);
+  SerializeNumberProperty("radiusTop", shape.radiusTop, o);
+  SerializeExtrasAndExtensions(shape, o);
+}
+
+static void SerializeGltfCylinderShape(const CylinderShape &shape,
+                                       detail::json &o) {
+  SerializeNumberProperty("height", shape.height, o);
+  SerializeNumberProperty("radiusBottom", shape.radiusBottom, o);
+  SerializeNumberProperty("radiusTop", shape.radiusTop, o);
+  SerializeExtrasAndExtensions(shape, o);
+}
+
+static void SerializeGltfShape(const Shape &shape, detail::json &o) {
+  SerializeStringProperty("type", shape.type, o);
+  if (!shape.name.empty()) {
+    SerializeStringProperty("name", shape.name, o);
+  }
+
+  if (shape.type.compare("box") == 0) {
+    detail::json box;
+    SerializeGltfBoxShape(shape.box, box);
+    detail::JsonAddMember(o, "box", std::move(box));
+  } else if (shape.type.compare("sphere") == 0) {
+    detail::json sphere;
+    SerializeGltfSphereShape(shape.sphere, sphere);
+    detail::JsonAddMember(o, "sphere", std::move(sphere));
+  } else if (shape.type.compare("capsule") == 0) {
+    detail::json capsule;
+    SerializeGltfCapsuleShape(shape.capsule, capsule);
+    detail::JsonAddMember(o, "capsule", std::move(capsule));
+  } else if (shape.type.compare("cylinder") == 0) {
+    detail::json cylinder;
+    SerializeGltfCylinderShape(shape.cylinder, cylinder);
+    detail::JsonAddMember(o, "cylinder", std::move(cylinder));
+  } else if (shape.type.compare("plane") == 0) {
+    detail::json plane;
+    if (shape.plane.sizeX > 0.0) {
+      SerializeNumberProperty("sizeX", shape.plane.sizeX, plane);
+    }
+    if (shape.plane.sizeZ > 0.0) {
+      SerializeNumberProperty("sizeZ", shape.plane.sizeZ, plane);
+    }
+    SerializeExtrasAndExtensions(shape.plane, plane);
+    detail::JsonAddMember(o, "plane", std::move(plane));
+  }
+
+  SerializeExtrasAndExtensions(shape, o);
 }
 
 ///
@@ -8389,6 +9209,42 @@ static void SerializeGltfModel(const Model *model, detail::json &o) {
       detail::JsonPushBack(scenes, std::move(currentScene));
     }
     detail::JsonAddMember(o, "scenes", std::move(scenes));
+  }
+
+  // FILES (glTF 2.1)
+  if (model->files.size()) {
+    detail::json files;
+    detail::JsonReserveArray(files, model->files.size());
+    for (unsigned int i = 0; i < model->files.size(); ++i) {
+      detail::json file;
+      SerializeGltfFile(model->files[i], file);
+      detail::JsonPushBack(files, std::move(file));
+    }
+    detail::JsonAddMember(o, "files", std::move(files));
+  }
+
+  // EXTERNAL ASSETS (glTF 2.1)
+  if (model->externalAssets.size()) {
+    detail::json externalAssets;
+    detail::JsonReserveArray(externalAssets, model->externalAssets.size());
+    for (unsigned int i = 0; i < model->externalAssets.size(); ++i) {
+      detail::json asset;
+      SerializeGltfExternalAsset(model->externalAssets[i], asset);
+      detail::JsonPushBack(externalAssets, std::move(asset));
+    }
+    detail::JsonAddMember(o, "externalAssets", std::move(externalAssets));
+  }
+
+  // SHAPES (glTF 2.1)
+  if (model->shapes.size()) {
+    detail::json shapes;
+    detail::JsonReserveArray(shapes, model->shapes.size());
+    for (unsigned int i = 0; i < model->shapes.size(); ++i) {
+      detail::json shape;
+      SerializeGltfShape(model->shapes[i], shape);
+      detail::JsonPushBack(shapes, std::move(shape));
+    }
+    detail::JsonAddMember(o, "shapes", std::move(shapes));
   }
 
   // SKINS
@@ -8592,37 +9448,63 @@ static bool WriteGltfFile(const std::string &output,
 #endif
 }
 
+// Writes a GLB binary stream. When `useV3` is true, emits glTF 2.1 GLB binary version 3 (64-bit
+// length fields + a reserved chunk-encoding field, always 0); otherwise emits version 2. See the
+// version-aware layout documented in TinyGLTF::LoadBinaryFromMemory.
 static bool WriteBinaryGltfStream(std::ostream &stream,
                                   const std::string &content,
-                                  const std::vector<unsigned char> &binBuffer) {
+                                  const std::vector<unsigned char> &binBuffer,
+                                  bool useV3 = false) {
   const std::string header = "glTF";
-  const int version = 2;
+  const uint32_t version = useV3 ? 3u : 2u;
 
-  const uint32_t content_size = uint32_t(content.size());
-  const uint32_t binBuffer_size = uint32_t(binBuffer.size());
+  const uint64_t content_size = uint64_t(content.size());
+  const uint64_t binBuffer_size = uint64_t(binBuffer.size());
   // determine number of padding bytes required to ensure 4 byte alignment
-  const uint32_t content_padding_size =
+  const uint64_t content_padding_size =
       content_size % 4 == 0 ? 0 : 4 - content_size % 4;
-  const uint32_t bin_padding_size =
+  const uint64_t bin_padding_size =
       binBuffer_size % 4 == 0 ? 0 : 4 - binBuffer_size % 4;
 
-  // 12 bytes for header, JSON content length, 8 bytes for JSON chunk info.
-  // Chunk data must be located at 4-byte boundary, which may require padding
-  const uint32_t length =
-      12 + 8 + content_size + content_padding_size +
-      (binBuffer_size ? (8 + binBuffer_size + bin_padding_size) : 0);
+  // v2: 12-byte header + 8-byte chunk headers. v3: 16-byte header + 16-byte chunk headers.
+  const uint64_t headerSize = useV3 ? 16ull : 12ull;
+  const uint64_t chunkHeaderSize = useV3 ? 16ull : 8ull;
+
+  // Chunk data must be located at a 4-byte boundary, which may require padding.
+  const uint64_t length =
+      headerSize + chunkHeaderSize + content_size + content_padding_size +
+      (binBuffer_size ? (chunkHeaderSize + binBuffer_size + bin_padding_size)
+                      : 0);
+
+  const uint32_t chunk_encoding = 0;  // reserved (glTF 2.1); always 0
 
   stream.write(header.c_str(), std::streamsize(header.size()));
   stream.write(reinterpret_cast<const char *>(&version), sizeof(version));
-  stream.write(reinterpret_cast<const char *>(&length), sizeof(length));
+  if (useV3) {
+    const uint64_t length64 = length;
+    stream.write(reinterpret_cast<const char *>(&length64), sizeof(length64));
+  } else {
+    const uint32_t length32 = uint32_t(length);
+    stream.write(reinterpret_cast<const char *>(&length32), sizeof(length32));
+  }
 
   // JSON chunk info, then JSON data
-  const uint32_t model_length = uint32_t(content.size()) + content_padding_size;
+  const uint64_t model_length = content_size + content_padding_size;
   const uint32_t model_format = 0x4E4F534A;
-  stream.write(reinterpret_cast<const char *>(&model_length),
-               sizeof(model_length));
-  stream.write(reinterpret_cast<const char *>(&model_format),
-               sizeof(model_format));
+  if (useV3) {
+    stream.write(reinterpret_cast<const char *>(&model_length),
+                 sizeof(model_length));
+    stream.write(reinterpret_cast<const char *>(&model_format),
+                 sizeof(model_format));
+    stream.write(reinterpret_cast<const char *>(&chunk_encoding),
+                 sizeof(chunk_encoding));
+  } else {
+    const uint32_t model_length32 = uint32_t(model_length);
+    stream.write(reinterpret_cast<const char *>(&model_length32),
+                 sizeof(model_length32));
+    stream.write(reinterpret_cast<const char *>(&model_format),
+                 sizeof(model_format));
+  }
   stream.write(content.c_str(), std::streamsize(content.size()));
 
   // Chunk must be multiplies of 4, so pad with spaces
@@ -8632,12 +9514,22 @@ static bool WriteBinaryGltfStream(std::ostream &stream,
   }
   if (binBuffer.size() > 0) {
     // BIN chunk info, then BIN data
-    const uint32_t bin_length = uint32_t(binBuffer.size()) + bin_padding_size;
+    const uint64_t bin_length = binBuffer_size + bin_padding_size;
     const uint32_t bin_format = 0x004e4942;
-    stream.write(reinterpret_cast<const char *>(&bin_length),
-                 sizeof(bin_length));
-    stream.write(reinterpret_cast<const char *>(&bin_format),
-                 sizeof(bin_format));
+    if (useV3) {
+      stream.write(reinterpret_cast<const char *>(&bin_length),
+                   sizeof(bin_length));
+      stream.write(reinterpret_cast<const char *>(&bin_format),
+                   sizeof(bin_format));
+      stream.write(reinterpret_cast<const char *>(&chunk_encoding),
+                   sizeof(chunk_encoding));
+    } else {
+      const uint32_t bin_length32 = uint32_t(bin_length);
+      stream.write(reinterpret_cast<const char *>(&bin_length32),
+                   sizeof(bin_length32));
+      stream.write(reinterpret_cast<const char *>(&bin_format),
+                   sizeof(bin_format));
+    }
     stream.write(reinterpret_cast<const char *>(binBuffer.data()),
                  std::streamsize(binBuffer.size()));
     // Chunksize must be multiplies of 4, so pad with zeroes
@@ -8655,7 +9547,8 @@ static bool WriteBinaryGltfStream(std::ostream &stream,
 
 static bool WriteBinaryGltfFile(const std::string &output,
                                 const std::string &content,
-                                const std::vector<unsigned char> &binBuffer) {
+                                const std::vector<unsigned char> &binBuffer,
+                                bool useV3 = false) {
 #ifndef TINYGLTF_NO_FS
 #ifdef _WIN32
 #if defined(_MSC_VER)
@@ -8672,15 +9565,15 @@ static bool WriteBinaryGltfFile(const std::string &output,
 #else
   std::ofstream gltfFile(output.c_str(), std::ios::binary);
 #endif
-  return WriteBinaryGltfStream(gltfFile, content, binBuffer);
+  return WriteBinaryGltfStream(gltfFile, content, binBuffer, useV3);
 #else
     return false;
 #endif
 }
 
 bool TinyGLTF::WriteGltfSceneToStream(const Model *model, std::ostream &stream,
-                                      bool prettyPrint = true,
-                                      bool writeBinary = false) {
+                                      bool prettyPrint, bool writeBinary,
+                                      bool writeBinaryV3) {
   detail::JsonDocument output;
 
   /// Serialize all properties except buffers and images.
@@ -8727,8 +9620,8 @@ bool TinyGLTF::WriteGltfSceneToStream(const Model *model, std::ostream &stream,
   }
 
   if (writeBinary) {
-    return WriteBinaryGltfStream(stream, detail::JsonToString(output),
-                                 binBuffer);
+    return WriteBinaryGltfStream(stream, detail::JsonToString(output), binBuffer,
+                                 writeBinaryV3);
   } else {
     return WriteGltfStream(stream,
                            detail::JsonToString(output, prettyPrint ? 2 : -1));
@@ -8737,10 +9630,9 @@ bool TinyGLTF::WriteGltfSceneToStream(const Model *model, std::ostream &stream,
 
 bool TinyGLTF::WriteGltfSceneToFile(const Model *model,
                                     const std::string &filename,
-                                    bool embedImages = false,
-                                    bool embedBuffers = false,
-                                    bool prettyPrint = true,
-                                    bool writeBinary = false) {
+                                    bool embedImages, bool embedBuffers,
+                                    bool prettyPrint, bool writeBinary,
+                                    bool writeBinaryV3) {
   detail::JsonDocument output;
   std::string defaultBinFilename = GetBaseFilename(filename);
   std::string defaultBinFileExt = ".bin";
@@ -8835,8 +9727,8 @@ bool TinyGLTF::WriteGltfSceneToFile(const Model *model,
   }
 
   if (writeBinary) {
-    return WriteBinaryGltfFile(filename, detail::JsonToString(output),
-                               binBuffer);
+    return WriteBinaryGltfFile(filename, detail::JsonToString(output), binBuffer,
+                               writeBinaryV3);
   } else {
     return WriteGltfFile(filename,
                          detail::JsonToString(output, (prettyPrint ? 2 : -1)));

@@ -72,7 +72,7 @@ struct PbrMaterial
   float  diffuseTransmissionFactor;  // KHR_materials_diffuse_transmission
   float3 diffuseTransmissionColor;
 
-  float retroreflection;  // EXT_materials_retroreflection [0,1] MRM blend
+  float retroreflection;  // KHR_materials_retroreflection [0,1] MRM blend
 };
 
 /* 

@@ -194,12 +194,12 @@ ErrorWithText KTXImage::allocate(uint32_t _num_mips, uint32_t _num_layers, uint3
   {
     return "Computing the required number of subresources overflowed a size_t!";
   }
-  return ResizeVectorOrError(data, num_subresources);
+  return ResizeVectorOrError(m_data, num_subresources);
 }
 
 void KTXImage::clear()
 {
-  data.clear();
+  m_data.clear();
 }
 
 std::vector<char>& KTXImage::subresource(uint32_t mip, uint32_t layer, uint32_t face)
@@ -213,7 +213,7 @@ std::vector<char>& KTXImage::subresource(uint32_t mip, uint32_t layer, uint32_t 
 
   // Here's the layout for data that we use. Note that we store the lowest mips
   // (mip 0) first, while the KTX format stores the highest mips first.
-  return data[(size_t(mip) * size_t(num_layers_clamped) + size_t(layer)) * size_t(num_faces) + size_t(face)];
+  return m_data[(size_t(mip) * size_t(num_layers_clamped) + size_t(layer)) * size_t(num_faces) + size_t(face)];
 }
 
 VkImageType KTXImage::getImageType() const
@@ -232,9 +232,39 @@ VkImageType KTXImage::getImageType() const
   }
 }
 
-uint32_t KTXImage::getKTXVersion() const
+bool KTXImage::requiresComplexDecoding() const
 {
-  return read_ktx_version;
+  return m_file_info.ktx1_needs_endian_swap                           // Requires endian swapping
+         || m_file_info.ktx2_supercompression_scheme != 0             // Requires inflation
+         || (m_file_info.ktx2_color_model == KHR_DF_MODEL_ETC1S       //
+             || m_file_info.ktx2_color_model == KHR_DF_MODEL_UASTC);  // Requires transcoding
+}
+
+const SubresourceLayout& KTXImage::getSubresourceLayout(uint32_t mip, uint32_t layer, uint32_t face) const
+{
+  return const_cast<KTXImage*>(this)->subresourceLayout(mip, layer, face);
+}
+
+SubresourceLayout& KTXImage::subresourceLayout(uint32_t mip, uint32_t layer, uint32_t face)
+{
+  return m_subresource_layouts[(size_t(mip) * std::max(1u, num_layers_possibly_0) + layer) * num_faces + face];
+}
+
+size_t KTXImage::getSubresourceByteSizeSum(const SubresourceRange& range) const
+{
+  size_t       sum                = 0;
+  const size_t subresourcesPerMip = size_t(range.numLayers) * range.numFaces;
+  for(uint32_t mip = range.firstMip; mip < range.firstMip + range.numMips; mip++)
+  {
+    // All subresources for a given mip have the same size, so we can do this:
+    sum += getSubresourceByteSize(mip) * subresourcesPerMip;
+  }
+  return sum;
+}
+
+size_t KTXImage::getMipByteSizeSum(uint32_t mip) const
+{
+  return size_t(getSubresourceByteSize(mip)) * std::max(1u, num_layers_possibly_0) * num_faces;
 }
 
 // Macro for "read this variable from the istream; if it fails, return an error message"
@@ -790,29 +820,33 @@ struct KTX1TopLevelHeader
 };
 }  // namespace
 
-// Reads a KTX 1.0 file, *starting after the 12-byte identifier*.
-ErrorWithText KTXImage::readFromKTX1Stream(std::istream& input, const ReadSettings& readSettings)
+// Reads the header of a KTX 1.0 file, *starting after the 12-byte identifier*.
+ErrorWithText KTXImage::readHeaderFromKTX1Stream(std::istream& input, const ReadSettings& readSettings)
 {
+  // The start of the KTX 1.0 file.
+  const std::streampos start_pos = input.tellg() - std::streamoff(IDENTIFIER_LEN);
+
+  // Record size of the input for validation, if that's enabled.
   size_t validation_input_size = 0;
   if(readSettings.validate_input_size)
   {
-    const std::streampos initial_pos = input.tellg();
     input.seekg(0, std::ios_base::end);
     const std::streampos end_pos = input.tellg();
-    validation_input_size        = end_pos - initial_pos + 12;
-    input.seekg(initial_pos, std::ios_base::beg);
+    validation_input_size        = static_cast<size_t>(end_pos - start_pos);
+    input.seekg(start_pos + std::streamoff(IDENTIFIER_LEN), std::ios_base::beg);
   }
 
   KTX1TopLevelHeader header{};
   READ_OR_ERROR(input, header, "Failed to read KTX1 header.");
   // Determine if the file needs to be swapped from big-endian to little-endian.
-  // (We assume the machine is little-endian as we use CUDA.)
-  // If this is true, we need to swap every UInt32 in the KTX1 File Structure
-  // as well as each element in uncompressed texture data.
-  bool needsSwapEndian = false;
+  // (We assume the machine is little-endian.)
+  // If this is true, then when making the file's data usable by the GPU,
+  // we need to swap every UInt32 in the KTX1 File Structure as well as
+  // each element in uncompressed texture data.
+  m_file_info.ktx1_needs_endian_swap = false;
   if(header.endianness == 0x01020304u)
   {
-    needsSwapEndian = true;
+    m_file_info.ktx1_needs_endian_swap = true;
   }
   else if(header.endianness != 0x04030201u)
   {
@@ -821,10 +855,12 @@ ErrorWithText KTXImage::readFromKTX1Stream(std::istream& input, const ReadSettin
     return str.str();
   }
 
-  if(needsSwapEndian)
+  if(m_file_info.ktx1_needs_endian_swap)
   {
     SwapEndian32<KTX1TopLevelHeader>(header);
   }
+
+  m_file_info.ktx1_gl_type_size = header.glTypeSize;
 
   // Set the dimensions in the structure to indicate the size and type of the
   // texture. Then replace some fields with 1 if they were 0 to make the rest
@@ -840,13 +876,8 @@ ErrorWithText KTXImage::readFromKTX1Stream(std::istream& input, const ReadSettin
   {
     header.numberOfMipmapLevels = 1;
   }
-  // Because KTX1 files store mips from largest to smallest (as opposed to KTX2),
-  // we can handle readSettings.mips by truncating num_mips.
-  if(!readSettings.mips)
-  {
-    header.numberOfMipmapLevels = 1;
-  }
-  num_mips = (readSettings.mips ? header.numberOfMipmapLevels : 1);
+  num_mips = header.numberOfMipmapLevels;
+
   // Keep track of the special case where we have padding with non-array cubemap textures:
   const bool isArray = (header.numberOfArrayElements != 0);
   if(!isArray)
@@ -876,14 +907,16 @@ ErrorWithText KTXImage::readFromKTX1Stream(std::istream& input, const ReadSettin
   {
     return "KTX1 image had more than 31 mips!";
   }
+
+  size_t num_subresources = 0;
+  if(!GetNumSubresources(num_mips, num_layers_possibly_0, num_faces, num_subresources))
+  {
+    return "Computing the number of mips times layers times faces in the file overflowed!";
+  }
+
   if(readSettings.validate_input_size)
   {
-    size_t validation_num_subresources = 0;
-    if(!GetNumSubresources(num_mips, num_layers_possibly_0, num_faces, validation_num_subresources))
-    {
-      return "Computing the number of mips times layers times faces in the file overflowed!";
-    }
-    if(validation_num_subresources > validation_input_size)
+    if(num_subresources > validation_input_size)
     {
       return "The KTX1 input had a likely invalid header - it listed " + std::to_string(num_mips) + " mips (or 0), "
              + std::to_string(num_layers_possibly_0) + " layers (or 0), and " + std::to_string(num_faces)
@@ -898,7 +931,7 @@ ErrorWithText KTXImage::readFromKTX1Stream(std::istream& input, const ReadSettin
 
   //---------------------------------------------------------------------------
   // Read key-value data.
-  UNWRAP_ERROR(ReadKeyValueData(input, header.bytesOfKeyValueData, needsSwapEndian, key_value_data));
+  UNWRAP_ERROR(ReadKeyValueData(input, header.bytesOfKeyValueData, m_file_info.ktx1_needs_endian_swap, key_value_data));
 
   // KTX1 doesn't have ktxSwizzle, so:
   swizzle = {KTX_SWIZZLE::R, KTX_SWIZZLE::G, KTX_SWIZZLE::B, KTX_SWIZZLE::A};
@@ -921,16 +954,17 @@ ErrorWithText KTXImage::readFromKTX1Stream(std::istream& input, const ReadSettin
   // EXT_texture_compression_s3tc.
   is_premultiplied = false;
 
-  // Allocate table of subresources.
-  UNWRAP_ERROR(allocate(num_mips, num_layers_possibly_0, num_faces));
+  // Allocate and fill out subresource layouts while validating the rest of the file.
+  UNWRAP_ERROR(ResizeVectorOrError(m_subresource_layouts, num_subresources));
+  size_t remainingAllowedUncompressedBytes = readSettings.max_size_in_bytes;
 
   for(uint32_t mip = 0; mip < header.numberOfMipmapLevels; mip++)
   {
     // Read the image size. We use this for mip padding later on, and rely on
     // ExportSize for individual subresources.
     uint32_t imageSize = 0;
-    READ_OR_ERROR(input, imageSize, "Failed to read KTX1 imageSize for mip 0.");
-    if(needsSwapEndian)
+    READ_OR_ERROR(input, imageSize, "Failed to read KTX1 imageSize for mip " + std::to_string(mip) + ".");
+    if(m_file_info.ktx1_needs_endian_swap)
     {
       SwapEndian32(imageSize);
     }
@@ -943,6 +977,21 @@ ErrorWithText KTXImage::readFromKTX1Stream(std::istream& input, const ReadSettin
     size_t faceSizeBytes = 0;
     UNWRAP_ERROR(ExportSizeExtended(mipWidth, mipHeight, mipDepth, format, faceSizeBytes, readSettings.custom_size_callback));
     // Validate it
+    {
+      size_t maxUncompressedMipSize = 0;
+      if(!checked_math::mul3(faceSizeBytes, header.numberOfArrayElements, header.numberOfFaces, maxUncompressedMipSize))
+      {
+        return "The number of uncompressed bytes to store decompressed mip " + std::to_string(mip) + " would have overflowed a size_t.";
+      }
+
+      if(remainingAllowedUncompressedBytes < maxUncompressedMipSize)
+      {
+        return "This file would require more than the limit of max_size_in_bytes = "
+               + std::to_string(readSettings.max_size_in_bytes) + " bytes without supercompression.";
+      }
+      remainingAllowedUncompressedBytes -= maxUncompressedMipSize;
+    }
+
     if(readSettings.validate_input_size)
     {
       if(((validation_input_size / size_t(header.numberOfArrayElements)) / size_t(header.numberOfFaces)) < faceSizeBytes)
@@ -957,25 +1006,14 @@ ErrorWithText KTXImage::readFromKTX1Stream(std::istream& input, const ReadSettin
     {
       for(uint32_t face = 0; face < header.numberOfFaces; face++)
       {
-        // Allocate storage for the encoded face
-        std::vector<char>& faceBuffer = subresource(mip, array_element, face);
-        ErrorWithText      maybeError = ResizeVectorOrError(faceBuffer, faceSizeBytes);
-        if(maybeError.has_value())
-        {
-          return "Allocating encoded data for mip " + std::to_string(mip) + " layer " + std::to_string(array_element)
-                 + " face " + std::to_string(face) + " failed (probably out of memory).";
-        }
+        subresourceLayout(mip, array_element, face) = SubresourceLayout{.fileOffset = size_t(input.tellg() - start_pos),
+                                                                        .fileByteSize         = faceSizeBytes,
+                                                                        .uncompressedByteSize = faceSizeBytes};
 
-        if(!input.read(faceBuffer.data(), faceSizeBytes))
+        if(!input.seekg(static_cast<std::streamoff>(faceSizeBytes), std::ios_base::cur))
         {
-          return "Reading mip " + std::to_string(mip) + " layer " + std::to_string(array_element) + " face "
+          return "Seeking past mip " + std::to_string(mip) + " layer " + std::to_string(array_element) + " face "
                  + std::to_string(face) + " failed (is the file truncated)?";
-        }
-
-        // Apply endianness swapping
-        if(needsSwapEndian)
-        {
-          SwapEndianGeneral(faceBuffer.size(), faceBuffer.data(), header.glTypeSize);
         }
 
         // Handle cubePadding
@@ -984,59 +1022,80 @@ ErrorWithText KTXImage::readFromKTX1Stream(std::istream& input, const ReadSettin
           // faceSizeBytes mod 4: 0 1 2 3
           // cubePadding        : 0 3 2 1
           const std::streamoff cubePaddingBytes = 3 - ((static_cast<std::streamoff>(faceSizeBytes) + 3) % 4);
-          input.seekg(cubePaddingBytes, std::ios_base::cur);
+          if(!input.seekg(cubePaddingBytes, std::ios_base::cur))
+          {
+            return "Seeking past KTX1 cube padding failed. Is the input truncated?";
+          }
         }
       }
     }
+
     // Handle mip padding. The spec says that this is always 3 - ((imageSize + 3)%4) bytes,
     // and we assume bytes are the same size as chars.
+    const std::streamoff mipPaddingBytes = 3 - ((static_cast<std::streamoff>(imageSize) + 3) % 4);
+    if(!input.seekg(mipPaddingBytes, std::ios_base::cur))
     {
-      const std::streamoff mipPaddingBytes = 3 - ((static_cast<std::streamoff>(imageSize) + 3) % 4);
-      input.seekg(mipPaddingBytes, std::ios_base::cur);
+      return "Seeking past KTX1 mip padding failed. Is the input truncated?";
     }
   }
 
   return {};
 }
 
+// readSubresourcesFromStream() backend for a KTX1 file.
+ErrorWithText KTXImage::readSubresourcesFromKTX1Stream(std::istream& input, const SubresourceRange& range, SubresourceTarget* outSubresources)
+{
+  const std::streamoff start_pos = input.tellg();
+
+  for(uint32_t d_mip = 0; d_mip < range.numMips; d_mip++)
+  {
+    for(uint32_t d_layer = 0; d_layer < range.numLayers; d_layer++)
+    {
+      for(uint32_t d_face = 0; d_face < range.numFaces; d_face++)
+      {
+        const uint32_t mip   = range.firstMip + d_mip;
+        const uint32_t layer = range.firstLayer + d_layer;
+        const uint32_t face  = range.firstFace + d_face;
+
+        const SubresourceLayout& subresource_layout = getSubresourceLayout(mip, layer, face);
+
+        SubresourceTarget& target = outSubresources[(d_mip * range.numLayers + d_layer) * range.numFaces + d_face];
+
+        if(!input.seekg(start_pos + subresource_layout.fileOffset, std::ios_base::beg))
+        {
+          return "Seeking to the data for mip " + std::to_string(mip) + " layer " + std::to_string(layer) + " face "
+                 + std::to_string(face) + " failed. Is the input truncated?";
+        }
+
+        if(!input.read(reinterpret_cast<char*>(target.data), subresource_layout.fileByteSize))
+        {
+          return "Reading the data for mip " + std::to_string(mip) + " layer " + std::to_string(layer) + " face "
+                 + std::to_string(face) + " failed. Is the input truncated?";
+        }
+
+        // Apply endianness swapping
+        if(m_file_info.ktx1_needs_endian_swap)
+        {
+          SwapEndianGeneral(subresource_layout.fileByteSize, target.data, m_file_info.ktx1_gl_type_size);
+        }
+      }
+    }
+  }
+
+  return {};
+}
 
 //-----------------------------------------------------------------------------
 // KTX2 READER + WRITER
 //-----------------------------------------------------------------------------
 
-// KDF_DF_MODEL_UASTC (not KHR_DF) is only defined in the KTX2 spec at the
-// moment per https://github.com/KhronosGroup/KTX-Specification/issues/119,
-// and has value 166.
-const uint32_t KDF_DF_MODEL_UASTC = 166;
-// Similarly, these channel types are only described in the KTX2 spec at the moment.
-// We include an enum for quick combination lookup.
-const uint32_t KHR_DF_CHANNEL_ETC1S_RGB = 0;
-const uint32_t KHR_DF_CHANNEL_ETC1S_RRR = 3;
-const uint32_t KHR_DF_CHANNEL_ETC1S_GGG = 4;
-const uint32_t KHR_DF_CHANNEL_ETC1S_AAA = 15;
-// Describes the four valid combinations of ETC1S slices in the KTX2
-// specification. These are listed in the order they appear there.
-enum class ETC1SCombination
-{
-  RGB,   // One slice, RGB
-  RGBA,  // Two slices, RGB + AAA
-  R,     // One slice, RRR
-  RG     // Two slices, RRR + GGG
-};
 // Also specific to Basis ETC1S+BasisLZ - Basis includes support for texture
 // array animation encoding using P-frames and I-frames, and it marks which
 // frames are which using flags in its table of image descriptions.
 // This is the "isPFrame" flag in the KTX2 specification.
 const uint32_t KTX2_IMAGE_IS_P_FRAME = 2;
 
-// KTX 2 Level Index structure (Section 3.9.7 "Level Index")
-struct LevelIndex
-{
-  uint64_t byteOffset;
-  uint64_t byteLength;
-  uint64_t uncompressedByteLength;
-};
-static_assert(sizeof(LevelIndex) == 3 * sizeof(uint64_t), "LevelIndex size must match KTX2 spec!");
+static_assert(sizeof(SubresourceLayout) == 3 * sizeof(uint64_t), "SubresourceLayout size must match KTX2 spec!");
 
 #ifdef NVP_SUPPORTS_ZSTD
 // A Zstandard decompression context that is automatically freed when it goes out of scope.
@@ -1336,19 +1395,18 @@ static_assert(sizeof(VkFormat) == sizeof(uint32_t), "VkFormat size must match KT
 static_assert(sizeof(KTX2TopLevelHeader) == 68, "KTX2 top-level header size must match spec! Padding issue?");
 
 // Reads a KTX 2.0 file, *starting after the 12-byte identifier*.
-ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettings& readSettings)
+ErrorWithText KTXImage::readHeaderFromKTX2Stream(std::istream& input, const ReadSettings& readSettings)
 {
   // Get the position of the start of the file in the stream so that we can add
   // padding correctly later.
-  const std::streampos start_pos = input.tellg() - std::streampos(12);  // Since we start after the identifier
-  size_t               validation_input_size = 0;
+  const std::streampos start_pos = input.tellg() - std::streampos(IDENTIFIER_LEN);  // Since we start after the identifier
+  size_t validation_input_size = 0;
   if(readSettings.validate_input_size)
   {
-    const std::streampos initial_pos = input.tellg();
     input.seekg(0, std::ios_base::end);
     const std::streampos end_pos = input.tellg();
-    validation_input_size        = end_pos - initial_pos + 12;
-    input.seekg(initial_pos, std::ios_base::beg);
+    validation_input_size        = static_cast<size_t>(end_pos - start_pos);
+    input.seekg(start_pos + std::streampos(IDENTIFIER_LEN), std::ios_base::beg);
   }
 
   //---------------------------------------------------------------------------
@@ -1358,7 +1416,9 @@ ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettin
 
   // Copy the dimensions into the structure so that we can determine the
   // texture type later.
-  format = header.vkFormat;  // This is the inflated VkFormat; we may swap this out during supercompression due to transcoding.
+  // `format` is the inflated VkFormat; we may swap it out as we read more
+  // supercompression info due to transcoding.
+  format                = header.vkFormat;
   mip_0_width           = header.pixelWidth;
   mip_0_height          = header.pixelHeight;
   mip_0_depth           = header.pixelDepth;
@@ -1384,24 +1444,19 @@ ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettin
     header.faceCount = 1;
   // KTX files also only use levelCount == 0 to indicate that loaders should
   // generate other levels if needed (section 3.7 "levelCount"). Since the user
-  // ultimately controls this and we always only load the first mip, we change
-  // a 0 to a 1 here as well.
+  // ultimately controls this, we change a 0 to a 1 here as well.
   // We have a special case where we need max(1, the original number of levels)
   // for Basis ETC1S unpacking.
-  const uint32_t original_num_mips_max_1 = std::max(1u, header.levelCount);
-  app_should_generate_mips               = (header.levelCount == 0);
+  app_should_generate_mips = (header.levelCount == 0);
   if(app_should_generate_mips)
   {
     header.levelCount = 1;
   }
-  num_mips = (readSettings.mips ? static_cast<int>(header.levelCount) : 1);
-
+  num_mips  = header.levelCount;
   num_faces = header.faceCount;
 
   // Validate the data format descriptor byte length. KDF 1.3 assumes the Data
-  // Format Descriptor works as a series of 32-bit words, and there's language
-  // in the KTX2 spec that reinforces this (although it may not quite match
-  // the Basic Structure).
+  // Format Descriptor works as a series of 32-bit words.
   if((header.dfdByteLength % 4) != 0)
   {
     return "KTX2 Data Format Descriptor byte length was not a multiple of 4, so is not valid.";
@@ -1410,24 +1465,26 @@ ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettin
   // Validate the level count because we allocate memory based off it. It can't
   // be larger than 31 - if it were, then pixelWidth and pixelHeight wouldn't
   // fit in UInt32 types.
-  if(original_num_mips_max_1 > 31)
+  if(num_mips > 31)
   {
     std::stringstream str;
-    str << "KTX2 levelCount was too large (" << original_num_mips_max_1 << ") - the "
+    str << "KTX2 levelCount was too large (" << num_mips << ") - the "
         << "maximum number of mips possible in a KTX2 file is 31.";
     return str.str();
   }
+
+  size_t num_subresources = 0;
+  if(!GetNumSubresources(num_mips, num_layers_possibly_0, num_faces, num_subresources))
+  {
+    return "Computing the number of mips times layers times faces in the file overflowed!";
+  }
+
   if(readSettings.validate_input_size)
   {
-    size_t validation_num_subresources = 0;
-    if(!GetNumSubresources(original_num_mips_max_1, num_layers_possibly_0, num_faces, validation_num_subresources))
+    if(num_subresources > validation_input_size)
     {
-      return "Computing the number of mips times layers times faces in the file overflowed!";
-    }
-    if(validation_num_subresources > validation_input_size)
-    {
-      return "The KTX1 input had a likely invalid header - it listed " + std::to_string(original_num_mips_max_1)
-             + " mips (or 0), " + std::to_string(num_layers_possibly_0) + " layers (or 0), and " + std::to_string(num_faces)
+      return "The KTX2 input had a likely invalid header - it listed " + std::to_string(num_mips) + " mips (or 0), "
+             + std::to_string(num_layers_possibly_0) + " layers (or 0), and " + std::to_string(num_faces)
              + " faces - but the input was only " + std::to_string(validation_input_size) + " bytes long!";
     }
     if(header.dfdByteLength > validation_input_size)
@@ -1444,32 +1501,15 @@ ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettin
 
   //---------------------------------------------------------------------------
   // Load the level indices (section 2)
-  std::vector<LevelIndex> levelIndices(original_num_mips_max_1);
-  if(!input.read(reinterpret_cast<char*>(levelIndices.data()), sizeof(LevelIndex) * original_num_mips_max_1))
+  UNWRAP_ERROR(ResizeVectorOrError(m_level_indices, num_mips));
+  if(!input.read(reinterpret_cast<char*>(m_level_indices.data()), sizeof(SubresourceLayout) * num_mips))
   {
     return "Unable to read Level Index from KTX2 file.";
-  }
-
-  // Check the size of the level indices against the developer-supplied limits
-  for(size_t i = 0; i < levelIndices.size(); i++)
-  {
-    if(levelIndices[i].uncompressedByteLength > readSettings.max_resource_size_in_bytes)
-    {
-      return "Mip level " + std::to_string(i) + "'s uncompressedByteLength ("
-        + std::to_string(levelIndices[i].uncompressedByteLength)
-        + ") was larger than the max image size in bytes per mip specified in "
-        "the KTX reader's ReadSettings ("
-        + std::to_string(readSettings.max_resource_size_in_bytes)
-        + "). This file is either invalid, or if this size is intended, "
-        "ReadSettings::max_resource_size_in_bytes should be set to a larger value.";
-    }
   }
 
   //---------------------------------------------------------------------------
   // Load the Data Format Descriptor. We read this as a uint32_t array and then
   // interpret it later.
-  // We also start counting the number of bytes read here so that we can handle
-  // the align(8) sgdPadding correctly.
   std::vector<uint32_t> dfd;
   UNWRAP_ERROR(ResizeVectorOrError(dfd, header.dfdByteLength / 4));
   if(!input.read(reinterpret_cast<char*>(dfd.data()), header.dfdByteLength))
@@ -1519,15 +1559,8 @@ ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettin
     }
   }
 
-
-  uint32_t khrDfPrimaries              = KHR_DF_PRIMARIES_SRGB;
-  is_premultiplied                     = false;
-  is_srgb                              = true;
-  size_t           basisETC1SNumSlices = 1;  // Basis ETC1S can have 1 or two slices (which occurs in RGBA and R+G)
-  ETC1SCombination basisETC1SCombo{};
-#ifdef NVP_SUPPORTS_BASISU
-  basist::transcoder_texture_format basisDstFmt = basist::transcoder_texture_format::cTFBC7_RGBA;  // Same as the inflated VkFormat but in an enum Basis uses
-#endif
+  is_premultiplied = false;
+  is_srgb          = true;
   if(basicDFDExists)
   {
     if((basicDFD.flags & KHR_DF_FLAG_ALPHA_PREMULTIPLIED) != 0)
@@ -1548,98 +1581,91 @@ ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettin
       return "KTX2 Data Format Descriptor had an unhandled transferFunction (" + std::to_string(basicDFD.transferFunction) + ")";
     }
 
-    if(header.vkFormat == VK_FORMAT_UNDEFINED)
+    m_file_info.ktx2_color_model = basicDFD.colorModel;
+
+    if(basicDFD.colorModel == KHR_DF_MODEL_UASTC)
     {
-      if(basicDFD.colorModel == KDF_DF_MODEL_UASTC)
-      {
 #ifdef NVP_SUPPORTS_BASISU
-        input_supercompression = InputSupercompression::eBasisUASTC;
-        if(readSettings.device_supports_astc)
-        {
-          // Prefer ASTC, since then transcoding is lossless:
-          format = is_srgb ? VK_FORMAT_ASTC_4x4_SRGB_BLOCK : VK_FORMAT_ASTC_4x4_UNORM_BLOCK;
-        }
-        else
-        {
-          // Otherwise, BC7 is preferred:
-          format = is_srgb ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
-        }
-#else
-        return "KTX2 color model was Basis UASTC, but NVP_SUPPORTS_BASISU was not defined.";
-#endif
-      }
-      else if(basicDFD.colorModel == KHR_DF_MODEL_ETC1S)
+      if(readSettings.device_supports_astc)
       {
-#ifdef NVP_SUPPORTS_BASISU
-        input_supercompression = InputSupercompression::eBasisETC1S;
-        // There are four ETC1S channel possibilities. The final format is
-        // BC4 for RRR, BC5 for RRR+GGG, and BC7 for RGB and RGB+AAA.
-        basisETC1SNumSlices = dfdSamples.size();
-        if(dfdSamples.size() == 1)
-        {
-          // Must be RRR or RGB
-          if(dfdSamples[0].channelType == KHR_DF_CHANNEL_ETC1S_RRR)
-          {
-            basisETC1SCombo = ETC1SCombination::R;
-            basisDstFmt     = basist::transcoder_texture_format::cTFBC4;
-            format          = VK_FORMAT_BC4_UNORM_BLOCK;
-          }
-          else if(dfdSamples[0].channelType == KHR_DF_CHANNEL_ETC1S_RGB)
-          {
-            basisETC1SCombo = ETC1SCombination::RGB;
-            basisDstFmt     = basist::transcoder_texture_format::cTFBC7_RGBA;
-            format          = is_srgb ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
-          }
-          else
-          {
-            return "KTX2 color model was Basis ETC1S, but there was one slice of an unknown channel type ("
-                   + std::to_string(dfdSamples[0].channelType) + ")";
-          }
-        }
-        else if(dfdSamples.size() == 2)
-        {
-          // Must be RRR+GGG or RGB+AAA; we disallow listing these channels
-          // in a different order.
-          if(dfdSamples[0].channelType == KHR_DF_CHANNEL_ETC1S_RRR && dfdSamples[1].channelType == KHR_DF_CHANNEL_ETC1S_GGG)
-          {
-            basisETC1SCombo = ETC1SCombination::RG;
-            basisDstFmt     = basist::transcoder_texture_format::cTFBC5;
-            format          = VK_FORMAT_BC5_UNORM_BLOCK;
-          }
-          else if(dfdSamples[0].channelType == KHR_DF_CHANNEL_ETC1S_RGB && dfdSamples[1].channelType == KHR_DF_CHANNEL_ETC1S_AAA)
-          {
-            basisETC1SCombo = ETC1SCombination::RGBA;
-            basisDstFmt     = basist::transcoder_texture_format::cTFBC7_RGBA;
-            format          = is_srgb ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
-          }
-          else
-          {
-            return "KTX2 color model was Basis ETC1S and there were two slices, but the channel types ("
-                   + std::to_string(dfdSamples[0].channelType) + " and " + std::to_string(dfdSamples[1].channelType) + " were unknown";
-          }
-        }
-        else
-        {
-          return "KTX2 color model was Basis ETC1S, but there were an unusual number of slices ("
-                 + std::to_string(dfdSamples.size()) + ", should be 1 or 2)";
-        }
-#else
-        return "KTX2 color model was Basis ETC1S, but NVP_SUPPORTS_BASISU was not defined.";
-#endif
+        // Prefer ASTC, since then transcoding is lossless:
+        format = is_srgb ? VK_FORMAT_ASTC_4x4_SRGB_BLOCK : VK_FORMAT_ASTC_4x4_UNORM_BLOCK;
       }
       else
       {
-        return "KTX2 VkFormat was VK_FORMAT_UNDEFINED, but the Data Format Descriptor block had unrecognized "
-               "colorModel number "
-               + std::to_string(basicDFD.colorModel) + ".";
+        // Otherwise, BC7 is preferred:
+        format = is_srgb ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
       }
+#else
+      return "KTX2 color model was Basis UASTC, but NVP_SUPPORTS_BASISU was not defined.";
+#endif
+    }
+    else if(basicDFD.colorModel == KHR_DF_MODEL_ETC1S)
+    {
+#ifdef NVP_SUPPORTS_BASISU
+      // There are four ETC1S channel possibilities. The final format is
+      // BC4 for RRR, BC5 for RRR+GGG, and BC7 for RGB and RGB+AAA.
+      m_file_info.ktx2_basis_etc1s_num_slices = dfdSamples.size();
+      if(dfdSamples.size() == 1)
+      {
+        // Must be RRR or RGB
+        if(dfdSamples[0].channelType == KHR_DF_CHANNEL_ETC1S_RRR)
+        {
+          m_file_info.ktx2_basis_etc1s_combination = ETC1SCombination::R;
+          format                                   = VK_FORMAT_BC4_UNORM_BLOCK;
+        }
+        else if(dfdSamples[0].channelType == KHR_DF_CHANNEL_ETC1S_RGB)
+        {
+          m_file_info.ktx2_basis_etc1s_combination = ETC1SCombination::RGB;
+          format                                   = is_srgb ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
+        }
+        else
+        {
+          return "KTX2 color model was Basis ETC1S, but there was one slice of an unknown channel type ("
+                 + std::to_string(dfdSamples[0].channelType) + ")";
+        }
+      }
+      else if(dfdSamples.size() == 2)
+      {
+        // Must be RRR+GGG or RGB+AAA; we disallow listing these channels
+        // in a different order.
+        if(dfdSamples[0].channelType == KHR_DF_CHANNEL_ETC1S_RRR && dfdSamples[1].channelType == KHR_DF_CHANNEL_ETC1S_GGG)
+        {
+          m_file_info.ktx2_basis_etc1s_combination = ETC1SCombination::RG;
+          format                                   = VK_FORMAT_BC5_UNORM_BLOCK;
+        }
+        else if(dfdSamples[0].channelType == KHR_DF_CHANNEL_ETC1S_RGB && dfdSamples[1].channelType == KHR_DF_CHANNEL_ETC1S_AAA)
+        {
+          m_file_info.ktx2_basis_etc1s_combination = ETC1SCombination::RGBA;
+          format                                   = is_srgb ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
+        }
+        else
+        {
+          return "KTX2 color model was Basis ETC1S and there were two slices, but the channel types ("
+                 + std::to_string(dfdSamples[0].channelType) + " and " + std::to_string(dfdSamples[1].channelType) + " were unknown";
+        }
+      }
+      else
+      {
+        return "KTX2 color model was Basis ETC1S, but there were an unusual number of slices ("
+               + std::to_string(dfdSamples.size()) + ", should be 1 or 2)";
+      }
+#else
+      return "KTX2 color model was Basis ETC1S, but NVP_SUPPORTS_BASISU was not defined.";
+#endif
+    }
+    else if(format == VK_FORMAT_UNDEFINED)
+    {
+      return "KTX2 VkFormat was VK_FORMAT_UNDEFINED, but the Data Format Descriptor block had unrecognized "
+             "colorModel number "
+             + std::to_string(basicDFD.colorModel) + ".";
     }
   }
 
   // Perform additional validation to rule out invalid Basis+format+supercompression
   // combinations. Not doing these checks can lead to surprising behavior!
   // Basis ETC1S must only appear with supercompression mode 1, and vice versa.
-  if((input_supercompression == InputSupercompression::eBasisETC1S) != (header.supercompressionScheme == 1))
+  if((basicDFD.colorModel == KHR_DF_MODEL_ETC1S) != (header.supercompressionScheme == 1))
   {
     return "KTX2 file was invalid - the Basis ETC1S flag didn't match whether supercompression scheme 1 (BasisLZ) was used.";
   }
@@ -1689,37 +1715,138 @@ ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettin
   }
 
   //---------------------------------------------------------------------------
-  // The align(8) sgdPadding.
-  if(header.sgdByteLength > 0)
-  {
-    std::streampos bytesReadMod8 = ((input.tellg() - start_pos) % 8);
-    if(bytesReadMod8 > 0)
-    {
-      input.seekg(bytesReadMod8, std::ios::cur);
-    }
-  }
-
   // Section 6, supercompression global data.
   // First check the sgdByteLength because we allocate memory based off it.
   // Values that are really large are allowed by the KTX2 spec, but someone could
   // use this to cause an out-of-memory error.
-  if(header.sgdByteLength > readSettings.max_resource_size_in_bytes)
+  if(header.sgdByteLength > readSettings.max_size_in_bytes)
   {
     return "Supercompression global data length (sgdByteLength) was over the maximum size specified in the "
            "ReadSettings object! The file is either invalid, or if this is intentional, "
-           "ReadSettings::max_resource_size_in_bytes should be set to a larger value.";
+           "ReadSettings::max_size_in_bytes should be set to a larger value.";
   }
-  std::vector<uint8_t> supercompressionGlobalData;
-  UNWRAP_ERROR(ResizeVectorOrError(supercompressionGlobalData, header.sgdByteLength));
-  if(header.sgdByteLength > 0)
+
+  m_file_info.ktx2_supercompression_scheme = header.supercompressionScheme;
+  m_file_info.ktx2_global_data_offset      = header.sgdByteOffset;
+  m_file_info.ktx2_global_data_byte_size   = header.sgdByteLength;
+
+  //---------------------------------------------------------------------------
+  // Section 7, Mip Level Array.
+  // Here we set up subresource layouts.
+  UNWRAP_ERROR(ResizeVectorOrError(m_subresource_layouts, num_subresources));
+  size_t remainingAllowedUncompressedBytes = readSettings.max_size_in_bytes;
+
+  for(uint32_t mip = 0; mip < num_mips; ++mip)
   {
-    if(!input.read(reinterpret_cast<char*>(supercompressionGlobalData.data()), header.sgdByteLength))
+    const SubresourceLayout& levelIndex = m_level_indices[mip];
+    const size_t             mipWidth   = std::max(1u, header.pixelWidth >> mip);
+    const size_t             mipHeight  = std::max(1u, header.pixelHeight >> mip);
+    const size_t             mipDepth   = std::max(1u, header.pixelDepth >> mip);
+
+    size_t finalFaceSize = 0;
+    UNWRAP_ERROR(ExportSizeExtended(mipWidth, mipHeight, mipDepth, format, finalFaceSize, readSettings.custom_size_callback));
+    // Check that the amount of data we'll allocate doesn't go past
+    // max_uncompressed_size_in_bytes:
+    {
+      size_t maxUncompressedMipSize = 0;
+      if(!checked_math::mul3(finalFaceSize, header.layerCount, header.faceCount, maxUncompressedMipSize))
+      {
+        return "The number of uncompressed bytes to store decompressed mip " + std::to_string(mip) + " would have overflowed a size_t.";
+      }
+      maxUncompressedMipSize = std::max(maxUncompressedMipSize, levelIndex.uncompressedByteSize);
+
+      if(remainingAllowedUncompressedBytes < maxUncompressedMipSize)
+      {
+        return "This file would require more than the limit of max_size_in_bytes = "
+               + std::to_string(readSettings.max_size_in_bytes) + " bytes without supercompression.";
+      }
+      remainingAllowedUncompressedBytes -= maxUncompressedMipSize;
+    }
+
+    // Validate sizes
+    if(readSettings.validate_input_size)
+    {
+      // Level-wide constraint on read data
+      if(levelIndex.fileByteSize > validation_input_size)
+      {
+        return "The KTX2 file said that level " + std::to_string(mip) + " contained "
+               + std::to_string(levelIndex.fileByteSize) + " bytes of supercompressed data, but the file was only "
+               + std::to_string(validation_input_size) + " bytes long!";
+      }
+
+      if(header.supercompressionScheme == 0)
+      {
+        // Level-wide constraint on read data
+        if(levelIndex.uncompressedByteSize > validation_input_size)
+        {
+          return "The KTX2 file said no supercompression was used and that level " + std::to_string(mip) + " contained "
+                 + std::to_string(levelIndex.uncompressedByteSize) + " bytes of data, but the file was only "
+                 + std::to_string(validation_input_size) + " bytes long!";
+        }
+
+        // Per-face more specific constraint, making use of how non-supercompressed
+        // UASTC and ASTC (the transcoded-to format) are both 128 bits/block.
+        if((validation_input_size / size_t(header.layerCount)) / size_t(header.faceCount) < finalFaceSize)
+        {
+          return "The KTX2 file said it contained " + std::to_string(header.layerCount) + " array elements and "
+                 + std::to_string(header.faceCount) + " faces in mip " + std::to_string(mip)
+                 + ", but the input was too short (" + std::to_string(validation_input_size) + " bytes) to contain that!";
+        }
+      }
+    }
+
+    size_t fileOffset = levelIndex.fileOffset;
+    for(uint32_t layer = 0; layer < header.layerCount; layer++)
+    {
+      for(uint32_t face = 0; face < header.faceCount; face++)
+      {
+        SubresourceLayout& layout = subresourceLayout(mip, layer, face);
+
+        // If we're decompressing per-mip:
+        if(m_file_info.ktx2_supercompression_scheme == uint32_t(SupercompressionScheme::eZstd)
+           || m_file_info.ktx2_supercompression_scheme == uint32_t(SupercompressionScheme::eZlib))
+        {
+          layout = levelIndex;
+        }
+        else
+        {
+          layout.fileOffset   = fileOffset;
+          layout.fileByteSize = finalFaceSize;
+        }
+
+        layout.uncompressedByteSize = finalFaceSize;
+        if(layout.fileOffset > std::numeric_limits<size_t>::max() - finalFaceSize)
+        {
+          return "Computing file offsets would have overflowed a size_t!";
+        }
+        fileOffset += finalFaceSize;
+      }
+    }
+  }
+
+  return {};
+}
+
+// readSubresourcesFromStream() backend for a KTX2 file.
+ErrorWithText KTXImage::readSubresourcesFromKTX2Stream(std::istream& input, const SubresourceRange& range, SubresourceTarget* outSubresources)
+{
+  const std::streampos start_pos = input.tellg();
+
+  // First set up global decompression objects:
+  std::vector<uint8_t> supercompressionGlobalData;
+  if(m_file_info.ktx2_global_data_byte_size > 0)
+  {
+    UNWRAP_ERROR(ResizeVectorOrError(supercompressionGlobalData, m_file_info.ktx2_global_data_byte_size));
+    if(!input.seekg(m_file_info.ktx2_global_data_offset + start_pos, std::ios::beg))
+    {
+      return "Seeking to supercompression global data failed.";
+    }
+    if(!input.read(reinterpret_cast<char*>(supercompressionGlobalData.data()), m_file_info.ktx2_global_data_byte_size))
     {
       return "Reading supercompressionGlobalData failed.";
     }
   }
 
-// Initialize supercompression
 #ifdef NVP_SUPPORTS_ZSTD
   ScopedZstdDContext zstdDCtx;
 #endif
@@ -1734,11 +1861,11 @@ ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettin
   // as videos, I think.
   bool isVideo = false;
 #endif
-  if(header.supercompressionScheme == 1)
+  if(m_file_info.ktx2_supercompression_scheme == uint32_t(SupercompressionScheme::eBasisLZ))
   {
 #ifdef NVP_SUPPORTS_BASISU
     // Initialize supercompression global data
-    UNWRAP_ERROR(BasisUSingleton::GetInstance().PrepareBasisLZObjects(basisLZDCtx, supercompressionGlobalData, original_num_mips_max_1,
+    UNWRAP_ERROR(BasisUSingleton::GetInstance().PrepareBasisLZObjects(basisLZDCtx, supercompressionGlobalData, num_mips,
                                                                       std::max(1u, num_layers_possibly_0), num_faces));
     // Video criterion; don't permit 1-frame videos following Basis here
     if(num_faces == 1 && num_layers_possibly_0 > 1)
@@ -1764,7 +1891,7 @@ ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettin
       {
         return "KTX2 stream was incorrectly formatted: a BasisLZ+ETC1S RGB slice had byte length 0.";
       }
-      if((basisETC1SNumSlices == 2) && (id.m_alpha_slice_byte_length == 0))
+      if((m_file_info.ktx2_basis_etc1s_num_slices == 2) && (id.m_alpha_slice_byte_length == 0))
       {
         return "KTX2 stream was incorrectly formatted: a BasisLZ+ETC1S alpha slice had byte length 0.";
       }
@@ -1773,7 +1900,7 @@ ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettin
     return "KTX2 header specified BasisLZ supercompression, but NVP_SUPPORTS_BASISU was not defined.";
 #endif
   }
-  else if(header.supercompressionScheme == 2)
+  else if(m_file_info.ktx2_supercompression_scheme == uint32_t(SupercompressionScheme::eZstd))
   {
     // Set up Zstandard
 #ifdef NVP_SUPPORTS_ZSTD
@@ -1786,20 +1913,18 @@ ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettin
     return "KTX2 stream uses Zstandard supercompression, but nv_ktx was built without Zstd.";
 #endif
   }
-  else if(header.supercompressionScheme == 3)
+  else if(m_file_info.ktx2_supercompression_scheme == uint32_t(SupercompressionScheme::eZlib))
   {
 // Nothing to do for Zlib, but check to ensure it's supported
 #ifndef NVP_SUPPORTS_GZLIB
     return "KTX2 stream uses Zlib supercompression, but nv_ktx was built without Zlib.";
 #endif
   }
-  else if(header.supercompressionScheme > 3)
+  else if(m_file_info.ktx2_supercompression_scheme != uint32_t(SupercompressionScheme::eNone))
   {
-    return "Does not know about supercompression scheme " + std::to_string(header.supercompressionScheme) + ".";
+    return "Does not know about supercompression scheme " + std::to_string(m_file_info.ktx2_supercompression_scheme) + ".";
   }
 
-  //---------------------------------------------------------------------------
-  // Section 7, Mip Level Array.
   // Read, inflate, and decompress each image in turn.
   //
   // For each mip:
@@ -1820,110 +1945,32 @@ ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettin
   //     For each subresource
   //       Transcode it from UASTC to the inflated VkFormat
 
-  // First initialize the output:
-  UNWRAP_ERROR(allocate(num_mips, num_layers_possibly_0, num_faces));
   // Temporary buffers used for supercompressed data.
   std::vector<char> supercompressedData;
   std::vector<char> inflatedData;
   // Traverse mips in reverse order following the spec
-  for(int mip = num_mips - 1; mip >= 0; mip--)
+  // so that we move forwards through the file:
+  for(int mip = int(range.firstMip + range.numMips) - 1; mip >= int(range.firstMip); mip--)
   {
-    // Seek to the start of that mip's data and read it. Note that this skips
-    // over mipPadding.
-    const LevelIndex& levelIndex = levelIndices[mip];
-    if(!input.seekg(levelIndex.byteOffset + start_pos, std::ios::beg))
-    {
-      return "Failed to seek to KTX2 mip " + std::to_string(mip) + " data!";
-    }
-
-    const size_t mipWidth  = std::max(1u, header.pixelWidth >> mip);
-    const size_t mipHeight = std::max(1u, header.pixelHeight >> mip);
-    const size_t mipDepth  = std::max(1u, header.pixelDepth >> mip);
-
-    // The size of each face in the inflated vkFormat, after inflation.
-    size_t inflatedFaceSize = 0;
-    if(header.vkFormat == VK_FORMAT_UNDEFINED)
-    {
-      // Check for the Basis UASTC and Universal cases. I don't know if ETC1S
-      // or UASTC supports depth.
-      if(input_supercompression == InputSupercompression::eBasisUASTC)
-      {
-        if(!checked_math::mul4((mipWidth + 3) / 4, (mipHeight + 3) / 4, mipDepth, 16, inflatedFaceSize))  // 16 bytes per 4x4 block
-          return "Invalid KTX2 file: A subresource had size " + std::to_string(mipWidth) + " x " + std::to_string(mipHeight)
-                 + " x " + std::to_string(mipDepth) + ", which would require more than 2^64 - 1 bytes to store decompressed.";
-      }
-      else if(input_supercompression == InputSupercompression::eBasisETC1S)
-      {
-        if(!checked_math::mul5((mipWidth + 3) / 4, (mipHeight + 3) / 4, mipDepth, basisETC1SNumSlices, 8, inflatedFaceSize))  // 8 bytes per 4x4 block per slice
-          return "Invalid KTX2 file: A subresource had size " + std::to_string(mipWidth) + " x " + std::to_string(mipHeight)
-                 + " x " + std::to_string(mipDepth) + " with " + std::to_string(basisETC1SNumSlices)
-                 + " slices, which would require more than 2^64 - 1 bytes to store decompressed.";
-      }
-      else
-      {
-        return "Tried to find the size of an undefined VkFormat, with an unknown Khronos Data Format color model. Is "
-               "this a new texture format?";
-      }
-    }
-    else
-    {
-      UNWRAP_ERROR(ExportSizeExtended(mipWidth, mipHeight, mipDepth, header.vkFormat, inflatedFaceSize, readSettings.custom_size_callback));
-    }
-
-    // The size of each face in the final vkFormat, after inflation and transcoding.
-    size_t finalFaceSize = 0;
-    UNWRAP_ERROR(ExportSizeExtended(mipWidth, mipHeight, mipDepth, format, finalFaceSize, readSettings.custom_size_callback));
-
-    if(finalFaceSize > readSettings.max_resource_size_in_bytes)
-    {
-      return "Subresource was too large! The KTX2 file said that each mip 0 face had dimensions "
-             + std::to_string(mipWidth) + " x " + std::to_string(mipHeight) + " x " + std::to_string(mipDepth)
-             + " with format " + std::to_string(format) + ". This has a computed size of "
-             + std::to_string(finalFaceSize) + " bytes, which is larger than the limit of max_resource_size_in_bytes = "
-             + std::to_string(readSettings.max_resource_size_in_bytes) + " bytes.";
-    }
-
-    // Validate sizes
-    if(readSettings.validate_input_size)
-    {
-      // Level-wide constraint on read data
-      if(levelIndex.byteLength > validation_input_size)
-      {
-        return "The KTX2 file said that level " + std::to_string(mip) + " contained " + std::to_string(levelIndex.byteLength)
-               + " bytes of supercompressed data, but the file was only " + std::to_string(validation_input_size) + " bytes long!";
-      }
-
-      if(header.supercompressionScheme == 0)
-      {
-        // Level-wide constraint on read data
-        if(levelIndex.uncompressedByteLength > validation_input_size)
-        {
-          return "The KTX2 file said no supercompression was used and that level " + std::to_string(mip) + " contained "
-                 + std::to_string(levelIndex.uncompressedByteLength) + " bytes of data, but the file was only "
-                 + std::to_string(validation_input_size) + " bytes long!";
-        }
-
-        // Per-face more specific constraint, making use of how non-supercompressed
-        // UASTC and ASTC (the transcoded-to format) are both 128 bits/block.
-        if((validation_input_size / size_t(header.layerCount)) / size_t(header.faceCount) < finalFaceSize)
-        {
-          return "The KTX2 file said it contained " + std::to_string(header.layerCount) + " array elements and "
-                 + std::to_string(header.faceCount) + " faces in mip " + std::to_string(mip)
-                 + ", but the input was too short (" + std::to_string(validation_input_size) + " bytes) to contain that!";
-        }
-      }
-    }
-
     // FAST PATH - if no supercompression and no UASTC, we can read directly:
-    if((header.supercompressionScheme == 0) && (input_supercompression != InputSupercompression::eBasisUASTC))
+    if(!requiresComplexDecoding())
     {
-      for(uint32_t layer = 0; layer < header.layerCount; layer++)
+      for(uint32_t layer = range.firstLayer; layer < range.firstLayer + range.numLayers; layer++)
       {
-        for(uint32_t face = 0; face < header.faceCount; face++)
+        for(uint32_t face = range.firstFace; face < range.firstFace + range.numFaces; face++)
         {
-          std::vector<char>& subresource_data = subresource(mip, layer, face);
-          UNWRAP_ERROR(ResizeVectorOrError(subresource_data, finalFaceSize));
-          if(!input.read(subresource_data.data(), finalFaceSize))
+          const SubresourceLayout& source = getSubresourceLayout(mip, layer, face);
+          if(!input.seekg(source.fileOffset + start_pos, std::ios::beg))
+          {
+            return "Failed to seek to the data for mip " + std::to_string(mip) + " layer " + std::to_string(layer)
+                   + " face " + std::to_string(face) + ". Is the stream truncated?";
+          }
+
+          const size_t targetIdx = ((mip - range.firstMip) * range.numLayers + (layer - range.firstLayer)) * range.numFaces
+                                   + (face - range.firstFace);
+          SubresourceTarget& target = outSubresources[targetIdx];
+
+          if(!input.read(reinterpret_cast<char*>(target.data), source.fileByteSize))
           {
             return "Reading data for mip " + std::to_string(mip) + " layer " + std::to_string(layer) + " face "
                    + std::to_string(face) + " from the stream failed. Is the stream truncated?";
@@ -1933,27 +1980,42 @@ ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettin
     }
     else
     {
+      // Seek to the start of that mip's data and read it. Note that this skips
+      // over mipPadding.
+      const SubresourceLayout& levelIndex = m_level_indices[mip];
+      if(!input.seekg(levelIndex.fileOffset + start_pos, std::ios::beg))
+      {
+        return "Failed to seek to KTX2 mip " + std::to_string(mip) + " data!";
+      }
+
+      const size_t mipWidth         = std::max(1u, mip_0_width >> mip);
+      const size_t mipHeight        = std::max(1u, mip_0_height >> mip);
+      const size_t mipDepth         = std::max(1u, mip_0_depth >> mip);
+      const size_t inflatedFaceSize = getSubresourceLayout(mip, 0, 0).uncompressedByteSize;
+
       //               decompression     transcoding
       // supercompressedData -> inflatedData -> subresource
       //                             ^
       //                             |
       //                             in the ETC1S + UASTC case, we load file data into here directly
       //                             (it turns out ETC1S doesn't do anything per-level)
-      if(header.supercompressionScheme == 0)
+      if(m_file_info.ktx2_supercompression_scheme == uint32_t(SupercompressionScheme::eNone))
       {
         // UASTC, ETC1S: Load file data into inflatedData directly
-        UNWRAP_ERROR(ResizeVectorOrError(inflatedData, levelIndex.uncompressedByteLength));
-        if(!input.read(inflatedData.data(), levelIndex.uncompressedByteLength))
+        UNWRAP_ERROR(ResizeVectorOrError(inflatedData, levelIndex.uncompressedByteSize));
+        if(!input.read(inflatedData.data(), levelIndex.uncompressedByteSize))
         {
           return "Reading mip " + std::to_string(mip) + "'s data failed.";
         }
       }
-      else if(header.supercompressionScheme == 1)
+      else if(m_file_info.ktx2_supercompression_scheme == uint32_t(SupercompressionScheme::eBasisLZ))
       {
         // ETC1S files often have uncompressedByteLength set to 0 for some reason.
         // In any case, we want to read the compressed byte length.
-        UNWRAP_ERROR(ResizeVectorOrError(inflatedData, levelIndex.byteLength));
-        if(!input.read(inflatedData.data(), levelIndex.byteLength))
+        // NOTE(nbickford): I think this can be combined with the above branch,
+        // but will need to check to be 100% sure.
+        UNWRAP_ERROR(ResizeVectorOrError(inflatedData, levelIndex.fileByteSize));
+        if(!input.read(inflatedData.data(), levelIndex.fileByteSize))
         {
           return "Reading mip " + std::to_string(mip) + "'s data failed.";
         }
@@ -1961,18 +2023,23 @@ ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettin
       else
       {
         // Read into supercompressedData
-        UNWRAP_ERROR(ResizeVectorOrError(supercompressedData, levelIndex.byteLength));
-        if(!input.read(supercompressedData.data(), levelIndex.byteLength))
+        UNWRAP_ERROR(ResizeVectorOrError(supercompressedData, levelIndex.fileByteSize));
+        if(!input.read(supercompressedData.data(), levelIndex.fileByteSize))
         {
           return "Reading mip " + std::to_string(mip) + "'s supercompressed data failed.";
         }
 
         // Inflate the supercompressed data. We must use another buffer for this.
-        UNWRAP_ERROR(ResizeVectorOrError(inflatedData, levelIndex.uncompressedByteLength));
+        UNWRAP_ERROR(ResizeVectorOrError(inflatedData, levelIndex.uncompressedByteSize));
 
-        if(header.supercompressionScheme == 2)
+        if(m_file_info.ktx2_supercompression_scheme == uint32_t(SupercompressionScheme::eZstd))
         {
           // Zstandard
+          // NOTE(nbickford): Currently we decompress the entire mip the way
+          // nv_ktx v1 did. But if less than the full mip was requested,
+          // we don't need to do this! We could use the Zstandard streaming
+          // API to skip over the bytes we don't need, read the bytes we need,
+          // and skip the rest.
 #ifdef NVP_SUPPORTS_ZSTD
           size_t zstdError = ZSTD_decompress(inflatedData.data(), inflatedData.size(),  //
                                              supercompressedData.data(), supercompressedData.size());
@@ -1986,9 +2053,10 @@ ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettin
           assert(!"nv_ktx was compiled without Zstandard support, but the KTX stream was not rejected! This should never happen.");
 #endif
         }
-        else if(header.supercompressionScheme == 3)
+        else if(m_file_info.ktx2_supercompression_scheme == uint32_t(SupercompressionScheme::eZlib))
         {
           // Zlib
+          // NOTE(nbickford): Same note as for Zstd about the streaming API.
 #ifdef NVP_SUPPORTS_GZLIB
           ScopedZlibDStream zlibStream;
           int               zlibError = zlibStream.Init();
@@ -2021,10 +2089,10 @@ ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettin
       // invalid_face_count_and_padding.ktx2, or on an otherwise truncated file.
       // This doesn't apply to ETC1S, because it does inflation and transcoding
       // all at once.
-      if(header.supercompressionScheme != 1)
+      if(m_file_info.ktx2_supercompression_scheme != uint32_t(SupercompressionScheme::eBasisLZ))
       {
-        const size_t inflatedDataSize = inflatedData.size();
-        const size_t expected_bytes_in_this_mip = inflatedFaceSize * size_t(header.layerCount) * size_t(header.faceCount);
+        const size_t inflatedDataSize           = inflatedData.size();
+        const size_t expected_bytes_in_this_mip = inflatedFaceSize * std::max(1u, num_layers_possibly_0) * num_faces;
         if(expected_bytes_in_this_mip > inflatedDataSize)
         {
           return "Expected " + std::to_string(expected_bytes_in_this_mip) + " bytes in mip " + std::to_string(mip)
@@ -2034,34 +2102,50 @@ ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettin
 
       // Write into each subresource, possibly transcoding from the source
       // format to this->format (for UASTC and ETC1S).
-      size_t inflatedDataPos = 0;  // Read position in inflatedData
-      for(uint32_t layer = 0; layer < header.layerCount; layer++)
+      for(uint32_t layer = range.firstLayer; layer < range.firstLayer + range.numLayers; layer++)
       {
-        for(uint32_t face = 0; face < header.faceCount; face++)
+        for(uint32_t face = range.firstFace; face < range.firstFace + range.numFaces; face++)
         {
-          std::vector<char>& subresource_data = subresource(mip, layer, face);
-          // As a fast-path, if we have only one layer and face and no transcoding, the output is the same as the input.
-          if(header.layerCount == 1 && header.faceCount == 1 && input_supercompression == InputSupercompression::eNone)
-          {
-            subresource_data = std::move(inflatedData);
-            break;  // since layerCount == 1 this breaks out of both loops.
-          }
-          // Otherwise, prepare the output buffer.
-          UNWRAP_ERROR(ResizeVectorOrError(subresource_data, finalFaceSize));
+          // Read position in `inflatedData`
+          const size_t inflatedDataPos = (layer * num_faces + face) * inflatedFaceSize;
 
-          if(input_supercompression == InputSupercompression::eBasisUASTC)
+          // Prepare the output buffer.
+          const size_t targetIdx = ((mip - range.firstMip) * range.numLayers + (layer - range.firstLayer)) * range.numFaces
+                                   + (face - range.firstFace);
+          SubresourceTarget& target = outSubresources[targetIdx];
+
+          if(m_file_info.ktx2_color_model == KHR_DF_MODEL_UASTC)
           {
 #ifdef NVP_SUPPORTS_BASISU
-            BasisUSingleton::GetInstance().TranscodeUASTCToBC7OrASTC44(subresource_data.data(),
-                                                                       &inflatedData[inflatedDataPos], mipWidth, mipHeight,
-                                                                       mipDepth, readSettings.device_supports_astc);
+            const bool to_astc = (format == VK_FORMAT_ASTC_4x4_SRGB_BLOCK) || (format == VK_FORMAT_ASTC_4x4_UNORM_BLOCK);
+            BasisUSingleton::GetInstance().TranscodeUASTCToBC7OrASTC44(reinterpret_cast<char*>(target.data),
+                                                                       &inflatedData[inflatedDataPos], mipWidth,
+                                                                       mipHeight, mipDepth, to_astc);
 #else
             assert(!"nv_ktx was compiled without Basis support, but the KTX stream was not rejected! This should never happen.");
 #endif
           }
-          else if(input_supercompression == InputSupercompression::eBasisETC1S)
+          else if(m_file_info.ktx2_color_model == KHR_DF_MODEL_ETC1S)
           {
 #ifdef NVP_SUPPORTS_BASISU
+            // Get the inflated VkFormat in an enum Basis uses
+            basist::transcoder_texture_format basisDstFmt{};
+            switch(format)
+            {
+              case VK_FORMAT_BC4_UNORM_BLOCK:
+                basisDstFmt = basist::transcoder_texture_format::cTFBC4;
+                break;
+              case VK_FORMAT_BC5_UNORM_BLOCK:
+                basisDstFmt = basist::transcoder_texture_format::cTFBC5;
+                break;
+              case VK_FORMAT_BC7_SRGB_BLOCK:
+              case VK_FORMAT_BC7_UNORM_BLOCK:
+                basisDstFmt = basist::transcoder_texture_format::cTFBC7_RGBA;
+                break;
+              default:
+                return "No Basis ETC1S transcoder_texture_format was specified for the destination transcode format! This should never happen.";
+            }
+
             // Get the ETC1S image description
             const size_t etc1sImageIdx =
                 (std::max(1u, num_layers_possibly_0) * size_t(mip) + size_t(layer)) * size_t(num_faces) + size_t(face);
@@ -2071,7 +2155,7 @@ ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettin
 
             if(!basisLZDCtx.etc1sTranscoder->transcode_image(
                    basisDstFmt,                                      // Basis destination format
-                   subresource_data.data(),                          // Output data
+                   target.data,                                      // Output data
                    uint32_t(numBlocksX * numBlocksY),                // Number of blocks in the output
                    reinterpret_cast<uint8_t*>(inflatedData.data()),  // Compressed data for this level
                    uint32_t(inflatedData.size()),                    // Compressed data length
@@ -2081,7 +2165,7 @@ ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettin
                    imageDesc.m_rgb_slice_byte_offset, imageDesc.m_rgb_slice_byte_length,  // Range of first slice from the start of the compressed data
                    imageDesc.m_alpha_slice_byte_offset, imageDesc.m_alpha_slice_byte_length,  // Range of second slice from the start of the compressed data
                    0,                                                    // No need for nonstandard decoder flags here
-                   (basisETC1SNumSlices == 2),                           // Whether it has 2 slices or only 1
+                   (m_file_info.ktx2_basis_etc1s_num_slices == 2),       // Whether it has 2 slices or only 1
                    isVideo,                                              // Whether this is ETC1S video
                    0,                                                    // Output row pitch in blocks, or 0
                    &basisLZDCtx.ktx2TranscoderState.m_transcoder_state,  // Persistent transcoder state
@@ -2100,7 +2184,7 @@ ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettin
             // We've checked to make sure this is okay above, but double-check
             // here in case the behavior above changes in future versions of
             // the code.
-            if(header.supercompressionScheme == 1)
+            if(m_file_info.ktx2_supercompression_scheme == uint32_t(SupercompressionScheme::eBasisLZ))
             {
               return "Failed to read KTX2 file: BasisLZ supercompression was enabled, but control reached the non-BasisLZ copy. This should never happen.";
             }
@@ -2108,11 +2192,8 @@ ErrorWithText KTXImage::readFromKTX2Stream(std::istream& input, const ReadSettin
             {
               return "Failed to read KTX2 file: the size of the inflated data didn't match the expected size.";
             }
-            memcpy(subresource_data.data(), &inflatedData[inflatedDataPos], inflatedFaceSize);
+            memcpy(target.data, &inflatedData[inflatedDataPos], inflatedFaceSize);
           }
-
-          // Advance to next image
-          inflatedDataPos += inflatedFaceSize;
         }
       }
     }
@@ -2317,7 +2398,7 @@ ErrorWithText KTXImage::writeKTX2Stream(std::ostream& output, const WriteSetting
       params.m_uastc                    = true;
       params.m_pack_uastc_ldr_4x4_flags = static_cast<uint32_t>(writeSettings.uastc_encoding_quality);
       params.m_force_alpha              = true;
-      if(writeSettings.supercompression == WriteSupercompressionType::ZSTD)
+      if(writeSettings.supercompression == SupercompressionScheme::eZstd)
       {
         params.m_rdo_uastc_ldr_4x4                = true;
         params.m_rdo_uastc_ldr_4x4_quality_scalar = writeSettings.rdo_lambda;
@@ -2467,8 +2548,8 @@ ErrorWithText KTXImage::writeKTX2Stream(std::ostream& output, const WriteSetting
   const std::streampos start_pos = output.tellp();
 
   // Allocate the header and Level Index.
-  KTX2TopLevelHeader      header{};
-  std::vector<LevelIndex> levelIndex(num_mips);  // "mip offsets"
+  KTX2TopLevelHeader             header{};
+  std::vector<SubresourceLayout> levelIndex(num_mips);  // "mip offsets"
 
   // Write the header (we'll write it again), then zeros up to the Data Format Descriptor.
   if(!output.write(reinterpret_cast<const char*>(ktx2Identifier), IDENTIFIER_LEN))
@@ -2964,7 +3045,7 @@ ErrorWithText KTXImage::writeKTX2Stream(std::ostream& output, const WriteSetting
 
   // In the case of supercompressed formats, we have to set all bytesPlane
   // fields to 0 per the "DFD for Supercompressed Data" section.
-  if(writeSettings.supercompression != WriteSupercompressionType::NONE)
+  if(writeSettings.supercompression != SupercompressionScheme::eNone)
   {
     dfdBlock.bytesPlane0 = 0;
     dfdBlock.bytesPlane1 = 0;
@@ -3005,7 +3086,7 @@ ErrorWithText KTXImage::writeKTX2Stream(std::ostream& output, const WriteSetting
   // Fill in the KTXwriter field if it's not already assigned.
   if(key_value_data.find("KTXwriter") == key_value_data.end())
   {
-    key_value_data["KTXwriter"] = StringToCharVector("nvpro-samples' nv_ktx version 1.1.0");
+    key_value_data["KTXwriter"] = StringToCharVector("nvpro-samples' nv_ktx version 2.0.0");
   }
 
   // We now know the offset of the key/value data.
@@ -3068,7 +3149,7 @@ ErrorWithText KTXImage::writeKTX2Stream(std::ostream& output, const WriteSetting
   ScopedZstdCContext zstdContext;
   int                zstd_clamped_supercompression_level = writeSettings.supercompression_level;
 #endif
-  if(writeSettings.supercompression == WriteSupercompressionType::ZSTD)
+  if(writeSettings.supercompression == SupercompressionScheme::eZstd)
   {
 #ifdef NVP_SUPPORTS_ZSTD
     zstdContext.Init();
@@ -3094,7 +3175,7 @@ ErrorWithText KTXImage::writeKTX2Stream(std::ostream& output, const WriteSetting
   for(int64_t mip = static_cast<int64_t>(num_mips) - 1; mip >= 0; mip--)
   {
     // First the mip padding if not supercompressed:
-    if(writeSettings.supercompression == WriteSupercompressionType::NONE)
+    if(writeSettings.supercompression == SupercompressionScheme::eNone)
     {
       const size_t pos_from_start = output.tellp() - start_pos;
       const size_t mipPaddingSize = RoundUp(pos_from_start, LCM4(texel_block_size)) - pos_from_start;
@@ -3109,7 +3190,7 @@ ErrorWithText KTXImage::writeKTX2Stream(std::ostream& output, const WriteSetting
       }
     }
     // We now know levels[mip].byteOffset, which comes after mip padding.
-    levelIndex[mip].byteOffset = output.tellp() - start_pos;
+    levelIndex[mip].fileOffset = output.tellp() - start_pos;
 
     const size_t mipWidth  = std::max(1u, mip_0_width >> mip);
     const size_t mipHeight = std::max(1u, mip_0_height >> mip);
@@ -3120,10 +3201,10 @@ ErrorWithText KTXImage::writeKTX2Stream(std::ostream& output, const WriteSetting
     UNWRAP_ERROR(ExportSizeExtended(mipWidth, mipHeight, mipDepth, format, subresource_size_bytes, writeSettings.custom_size_callback));
 
     // Compute the size of this mip in bytes.
-    levelIndex[mip].uncompressedByteLength = size_t(num_layers_or_1) * size_t(num_faces) * subresource_size_bytes;
+    levelIndex[mip].uncompressedByteSize = size_t(num_layers_or_1) * size_t(num_faces) * subresource_size_bytes;
 
     // If not supercompressing, write each face to the file.
-    if(writeSettings.supercompression == WriteSupercompressionType::NONE)
+    if(writeSettings.supercompression == SupercompressionScheme::eNone)
     {
       for(uint32_t layer = 0; layer < num_layers_or_1; layer++)
       {
@@ -3138,7 +3219,7 @@ ErrorWithText KTXImage::writeKTX2Stream(std::ostream& output, const WriteSetting
           }
         }
       }
-      levelIndex[mip].byteLength = levelIndex[mip].uncompressedByteLength;
+      levelIndex[mip].fileByteSize = levelIndex[mip].uncompressedByteSize;
     }
     else
     {
@@ -3147,7 +3228,7 @@ ErrorWithText KTXImage::writeKTX2Stream(std::ostream& output, const WriteSetting
       return "Zstandard supercompression was selected, but nv_ktx was built without Zstd and execution reached the "
              "levelImages loop. This should never happen.";
 #else
-      if(writeSettings.supercompression != WriteSupercompressionType::ZSTD)
+      if(writeSettings.supercompression != SupercompressionScheme::eZstd)
       {
         return "Only Zstandard supercompression is currently supported.";
       }
@@ -3156,7 +3237,7 @@ ErrorWithText KTXImage::writeKTX2Stream(std::ostream& output, const WriteSetting
       // complex using the Zstandard streaming API.)
       std::vector<char> rawData;
       {
-        UNWRAP_ERROR(ResizeVectorOrError(rawData, levelIndex[mip].uncompressedByteLength));
+        UNWRAP_ERROR(ResizeVectorOrError(rawData, levelIndex[mip].uncompressedByteSize));
         size_t pos_in_raw_data = 0;
         for(uint32_t layer = 0; layer < num_layers_or_1; layer++)
         {
@@ -3174,7 +3255,7 @@ ErrorWithText KTXImage::writeKTX2Stream(std::ostream& output, const WriteSetting
       // (Note that this is always larger than the source!)
       // Also note that we'll always write the supercompressed data even when
       // it's larger, as the client controls whether supercompression is used.
-      const size_t      fullMipUncompressedLength = levelIndex[mip].uncompressedByteLength;
+      const size_t      fullMipUncompressedLength = levelIndex[mip].uncompressedByteSize;
       const size_t      supercompressedMaxSize    = ZSTD_COMPRESSBOUND(fullMipUncompressedLength);
       std::vector<char> supercompressedData;
       try
@@ -3206,7 +3287,7 @@ ErrorWithText KTXImage::writeKTX2Stream(std::ostream& output, const WriteSetting
       {
         return "Writing mip " + std::to_string(mip) + "'s supercompressed data to the file failed!";
       }
-      levelIndex[mip].byteLength = errOrSize;
+      levelIndex[mip].fileByteSize = errOrSize;
 #endif
     }
   }
@@ -3237,10 +3318,10 @@ ErrorWithText KTXImage::writeKTX2Stream(std::ostream& output, const WriteSetting
   header.levelCount  = app_should_generate_mips ? 0 : num_mips;
   switch(writeSettings.supercompression)
   {
-    case WriteSupercompressionType::NONE:
+    case SupercompressionScheme::eNone:
       header.supercompressionScheme = 0;
       break;
-    case WriteSupercompressionType::ZSTD:
+    case SupercompressionScheme::eZstd:
       header.supercompressionScheme = 2;
       break;
     default:
@@ -3266,7 +3347,7 @@ ErrorWithText KTXImage::writeKTX2File(const char* filename, const WriteSettings&
 // KTX1/KTX2 READING BRANCH
 //-----------------------------------------------------------------------------
 
-ErrorWithText KTXImage::readFromStream(std::istream& input, const ReadSettings& readSettings)
+ErrorWithText KTXImage::readHeaderFromStream(std::istream& input, const ReadSettings& readSettings)
 {
   // Read the identifier.
   uint8_t identifier[IDENTIFIER_LEN]{};
@@ -3278,17 +3359,142 @@ ErrorWithText KTXImage::readFromStream(std::istream& input, const ReadSettings& 
   // Check if the identifier matches either the KTX 1 identifier or the KTX 2 identifier.
   if(memcmp(identifier, ktx1Identifier, IDENTIFIER_LEN) == 0)
   {
-    read_ktx_version = 1;
-    return readFromKTX1Stream(input, readSettings);
+    m_file_info.read_ktx_version = 1;
+    return readHeaderFromKTX1Stream(input, readSettings);
   }
   else if(memcmp(identifier, ktx2Identifier, IDENTIFIER_LEN) == 0)
   {
-    read_ktx_version = 2;
-    return readFromKTX2Stream(input, readSettings);
+    m_file_info.read_ktx_version = 2;
+    return readHeaderFromKTX2Stream(input, readSettings);
   }
 
   // Otherwise,
   return "Not a KTX1 or KTX2 file (first 12 bytes weren't a valid identifier).";
+}
+
+ErrorWithText KTXImage::readSubresourcesFromStream(std::istream& input, const SubresourceRange& range, SubresourceTarget* outSubresources)
+{
+  // The app could have given us incorrect `range` and `outSubresources`,
+  // so check them against what we know.
+  if(range.numMips == 0 || range.numLayers == 0 || range.numFaces == 0)
+  {
+    return {};  // Nothing to do
+  }
+
+  if(!outSubresources)
+  {
+    return "`outSubresources` was null.";
+  }
+
+  if(range.firstMip > num_mips || range.numMips > num_mips - range.firstMip)
+  {
+    return "Requested range is out-of-bounds (requested " + std::to_string(range.numMips) + " starting at mip "
+           + std::to_string(range.firstMip) + ", but the image only contains " + std::to_string(num_mips) + " mips).";
+  }
+
+  const size_t num_layers_clamped = std::max(1u, num_layers_possibly_0);
+  if(range.firstLayer > num_layers_clamped || range.numLayers > num_layers_clamped - range.firstLayer)
+  {
+    return "Requested range is out-of-bounds (requested " + std::to_string(range.numLayers) + " starting at layer "
+           + std::to_string(range.firstLayer) + ", but the image only contains " + std::to_string(num_layers_clamped) + " layers).";
+  }
+
+  if(range.firstFace > num_faces || range.numFaces > num_faces - range.firstFace)
+  {
+    return "Requested range is out-of-bounds (requested " + std::to_string(range.numFaces) + " starting at face "
+           + std::to_string(range.firstFace) + ", but the image only contains " + std::to_string(num_faces) + " faces).";
+  }
+
+  {
+    size_t outSubresourceIdx = 0;
+    for(uint32_t mip = range.firstMip; mip < range.firstMip + range.numMips; mip++)
+    {
+      for(uint32_t layer = range.firstLayer; layer < range.firstLayer + range.numLayers; layer++)
+      {
+        for(uint32_t face = range.firstFace; face < range.firstFace + range.numFaces; face++)
+        {
+          const SubresourceLayout& source = getSubresourceLayout(mip, layer, face);
+          const SubresourceTarget& target = outSubresources[outSubresourceIdx];
+
+          if(!target.data)
+          {
+            return "outSubresources[" + std::to_string(outSubresourceIdx) + "].data was null.";
+          }
+          if(target.capacityInBytes < source.uncompressedByteSize)
+          {
+            return "outSubresources[" + std::to_string(outSubresourceIdx) + "] was too small to contain the "
+                   + std::to_string(source.uncompressedByteSize) + " bytes of data for mip " + std::to_string(mip)
+                   + ", layer " + std::to_string(layer) + ", face " + std::to_string(face) + ".";
+          }
+
+          outSubresourceIdx++;
+        }
+      }
+    }
+  }
+
+  // OK, now we branch!
+  if(m_file_info.read_ktx_version == 1)
+  {
+    return readSubresourcesFromKTX1Stream(input, range, outSubresources);
+  }
+  else if(m_file_info.read_ktx_version == 2)
+  {
+    return readSubresourcesFromKTX2Stream(input, range, outSubresources);
+  }
+
+  return "The read KTX version wasn't 1 or 2.";
+}
+
+ErrorWithText KTXImage::readFromStream(std::istream& input, const ReadSettings& readSettings)
+{
+  const std::streampos startPos = input.tellg();
+  UNWRAP_ERROR(readHeaderFromStream(input, readSettings));
+
+  // In the high-level API, we write to our own subresource buffer. Set that up:
+  if(!readSettings.mips)
+  {
+    num_mips = 1;  // This is valid because of the mip-major layout of m_subresourceLayouts
+  }
+  UNWRAP_ERROR(allocate(num_mips, num_layers_possibly_0, num_faces));
+
+  const SubresourceRange readRange{.numMips = num_mips, .numLayers = std::max(1u, num_layers_possibly_0), .numFaces = num_faces};
+
+  std::vector<SubresourceTarget> targets;
+  UNWRAP_ERROR(ResizeVectorOrError(targets, m_data.size()));
+  size_t subresourceIdx = 0;
+  for(uint32_t mip = 0; mip < readRange.numMips; mip++)
+  {
+    for(uint32_t layer = 0; layer < readRange.numLayers; layer++)
+    {
+      for(uint32_t face = 0; face < readRange.numFaces; face++)
+      {
+        std::vector<char>& dst = subresource(mip, layer, face);
+        UNWRAP_ERROR(ResizeVectorOrError(dst, getSubresourceLayout(mip, layer, face).uncompressedByteSize));
+        targets[subresourceIdx] = SubresourceTarget{.data = dst.data(), .capacityInBytes = dst.size()};
+        subresourceIdx++;
+      }
+    }
+  }
+
+  // Rewind to where we started, then read the contents:
+  input.seekg(startPos, std::ios::beg);
+  return readSubresourcesFromStream(input, readRange, targets.data());
+}
+
+//-----------------------------------------------------------------------------
+// Wrappers.
+
+ErrorWithText KTXImage::readHeaderFromFile(const char* filename, const ReadSettings& readSettings)
+{
+  std::ifstream input_stream(filename, std::ifstream::in | std::ifstream::binary);
+  return readHeaderFromStream(input_stream, readSettings);
+}
+
+ErrorWithText KTXImage::readSubresourcesFromFile(const char* filename, const SubresourceRange& range, SubresourceTarget* outSubresources)
+{
+  std::ifstream input_stream(filename, std::ifstream::in | std::ifstream::binary);
+  return readSubresourcesFromStream(input_stream, range, outSubresources);
 }
 
 ErrorWithText KTXImage::readFromFile(const char* filename, const ReadSettings& readSettings)
@@ -3297,8 +3503,40 @@ ErrorWithText KTXImage::readFromFile(const char* filename, const ReadSettings& r
   return readFromStream(input_stream, readSettings);
 }
 
+ErrorWithText KTXImage::readHeaderFromMemory(const char* buffer, size_t bufferSize, const ReadSettings& readSettings)
+{
+  if(!buffer)
+  {
+    return "`buffer` was null.";
+  }
+  if(bufferSize > static_cast<size_t>(std::numeric_limits<std::streamsize>::max()))
+  {
+    return "The `bufferSize` parameter was too large to be stored in an std::streamsize.";
+  }
+  MemoryStream stream(buffer, static_cast<std::streamsize>(bufferSize));
+  return readHeaderFromStream(stream, readSettings);
+}
+
+ErrorWithText KTXImage::readSubresourcesFromMemory(const char* buffer, size_t bufferSize, const SubresourceRange& range, SubresourceTarget* outSubresources)
+{
+  if(!buffer)
+  {
+    return "`buffer` was null.";
+  }
+  if(bufferSize > static_cast<size_t>(std::numeric_limits<std::streamsize>::max()))
+  {
+    return "The `bufferSize` parameter was too large to be stored in an std::streamsize.";
+  }
+  MemoryStream stream(buffer, static_cast<std::streamsize>(bufferSize));
+  return readSubresourcesFromStream(stream, range, outSubresources);
+}
+
 ErrorWithText KTXImage::readFromMemory(const char* buffer, size_t bufferSize, const ReadSettings& readSettings)
 {
+  if(!buffer)
+  {
+    return "`buffer` was null.";
+  }
   if(bufferSize > static_cast<size_t>(std::numeric_limits<std::streamsize>::max()))
   {
     return "The `bufferSize` parameter was too large to be stored in an std::streamsize.";
@@ -3306,7 +3544,6 @@ ErrorWithText KTXImage::readFromMemory(const char* buffer, size_t bufferSize, co
   MemoryStream stream(buffer, static_cast<std::streamsize>(bufferSize));
   return readFromStream(stream, readSettings);
 }
-
 }  // namespace nv_ktx
 
 //-----------------------------------------------------------------------------
@@ -3315,6 +3552,10 @@ ErrorWithText KTXImage::readFromMemory(const char* buffer, size_t bufferSize, co
 #include <stdio.h>
 [[maybe_unused]] static void usage_nv_ktx()
 {
+  // We have multiple examples here.
+
+  //---------------------------------------------------------------------------
+  // 1. How to load an image using the high-level API.
   nv_ktx::KTXImage      image;
   nv_ktx::ErrorWithText maybeError = image.readFromFile("data/image.ktx2", {});
   // ErrorWithText is either empty (success), or has an error message.
@@ -3323,6 +3564,8 @@ ErrorWithText KTXImage::readFromMemory(const char* buffer, size_t bufferSize, co
     fprintf(stderr, "Could not read data/image.ktx2. Error information: %s\n", maybeError.value().c_str());
   }
 
+  //---------------------------------------------------------------------------
+  // 2. Inspecting the KTX image.
   // Typically, after reading a KTX file, you'd access subresources using
   // image.subresource(...) and upload them to the GPU using your graphics
   // API of choice.
@@ -3421,7 +3664,69 @@ ErrorWithText KTXImage::readFromMemory(const char* buffer, size_t bufferSize, co
     }
   }
 
-  // Here's how to create and write a simple image.
+  //---------------------------------------------------------------------------
+  // 3. How to use the low-level API.
+  // readFromFile() copies into KTXImage's internal subresources, which means
+  // you then have to copy the data out of there. In some cases, you can avoid
+  // a copy by using the lower-level readHeader + readSubresources API.
+  {
+    // First, we open the file -- let's use a stream this time to show one
+    // thing that only applies if you're using streams here later on:
+    std::ifstream file("data/image2.ktx2", std::ios::binary);
+    // The readHeader functions read only the header, none of the image contents:
+    nv_ktx::KTXImage image2;
+    if(nv_ktx::ErrorWithText maybeError = image2.readHeaderFromStream(file, {}))
+    {
+      fprintf(stderr, "Could not read data/image.ktx2. Error information: %s\n", maybeError.value().c_str());
+    }
+
+    // Now we can load individual subresources into buffers we allocate in
+    // advance.
+    // The API allows us to load a range of mips, layers, and faces.
+    // For instance,
+    const nv_ktx::SubresourceRange range{.firstMip   = 5,  // 5...6
+                                         .numMips    = 2,
+                                         .firstLayer = 0,  // 0...0
+                                         .numLayers  = 1,
+                                         .firstFace  = 0,  // 0...0
+                                         .numFaces   = 1};
+    // will load the subresources at
+    // (mip 5 layer 0 face 0) and (mip 6 layer 0 face 0).
+    // We then need to allocate data for the output, and tell the
+    // readSubresourcesFromStream API where to put each subrsource. Like this:
+    size_t            outputDataSize = image2.getSubresourceByteSizeSum(range);
+    std::vector<char> outputData(outputDataSize);
+
+    // Then tell the readSubresourcesFromStreamAPI where to put
+    // each subresource, like this:
+    std::vector<nv_ktx::SubresourceTarget> targets;
+    size_t                                 nextPos = 0;
+    for(uint32_t mip = range.firstMip; mip < range.firstMip + range.numMips; mip++)
+    {
+      // All subresources within a mip have the same decompressed size.
+      const size_t subresourceSize = image2.getSubresourceLayout(mip, 0, 0).uncompressedByteSize;
+      for(uint32_t layer = range.firstLayer; layer < range.firstLayer + range.numLayers; layer++)
+      {
+        for(uint32_t face = range.firstFace; face < range.firstFace + range.numFaces; face++)
+        {
+          targets.push_back(nv_ktx::SubresourceTarget{.data = &outputData[nextPos], .capacityInBytes = subresourceSize});
+          nextPos += subresourceSize;
+        }
+      }
+    }
+
+    // Now, if we're using streams, we have to rewind back to the start of the
+    // file:
+    file.seekg(0, std::ios::beg);
+    // And then read the subresources into `outputData`:
+    if(nv_ktx::ErrorWithText maybeError = image2.readSubresourcesFromStream(file, range, targets.data()))
+    {
+      fprintf(stderr, "Could not read data/image.ktx2. Error information: %s\n", maybeError.value().c_str());
+    }
+  }
+
+  //---------------------------------------------------------------------------
+  // 4. How to create and write a simple image.
   // We'll make a 11x5 VK_FORMAT_R8G8B8A8_UNORM image with 2 mip levels.
   nv_ktx::KTXImage outImage;
   maybeError = outImage.allocate(2 /* numMips */, 1 /* numLayers */, 1 /* numFaces */);

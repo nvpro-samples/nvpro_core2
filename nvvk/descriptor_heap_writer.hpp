@@ -110,7 +110,14 @@ public:
   // `dst` must point to at least the corresponding *DescriptorSize() bytes
   // (or *_DESCRIPTOR_MAX_BYTE_SIZE for stack-allocated buffers).
   VkResult writeSamplerDescriptor(const VkSamplerCreateInfo& samplerCreateInfo, void* dst) const;
-  VkResult writeImageDescriptor(VkImage image, VkFormat format, VkImageLayout layout, void* dst, VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D) const;
+  // Image descriptor. `type` selects a sampled image (default) or a storage image (read/write, e.g.
+  // Slang RWTexture2D, typically with VK_IMAGE_LAYOUT_GENERAL); both occupy the same image region.
+  VkResult writeImageDescriptor(VkImage          image,
+                                VkFormat         format,
+                                VkImageLayout    layout,
+                                void*            dst,
+                                VkImageViewType  viewType = VK_IMAGE_VIEW_TYPE_2D,
+                                VkDescriptorType type     = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE) const;
   VkResult writeBufferDescriptor(VkDeviceAddress bufferAddress, VkDeviceSize bufferSize, VkDescriptorType type, void* dst) const;
 
   bool isInitialized() const { return m_device != nullptr; }

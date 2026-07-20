@@ -99,9 +99,10 @@ enum AlphaMode
 // Texture info
 struct GltfTextureInfo
 {
-  float3x2 uvTransform = float3x2(1);  // 24 bytes (3x2 matrix)
-  int      index       = -1;           // 4 bytes
-  int      texCoord    = 0;            // 4 bytes
+  float3x2 uvTransform  = float3x2(1);  // 24 bytes (3x2 matrix)
+  int      index        = -1;           // 4 bytes  (glTF texture index)
+  int16_t  texCoord     = 0;            // 2 bytes  (texcoord set: 0 or 1)
+  int16_t  samplerIndex = -1;           // 2 bytes  (glTF sampler index; -1 = default sampler)
 };  // Total: 32 bytes
 
 struct GltfShadeMaterial
@@ -183,9 +184,10 @@ struct GltfShadeMaterial
 inline GltfTextureInfo defaultGltfTextureInfo()
 {
   GltfTextureInfo t;
-  t.uvTransform = float3x2(1);
-  t.index       = -1;
-  t.texCoord    = 0;
+  t.uvTransform  = float3x2(1);
+  t.index        = -1;
+  t.texCoord     = 0;
+  t.samplerIndex = -1;
   return t;
 }
 

@@ -93,15 +93,15 @@ void nvapp::ElementCamera::updateCamera(std::shared_ptr<nvutils::CameraManipulat
     }
   }
 
-  if(ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Middle)
-     || ImGui::IsMouseClicked(ImGuiMouseButton_Right))
-  {
-    m_cameraManip->setMousePosition({mousePos.x, mousePos.y});
-  }
-
   if(ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0F) || ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 1.0F)
      || ImGui::IsMouseDragging(ImGuiMouseButton_Right, 1.0F))
   {
+    // Anchor at the previous cursor position so rotation/pan follows the per-frame mouse delta.
+    // This avoids a large camera jump when a drag begins right after interacting with another
+    // window: on such a press frame the viewport may not be seen as hovered, so a click-based
+    // anchor reset would be skipped and the first motion would be computed against a stale anchor.
+    const ImVec2 delta = ImGui::GetIO().MouseDelta;
+    m_cameraManip->setMousePosition({mousePos.x - delta.x, mousePos.y - delta.y});
     m_cameraManip->mouseMove({mousePos.x, mousePos.y}, inputs);
   }
 

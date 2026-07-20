@@ -133,15 +133,31 @@ public:
 
   // --- Resource (image) descriptors: local image index in [0, maxImages) ---
   // `resourceHeapBase` is the writable base pointer for the resource heap.
-  VkResult writeImageDescriptor(uint32_t        localImageIndex,
-                                VkImage         image,
-                                VkFormat        format,
-                                VkImageLayout   layout,
-                                void*           resourceHeapBase,
-                                VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
-  VkResult writeImageDescriptor(uint32_t localImageIndex, const Image& image, void* resourceHeapBase, VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D)
+  VkResult writeSampledImageDescriptor(uint32_t        localImageIndex,
+                                       VkImage         image,
+                                       VkFormat        format,
+                                       VkImageLayout   layout,
+                                       void*           resourceHeapBase,
+                                       VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
+  VkResult writeSampledImageDescriptor(uint32_t localImageIndex, const Image& image, void* resourceHeapBase, VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D)
   {
-    return writeImageDescriptor(localImageIndex, image.image, image.format, image.descriptor.imageLayout, resourceHeapBase, viewType);
+    return writeSampledImageDescriptor(localImageIndex, image.image, image.format, image.descriptor.imageLayout,
+                                       resourceHeapBase, viewType);
+  }
+
+  // --- Resource (storage image) descriptors: local image index in [0, maxImages) ---
+  // Stored in the same image region as sampled images. `layout` is typically VK_IMAGE_LAYOUT_GENERAL.
+  // Use a distinct local index from any sampled image sharing the heap.
+  VkResult writeStorageImageDescriptor(uint32_t        localImageIndex,
+                                       VkImage         image,
+                                       VkFormat        format,
+                                       VkImageLayout   layout,
+                                       void*           resourceHeapBase,
+                                       VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D);
+  VkResult writeStorageImageDescriptor(uint32_t localImageIndex, const Image& image, void* resourceHeapBase, VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D)
+  {
+    return writeStorageImageDescriptor(localImageIndex, image.image, image.format, image.descriptor.imageLayout,
+                                       resourceHeapBase, viewType);
   }
 
   // --- Resource (buffer) descriptors: local buffer index in [0, maxBuffers) ---
@@ -184,6 +200,16 @@ public:
   static bool isSupported(VkPhysicalDevice physicalDevice) { return DescriptorHeapWriter::isSupported(physicalDevice); }
 
 private:
+  // Shared implementation for sampled / storage image descriptor writes (validation, slot offset,
+  // dirty tracking); `type` selects the underlying sampled vs storage write.
+  VkResult writeImageDescriptorRegion(uint32_t         localImageIndex,
+                                      VkImage          image,
+                                      VkFormat         format,
+                                      VkImageLayout    layout,
+                                      VkDescriptorType type,
+                                      void*            resourceHeapBase,
+                                      VkImageViewType  viewType);
+
   void markResourceImageDirty(VkDeviceSize byteOffset, VkDeviceSize descriptorByteSize);
   void markResourceBufferDirty(VkDeviceSize byteOffset, VkDeviceSize descriptorByteSize);
 

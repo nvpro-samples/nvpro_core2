@@ -303,26 +303,32 @@ void nvvkgltf::SceneVk::updateSceneDescBuffer(nvvk::StagingUploader& staging, co
 }
 
 template <typename T>
-inline shaderio::GltfTextureInfo getTextureInfo(const T& tinfo)
+inline shaderio::GltfTextureInfo getTextureInfo(const tinygltf::Model& model, const T& tinfo)
 {
   const KHR_texture_transform& transform = tinygltf::utils::getTextureTransform(tinfo);
   const int                    texCoord  = std::min(tinfo.texCoord, 1);  // Only 2 texture coordinates
 
+  // Resolve the glTF sampler bound to this texture (-1 when there is no texture or no explicit sampler)
+  int samplerIndex = -1;
+  if(tinfo.index >= 0 && tinfo.index < static_cast<int>(model.textures.size()))
+    samplerIndex = model.textures[tinfo.index].sampler;
+
   // This is the texture info that will be used in the shader
   return {
-      .uvTransform = shaderio::float3x2(transform.uvTransform[0][0], transform.uvTransform[1][0],   //
-                                        transform.uvTransform[0][1], transform.uvTransform[1][1],   //
-                                        transform.uvTransform[0][2], transform.uvTransform[1][2]),  //
-      .index       = tinfo.index,
-      .texCoord    = texCoord,
+      .uvTransform  = shaderio::float3x2(transform.uvTransform[0][0], transform.uvTransform[1][0],   //
+                                         transform.uvTransform[0][1], transform.uvTransform[1][1],   //
+                                         transform.uvTransform[0][2], transform.uvTransform[1][2]),  //
+      .index        = tinfo.index,
+      .texCoord     = static_cast<int16_t>(texCoord),
+      .samplerIndex = static_cast<int16_t>(samplerIndex),
   };
 }
 
 // Helper to handle texture info and update textureInfos vector
 template <typename T>
-uint16_t addTextureInfo(const T& tinfo, std::vector<shaderio::GltfTextureInfo>& textureInfos)
+uint16_t addTextureInfo(const tinygltf::Model& model, const T& tinfo, std::vector<shaderio::GltfTextureInfo>& textureInfos)
 {
-  shaderio::GltfTextureInfo ti = getTextureInfo(tinfo);
+  shaderio::GltfTextureInfo ti = getTextureInfo(model, tinfo);
   if(ti.index != -1)
   {
     uint16_t idx = static_cast<uint16_t>(textureInfos.size());
@@ -442,13 +448,14 @@ static void populateShaderMaterial(shaderio::GltfShadeMaterial& dstMat, const ti
 //--------------------------------------------------------------------------------------------------
 // Create a new shader material, appending texture infos to the vector
 //
-static void getShaderMaterial(const tinygltf::Material&                 srcMat,
+static void getShaderMaterial(const tinygltf::Model&                    model,
+                              const tinygltf::Material&                 srcMat,
                               std::vector<shaderio::GltfShadeMaterial>& shadeMaterials,
                               std::vector<shaderio::GltfTextureInfo>&   textureInfos)
 {
   shaderio::GltfShadeMaterial dstMat = shaderio::defaultGltfMaterial();
   populateShaderMaterial(dstMat, srcMat, [&](uint16_t& texIndex, const auto& srcTexInfo) {
-    texIndex = addTextureInfo(srcTexInfo, textureInfos);
+    texIndex = addTextureInfo(model, srcTexInfo, textureInfos);
   });
   shadeMaterials.emplace_back(dstMat);
 }
@@ -474,7 +481,8 @@ struct MaterialUpdateResult
 
 // Update an existing cached material, preserving texture indices, and updating texture info.
 // Returns the contiguous texture-info span used by this material and whether texture slot topology changed.
-static MaterialUpdateResult updateCachedMaterial(shaderio::GltfShadeMaterial& dstMat,
+static MaterialUpdateResult updateCachedMaterial(const tinygltf::Model&       model,
+                                                 shaderio::GltfShadeMaterial& dstMat,
                                                  const tinygltf::Material&    srcMat,
                                                  shaderio::GltfTextureInfo*   cachedTextureInfos)
 {
@@ -501,7 +509,7 @@ static MaterialUpdateResult updateCachedMaterial(shaderio::GltfShadeMaterial& ds
     }
 
     // Update the cached texture info and the span of texture infos
-    cachedTextureInfos[texIndex] = getTextureInfo(srcTexInfo);
+    cachedTextureInfos[texIndex] = getTextureInfo(model, srcTexInfo);
     result.span.minIdx           = std::min(result.span.minIdx, texIndex);  // Minimum txt ID in this material
     result.span.maxIdx = std::max(result.span.maxIdx, texIndex);  //Max to check later if the texture infos are contiguous
     result.span.count++;                                          // Count the number of texture infos for this material
@@ -529,7 +537,7 @@ void nvvkgltf::SceneVk::updateMaterialBuffer(nvvk::StagingUploader&         stag
     m_cachedShadeMaterials.reserve(materials.size());
     for(const auto& srcMat : materials)
     {
-      getShaderMaterial(srcMat, m_cachedShadeMaterials, m_cachedTextureInfos);
+      getShaderMaterial(scn.getModel(), srcMat, m_cachedShadeMaterials, m_cachedTextureInfos);
     }
   };
 
@@ -618,7 +626,7 @@ void nvvkgltf::SceneVk::updateMaterialBuffer(nvvk::StagingUploader&         stag
     shaderio::GltfShadeMaterial& cachedMat = m_cachedShadeMaterials[idx];
 
     // Update material properties AND texture infos in one pass (parses extensions once)
-    MaterialUpdateResult update = updateCachedMaterial(cachedMat, materials[idx], m_cachedTextureInfos.data());
+    MaterialUpdateResult update = updateCachedMaterial(scn.getModel(), cachedMat, materials[idx], m_cachedTextureInfos.data());
     if(update.topologyChanged)
     {
       topologyChanged = true;  // New texture slots, we need to rebuild the entirecache
@@ -1225,7 +1233,7 @@ void nvvkgltf::SceneVk::updateVertexBuffers(nvvk::StagingUploader& staging, cons
 //--------------------------------------------------------------------------------------------------------------
 // Returning the Vulkan sampler information from the information in the tinygltf
 //
-static VkSamplerCreateInfo getSampler(const tinygltf::Model& model, int index)
+VkSamplerCreateInfo nvvkgltf::getVkSamplerCreateInfo(const tinygltf::Model& model, int index)
 {
   VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
   samplerInfo.minFilter  = VK_FILTER_LINEAR;
@@ -1383,7 +1391,7 @@ void nvvkgltf::SceneVk::createTextureImages(VkCommandBuffer              cmd,
       continue;
     }
 
-    VkSamplerCreateInfo sampler = getSampler(model, texture.sampler);
+    VkSamplerCreateInfo sampler = nvvkgltf::getVkSamplerCreateInfo(model, texture.sampler);
 
     SceneImage& sceneImage = m_images[source_image];
 

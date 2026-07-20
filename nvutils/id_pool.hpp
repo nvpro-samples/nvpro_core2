@@ -79,6 +79,28 @@ public:
 
   bool isRangeAvailable(uint32_t searchCount) const;
 
+  // number of elements in pool (highest id is `poolSize-1`)
+  uint32_t getPoolSize() const { return m_maxID + 1; }
+  // number of IDs currently in use
+  uint32_t getUsedCount() const { return m_usedIDs; }
+
+  // Splits the id space into a low ("front") region and a high ("back") region,
+  // separated by the largest contiguous run of free IDs. Intended for the
+  // dual-region use case where front and back allocators grow toward each other.
+  //
+  // The bounds reflect live extent, not origin: if a large gap opens within the
+  // back region, the split point may land inside back-allocated space, causing
+  // frontUsedEnd to cover some back-origin IDs or vice versa. This is expected.
+  //
+  // On return:
+  //   frontUsedEnd  - exclusive upper bound of the front region: every in-use ID
+  //                   below the gap is < frontUsedEnd.
+  //   backUsedBegin - inclusive lower bound of the back region: every in-use ID
+  //                   above the gap is >= backUsedBegin.
+  // The half-open range [frontUsedEnd, backUsedBegin) is always free. An empty
+  // pool yields (0, poolSize); a full pool yields (poolSize, poolSize).
+  void getUsedBounds(uint32_t& frontUsedEnd, uint32_t& backUsedBegin) const;
+
   void printRanges() const;
   void checkRanges() const;
 

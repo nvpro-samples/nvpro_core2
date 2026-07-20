@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2016-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,13 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2016-2025 NVIDIA CORPORATION
+ * SPDX-FileCopyrightText: Copyright (c) 2016-2026 NVIDIA CORPORATION
  * SPDX-License-Identifier: Apache-2.0
  */
 
 /*-----------------------------------------------------------------------------
 
-nv_dds 2.1.2
+nv_dds 2.2.0
      
 A small yet complete library for reading and writing DDS files.
 
@@ -226,13 +226,50 @@ struct Subresource
   std::vector<char> data;  // The image's raw data.
 };
 
+// A range of subresources given by their mips, layers, and faces.
+struct SubresourceRange
+{
+  uint32_t firstMip   = 0;
+  uint32_t numMips    = 1;
+  uint32_t firstLayer = 0;
+  uint32_t numLayers  = 1;
+  uint32_t firstFace  = 0;
+  uint32_t numFaces   = 1;
+};
+
+// For each subresource, lists its position/layout info.
+struct SubresourceLayout
+{
+  // These two parameters specify the start and length of bytes, relative to
+  // the start of the file, containing the data for this resource.
+  uint64_t fileOffset{};
+  uint64_t fileByteSize{};
+  // The size in bytes of a single subresource, after doing any complex
+  // decoding (e.g. bitmasks). All subresources within a mip have the same size.
+  uint64_t uncompressedByteSize{};
+};
+
+// Where data for a subresource should be copied to, when using
+// readSubresources*().
+struct SubresourceTarget
+{
+  // The first byte of the target buffer.
+  void* data = nullptr;
+  // The size of the target buffer, so readSubresources*() can make sure it's
+  // large enough.
+  size_t capacityInBytes = 0;
+};
+
 // Contains all the settings for reading DDS files.
 struct ReadSettings
 {
+  // Deprecated; use `maxSizeBytes` instead.
+  [[deprecated]]
+  size_t maxSubresourceSizeBytes = sizeof(float) * 4ULL * 65536ULL * 32768ULL;
   // The maximum size for any subresource in bytes.
   // This prevents resource exhaustion attacks; otherwise, it's possible for
   // a stream to list an impossibly large size.
-  size_t maxSubresourceSizeBytes = sizeof(float) * 4ULL * 65536ULL * 32768ULL;
+  size_t maxSizeBytes = sizeof(float) * 4ULL * 65536ULL * 32768ULL;
   // If true, the reader will validate that the DDS file can plausibly contain
   // the data it says it contains. This will involve seeking to the end of the
   // stream to determine the length of the data.
@@ -322,24 +359,6 @@ public:
   // given indices are out of range, throws an std::out_of_range exception.
   const Subresource& subresource(uint32_t mip = 0, uint32_t layer = 0, uint32_t face = 0) const;
   Subresource&       subresource(uint32_t mip = 0, uint32_t layer = 0, uint32_t face = 0);
-
-  // Reads only the header of this structure from a DDS stream, advancing the
-  // stream as well.
-  // Note that for bitmasked data, m_fileInfo.wasBitmasked will be set,
-  // and dxgiFormat will be the format the bitmasked data will be decompressed
-  // to.
-  ErrorWithText readHeaderFromStream(std::istream&       input,  // The input stream, at the start of the DDS data.
-                                     const ReadSettings& readSettings);  // Settings for the reader.
-
-  // Wrapper for readHeaderFromStream for a file.
-  ErrorWithText readHeaderFromFile(const char*         filename,       // The .dds file to read from.
-                                   const ReadSettings& readSettings);  // Settings for the reader.
-
-  // Wrapper for readHeaderFromStream for a buffer in memory.
-  ErrorWithText readHeaderFromMemory(const char*         buffer,         // The buffer in memory.
-                                     size_t              bufferSize,     // Its length in bytes.
-                                     const ReadSettings& readSettings);  // Settings for the reader.
-
 
   // Reads this structure from a DDS stream, advancing the stream as well.
   // Returns an optional error message if the read failed.
@@ -438,6 +457,9 @@ public:
     // If the texture was bitmasked, whether it used the "bump du dv" encoding
     // for normal maps.
     bool bitmaskWasBumpDuDv = false;
+    // If the texture was bitmasked, the number of bits per pixel computed
+    // from the DDS headers.
+    uint32_t bitmaskedBitsPerPixel = 0;
   };
 
   // Read-only accessor for some properties of a DDS file.
@@ -446,6 +468,72 @@ public:
   // Returns a printable string containing information about the Image.
   std::string formatInfo() const;
 
+  //---------------------------------------------------------------------------
+  // We also provide a lower-level API where you can read the file header
+  // and then copy/decompress subresources however you want (e.g. copying
+  // data directly from a memory-mapped file to GPU memory if the file doesn't
+  // use complex encoding like bitmasks, or even do complex decoding on the GPU).
+
+  // Reads only the header of this structure from a DDS stream, advancing the
+  // stream as well.
+  // Note that for bitmasked data, m_fileInfo.wasBitmasked will be set,
+  // and dxgiFormat will be the format the bitmasked data will be decompressed
+  // to.
+  ErrorWithText readHeaderFromStream(std::istream&       input,  // The input stream, at the start of the DDS data.
+                                     const ReadSettings& readSettings);  // Settings for the reader.
+
+  // Wrapper for readHeaderFromStream for a file.
+  ErrorWithText readHeaderFromFile(const char*         filename,       // The .dds file to read from.
+                                   const ReadSettings& readSettings);  // Settings for the reader.
+
+  // Wrapper for readHeaderFromStream for a buffer in memory.
+  ErrorWithText readHeaderFromMemory(const char*         buffer,         // The buffer in memory.
+                                     size_t              bufferSize,     // Its length in bytes.
+                                     const ReadSettings& readSettings);  // Settings for the reader.
+
+  // Returns whether subresources within the file require additional steps
+  // (i.e. bitmask decoding) before they can be used as subresources of the
+  // DDS file's `dxgiFormat` on a GPU.
+  bool requiresComplexDecoding() const { return m_fileInfo.wasBitmasked; }
+
+  // Returns where a subresource's (possibly bitmasked) data exists in the file.
+  const SubresourceLayout& getSubresourceLayout(uint32_t mip, uint32_t layer, uint32_t face) const;
+
+  // Returns the number of bytes for a single subresource within a single mip,
+  // without supercompression.
+  size_t getSubresourceByteSize(uint32_t mip) const { return getSubresourceLayout(mip, 0, 0).uncompressedByteSize; }
+
+  // Returns the total number of bytes required to store all the subresources
+  // within the given range, assuming there's no padding between them, without supercompression.
+  // `range` must be in-bounds, and the calculation assumes size_t
+  // does not overflow.
+  size_t getSubresourceByteSizeSum(const SubresourceRange& range) const;
+
+  // Returns the total number of bytes required to store all the subresources
+  // within a given mip, assuming there's no padding between them, without supercompression.
+  // `getSubresourceByteLengthSum` is more flexible, but this is the usual use case.
+  size_t getMipByteSizeSum(uint32_t mip) const;
+
+  // Given a stream set to the start of a DDS file (i.e. at the start of the
+  // 4-byte magic number), extracts the subresources within the range of
+  // mips, layers, and faces given by `range`, doing any complex decoding,
+  // and writes each one to the corresponding SubresourceTarget.
+  //
+  // `outSubresources` must be in [mip, layer, face] order; i.e. it must be
+  // an array of length `range.numMips * range.numLayers * range.numFaces`,
+  // and the data for the subresource at mip `range.firstMip + i`,
+  // layer `range.firstLayer + j`, face `range.firstFace + k` will be inflated
+  // to outSubresources[(i * range.numLayers + j) * range.numFaces + k].
+  ErrorWithText readSubresourcesFromStream(std::istream& input, const SubresourceRange& range, SubresourceTarget* outSubresources);
+
+  // Wrapper for readSubresourcesFromStream for a file.
+  ErrorWithText readSubresourcesFromFile(const char* filename, const SubresourceRange& range, SubresourceTarget* outSubresources);
+
+  // Wrapper for readSubresourcesFromStream for a buffer in memory.
+  ErrorWithText readSubresourcesFromMemory(const char* buffer, size_t bufferSize, const SubresourceRange& range, SubresourceTarget* outSubresources);
+
+public:
+  //---------------------------------------------------------------------------
   // These members can generally be freely modified.
 
   // Unlike Vulkan, each of these must be nonzero for a valid Image.
@@ -491,7 +579,9 @@ private:
   uint32_t m_numLayers = 1;
   uint32_t m_numFaces  = 1;
 
-  FileInfo m_fileInfo = {};
+  FileInfo                       m_fileInfo = {};
+  std::vector<SubresourceLayout> m_subresourceLayouts;
+  SubresourceLayout&             subresourceLayout(uint32_t mip, uint32_t layer, uint32_t face);
 
   // A structure containing all the image's encoded data. We store this in a
   // buffer with an entry per subresource, and provide accessors to it.
