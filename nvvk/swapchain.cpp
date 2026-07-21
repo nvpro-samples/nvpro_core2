@@ -195,7 +195,11 @@ void nvvk::Swapchain::cmdTransitionImageForOverwrite(VkCommandBuffer cmd, VkImag
 {
   assert(m_frameImageIndex < m_images.size());
   VkImageLayout& layout = m_images[m_frameImageIndex].currentLayout;
-  cmdImageMemoryBarrier(cmd, {m_images[m_frameImageIndex].image, VK_IMAGE_LAYOUT_UNDEFINED, newLayout});
+  cmdImageMemoryBarrier(cmd, {.image         = m_images[m_frameImageIndex].image,
+                              .oldLayout     = VK_IMAGE_LAYOUT_UNDEFINED,
+                              .newLayout     = newLayout,
+                              .srcStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                              .srcAccessMask = VK_ACCESS_2_NONE});
   layout = newLayout;
 }
 
