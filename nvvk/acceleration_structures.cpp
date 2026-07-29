@@ -132,9 +132,10 @@ void AccelerationStructureBuildData::cmdBuildAccelerationStructure(VkCommandBuff
 
   vkCmdBuildAccelerationStructuresKHR(cmd, 1, &buildInfo, &rangeInfo);
 
-  // Since the scratch buffer is reused across builds, we need a barrier to ensure one build
-  // is finished before starting the next one.
-  accelerationStructureBarrier(cmd, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR, VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR);
+  // Synchronizes this operation with subsequent acceleration structure builds.
+  // Callers must separately synchronize shader reads with the consuming shader stage.
+  accelerationStructureBarrier(cmd, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
+                               VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
 }
 
 
@@ -155,9 +156,10 @@ void AccelerationStructureBuildData::cmdUpdateAccelerationStructure(VkCommandBuf
   buildInfo.pGeometries               = asGeometry.data();
   vkCmdBuildAccelerationStructuresKHR(cmd, 1, &buildInfo, &rangeInfo);
 
-  // Since the scratch buffer is reused across builds, we need a barrier to ensure one build
-  // is finished before starting the next one.
-  accelerationStructureBarrier(cmd, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR, VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR);
+  // Synchronizes this operation with subsequent acceleration structure builds.
+  // Callers must separately synchronize shader reads with the consuming shader stage.
+  accelerationStructureBarrier(cmd, VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
+                               VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
 }
 
 //////////////////////////////////////////////////////////////////////////

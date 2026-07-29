@@ -1,6 +1,13 @@
 # NVVK contains Vulkan helpers.
 set(LIB_NAME nvvk)
 
+if(Vulkan_VERSION VERSION_LESS "1.4.341")
+  message(FATAL_ERROR
+    "Found Vulkan SDK ${Vulkan_VERSION}, but nvpro_core2 requires Vulkan SDK "
+    "1.4.341 or newer. Install a newer Vulkan SDK and rerun CMake."
+  )
+endif()
+
 # Collect all source files in the utils directory
 file(GLOB LIB_SOURCES "*.cpp" "*.hpp")
 source_group("Source Files" FILES ${LIB_SOURCES})

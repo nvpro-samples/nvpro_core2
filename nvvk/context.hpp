@@ -26,11 +26,6 @@
 
 #include "resources.hpp"
 
-static_assert(VK_HEADER_VERSION >= 341,
-              "nvvk/context.hpp requires at least Vulkan SDK 1.4.341. "
-              "Please install a newer Vulkan SDK or make sure CMake's finding "
-              "the correct Vulkan SDK.");
-
 //--------------------------------------------------------------------------------------------------
 // Context
 //
