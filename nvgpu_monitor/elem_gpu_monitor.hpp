@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -24,20 +24,11 @@
 #include <imgui/imgui.h>
 #include <imgui/imgui_internal.h>
 #include <implot/implot.h>
-#include <fmt/core.h>
+#include <fmt/format.h>
 #include <nvutils/timers.hpp>
 #include <nvgui/settings_handler.hpp>
 #include <nvgpu_monitor/nvml_monitor.hpp>
 #include "nvapp/application.hpp"
-
-/*-------------------------------------------------------------------------------------------------
-# class nvapp::ElementNvml
-
->  This class is an element of the application that is responsible for the NVML monitoring. It is using the `NVML` library to get information about the GPU and display it in the application.
-
-To use this class, you need to add it to the `nvapp::Application` using the `addElement` method.
-
--------------------------------------------------------------------------------------------------*/
 
 namespace nvgpu_monitor {
 
@@ -70,6 +61,14 @@ struct AverageCircularBuffer
   T average() { return totValue / data.size(); }
 };
 
+//-----------------------------------------------------------------------------
+// This class is an element of the application that reports GPU info like
+// power states and memory usage. It is uses the NVML library
+// (https://docs.nvidia.com/deploy/nvml-api/nvml-api-reference.html)
+// to get information about the GPU and display it in the application.
+//
+// To use this class, you need to add it to the `nvapp::Application` using
+// the `addElement` method.
 struct ElementGpuMonitor : public nvapp::IAppElement
 {
   explicit ElementGpuMonitor(bool show = false);

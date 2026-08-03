@@ -1,3 +1,10 @@
+// Formatting library for C++ - C++20 module
+//
+// Copyright (c) 2012 - present, Victor Zverovich and {fmt} contributors
+// All rights reserved.
+//
+// For the license information refer to format.h.
+
 module;
 
 #define FMT_MODULE
@@ -50,6 +57,8 @@ module;
 #  include <limits.h>
 #  include <stdint.h>
 #  include <stdio.h>
+#  include <stdlib.h>
+#  include <string.h>
 #  include <time.h>
 #endif
 #include <cerrno>
@@ -130,11 +139,6 @@ extern "C++" {
 
 #ifdef FMT_ATTACH_TO_GLOBAL_MODULE
 }
-#endif
-
-// gcc doesn't yet implement private module fragments
-#if !FMT_GCC_VERSION
-module :private;
 #endif
 
 #ifdef FMT_ATTACH_TO_GLOBAL_MODULE

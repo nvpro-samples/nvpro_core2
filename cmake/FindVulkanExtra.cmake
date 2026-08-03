@@ -1,8 +1,11 @@
 # This calls find_package(Vulkan), and finds some additional components that
 # CMake doesn't yet provide. Also prints out diagnostic information.
 find_package(Vulkan COMPONENTS glslangValidator)
-get_filename_component(_Vulkan_LIB_DIR ${Vulkan_LIBRARY} DIRECTORY)
 set(_Vulkan_BIN_DIR ${Vulkan_INCLUDE_DIRS}/../bin)
+get_filename_component(_Vulkan_LIB_DIR_HINTS ${Vulkan_LIBRARY} DIRECTORY)
+if($ENV{VULKAN_SDK})
+  list(PREPEND _Vulkan_LIB_DIR_HINTS "$ENV{VULKAN_SDK}/lib")
+endif()
 # Vulkan - Volk
 if(NOT Vulkan_VOLK_DIR)
   find_path(Vulkan_VOLK_DIR volk.h HINTS ${Vulkan_INCLUDE_DIRS}/volk)
@@ -24,7 +27,7 @@ macro(nvpro2_find_vulkan_shared_library NAME)
   if(NOT ${_LIB_VAR})
     find_library(${_LIB_VAR}
       NAMES ${NAME}
-      HINTS ${_Vulkan_LIB_DIR}
+      HINTS ${_Vulkan_LIB_DIR_HINTS}
     )
   endif()
 
