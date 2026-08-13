@@ -3,7 +3,7 @@
 find_package(Vulkan COMPONENTS glslangValidator)
 set(_Vulkan_BIN_DIR ${Vulkan_INCLUDE_DIRS}/../bin)
 get_filename_component(_Vulkan_LIB_DIR_HINTS ${Vulkan_LIBRARY} DIRECTORY)
-if($ENV{VULKAN_SDK})
+if(NOT ("$ENV{VULKAN_SDK}" STREQUAL ""))
   list(PREPEND _Vulkan_LIB_DIR_HINTS "$ENV{VULKAN_SDK}/lib")
 endif()
 # Vulkan - Volk

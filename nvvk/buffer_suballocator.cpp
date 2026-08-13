@@ -32,11 +32,11 @@ BufferSubAllocator::~BufferSubAllocator()
 
 BufferSubAllocator::BufferSubAllocator(BufferSubAllocator&& other) noexcept
 {
-  std::swap(m_state.allocatedSize, other.m_state.allocatedSize);
-  std::swap(m_blocks, other.m_blocks);
+  // this is freshly default-constructed; swapping all members transfers other's
+  // full state here and leaves other empty (deinit-safe: resourceAllocator == null).
   std::swap(m_info, other.m_info);
-  std::swap(m_state.internalBlockUnits, other.m_state.internalBlockUnits);
-  std::swap(m_state.maxBlocks, other.m_state.maxBlocks);
+  std::swap(m_state, other.m_state);
+  std::swap(m_blocks, other.m_blocks);
 }
 
 BufferSubAllocator& BufferSubAllocator::operator=(BufferSubAllocator&& other) noexcept
@@ -45,11 +45,9 @@ BufferSubAllocator& BufferSubAllocator::operator=(BufferSubAllocator&& other) no
   {
     assert(m_info.resourceAllocator == nullptr && "Missing deinit()");
 
-    std::swap(m_state.allocatedSize, other.m_state.allocatedSize);
-    std::swap(m_blocks, other.m_blocks);
     std::swap(m_info, other.m_info);
-    std::swap(m_state.internalBlockUnits, other.m_state.internalBlockUnits);
-    std::swap(m_state.maxBlocks, other.m_state.maxBlocks);
+    std::swap(m_state, other.m_state);
+    std::swap(m_blocks, other.m_blocks);
   }
 
   return *this;
@@ -69,7 +67,8 @@ VkResult BufferSubAllocator::init(const InitInfo& info)
   assert(info.blockSize <= m_state.maxAllocationSize);
   assert(!info.threadSafeBlockAccess || info.maxAllocatedSize != 0);
 
-  m_info = info;
+  m_info = info;  // owns queueFamilies (a std::vector), so no dangling after init() returns
+
   if(!m_info.maxAllocatedSize)
   {
     m_info.maxAllocatedSize = info.blockSize * MAX_TOTAL_BLOCKS;

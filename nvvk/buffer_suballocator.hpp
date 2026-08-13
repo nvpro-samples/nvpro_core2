@@ -59,10 +59,10 @@ public:
     std::string debugName{};
 
     // properties of the internal buffer allocation
-    VkBufferUsageFlagBits2    usageFlags      = VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT;
-    VmaMemoryUsage            memoryUsage     = VMA_MEMORY_USAGE_AUTO;
-    VmaAllocationCreateFlags  allocationFlags = {};
-    std::span<const uint32_t> queueFamilies;
+    VkBufferUsageFlags2KHR   usageFlags      = VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT;
+    VmaMemoryUsage           memoryUsage     = VMA_MEMORY_USAGE_AUTO;
+    VmaAllocationCreateFlags allocationFlags = {};
+    std::vector<uint32_t>    queueFamilies   = {};
 
     // must be power-of-two
     uint32_t minAlignment = DEFAULT_ALIGNMENT;

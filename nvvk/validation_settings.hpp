@@ -23,7 +23,7 @@
 //
 // Usage:
 //  nvvk::ValidationSettings vvlInfo{};
-//  vvlInfo.fine_grained_locking = false;  // Customize individual settings as needed
+//  vvlInfo.validate_sync = true;  // Customize individual settings as needed
 //  vkSetup.instanceCreateInfoExt = vvlInfo.buildPNextChain();
 //
 //  // Explicit preset selection:
@@ -69,11 +69,10 @@ struct ValidationSettings
   VkBool32 check_query{VK_TRUE};            // Query
   VkBool32 check_shaders{VK_TRUE};          // Shader
   VkBool32 check_shaders_caching{VK_TRUE};  // Caching
-  // VkBool32 debug_disable_spirv_val{VK_FALSE};  // Disable spirv-val (allows normal shader validation to run, but removes just spirv-val for performance reasons)
-  VkBool32 unique_handles{VK_TRUE};   // Handle Wrapping
-  VkBool32 object_lifetime{VK_TRUE};  // Object Lifetime
-  VkBool32 stateless_param{VK_TRUE};  // Stateless Parameter
-  VkBool32 thread_safety{VK_TRUE};    // Thread Safety
+  VkBool32 unique_handles{VK_TRUE};         // Handle Wrapping
+  VkBool32 object_lifetime{VK_TRUE};        // Object Lifetime
+  VkBool32 stateless_param{VK_TRUE};        // Stateless Parameter
+  VkBool32 thread_safety{VK_TRUE};          // Thread Safety
 
   // Synchronization Settings
   VkBool32 validate_sync{VK_FALSE};                      // Synchronization
@@ -93,7 +92,7 @@ struct ValidationSettings
   VkBool32 gpuav_descriptor_checks{VK_TRUE};                 // Descriptors indexing
   VkBool32 gpuav_post_process_descriptor_indexing{VK_TRUE};  // Post process descriptor indexing
   VkBool32 gpuav_buffer_address_oob{VK_TRUE};                // Out of bounds buffer device addresses
-  VkBool32 gpuav_validate_ray_query{VK_TRUE};                // RayQuery SPIR-V instructions
+  VkBool32 gpuav_validate_trace_ray{VK_TRUE};                // RayQuery SPIR-V instructions
   VkBool32 gpuav_vertex_attribute_fetch_oob{VK_TRUE};        // Out of bounds vertex attribute fetching
 
   // GPU-AV Buffer Validation Settings
@@ -134,9 +133,6 @@ struct ValidationSettings
   std::vector<const char*> message_id_filter{};                                // Mute Message VUIDs
   VkBool32                 message_format_json{VK_FALSE};                      // JSON
   VkBool32                 message_format_display_application_name{VK_FALSE};  // Display Application Name
-
-  // General Settings
-  VkBool32 fine_grained_locking{VK_TRUE};  // Fine Grained Locking
 
   VkBaseInStructure* buildPNextChain()
   {
@@ -284,7 +280,6 @@ struct ValidationSettings
     // clang-format off
     m_settings = {
         // Core Validation Settings
-        {m_layer_name, "fine_grained_locking", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &fine_grained_locking},
         {m_layer_name, "validate_core", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &validate_core},
         {m_layer_name, "check_image_layout", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &check_image_layout},
         {m_layer_name, "check_command_buffer", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &check_command_buffer},
@@ -292,7 +287,6 @@ struct ValidationSettings
         {m_layer_name, "check_query", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &check_query},
         {m_layer_name, "check_shaders", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &check_shaders},
         {m_layer_name, "check_shaders_caching", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &check_shaders_caching},
-        // {m_layer_name, "debug_disable_spirv_val", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &debug_disable_spirv_val},
         {m_layer_name, "unique_handles", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &unique_handles},
         {m_layer_name, "object_lifetime", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &object_lifetime},
         {m_layer_name, "stateless_param", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &stateless_param},
@@ -316,7 +310,7 @@ struct ValidationSettings
         {m_layer_name, "gpuav_descriptor_checks", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &gpuav_descriptor_checks},
         {m_layer_name, "gpuav_post_process_descriptor_indexing", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &gpuav_post_process_descriptor_indexing},
         {m_layer_name, "gpuav_buffer_address_oob", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &gpuav_buffer_address_oob},
-        {m_layer_name, "gpuav_validate_ray_query", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &gpuav_validate_ray_query},
+        {m_layer_name, "gpuav_validate_trace_ray", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &gpuav_validate_trace_ray},
         {m_layer_name, "gpuav_vertex_attribute_fetch_oob", VK_LAYER_SETTING_TYPE_BOOL32_EXT, 1, &gpuav_vertex_attribute_fetch_oob},
         
         // GPU-AV Buffer Validation Settings
