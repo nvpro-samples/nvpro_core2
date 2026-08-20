@@ -254,7 +254,10 @@ shaders match the ease of the path tracer's `bsdfSample/bsdfEvaluate` pair. Hand
     (sample-specific) and passes `haveTransmissionSample = false` when no capture is available.
 
 NOT included here (intentionally separate, matching `pbr.frag:352-356` + `pbr.frag:373`):
-  * KHR_materials_volume_scatter -- add `volumeScatterApprox(mat, ...) * (1 - mat.clearcoat *
+  * KHR_materials_scatter (volumetric mode) -- a rasterizer cannot trace inside the medium; the
+    spec permits approximating it with the thin-walled behaviour, which evaluateMaterial() already
+    folds into the diffuse-transmission lobes handled above. Any sample-side approximation goes at
+    the call site, masked by `(1 - mat.clearcoat *
     khronosClearcoatFresnel(mat, V))` at the call site.
   * Ambient occlusion -- apply `* mat.occlusion` to the returned value.
   * Emissive -- add `mat.emissive * (1 - mat.clearcoat * khronosClearcoatFresnel(mat, V))`.

@@ -50,13 +50,18 @@ struct PbrMaterial
   float  specular;       // weight of the dielectric specular layer
   float3 specularColor;  // color of the dielectric specular layer
   float  transmission;   // KHR_materials_transmission
+  // Extra tint on the specular transmission (BTDF) lobe only; the lobe is tinted by
+  // `baseColor * transmissionTint`. float3(1) is plain glTF behavior. It exists because the
+  // thin-walled mode of KHR_materials_scatter needs the transmission lobe and the diffuse
+  // reflection lobe to carry different colors, and `baseColor` alone can only express one.
+  float3 transmissionTint;
 
   float3 attenuationColor;     // KHR_materials_volume
   float  attenuationDistance;  //
   float  thickness;            // KHR_materials_volume thicknessFactor * thicknessTexture (object-space)
 
-  float3 scatterCoefficient;   // KHR_materials_volume_scatter: σ_s (scattering coefficient)
-  float  scatterAnisotropy;    // KHR_materials_volume_scatter: g parameter for Henyey-Greenstein
+  float3 scatterCoefficient;   // KHR_materials_scatter: σ_s (scattering coefficient)
+  float  scatterAnisotropy;    // KHR_materials_scatter: g parameter for Henyey-Greenstein
 
   float  clearcoat;           // KHR_materials_clearcoat
   float  clearcoatRoughness;  //
@@ -97,9 +102,10 @@ PbrMaterial defaultPbrMaterial()
   mat.ior2       = 1.5F;
   mat.dispersion = 0.0F;
 
-  mat.specular      = 1.0F;
-  mat.specularColor = float3(1.0F);
-  mat.transmission  = 0.0F;
+  mat.specular         = 1.0F;
+  mat.specularColor    = float3(1.0F);
+  mat.transmission     = 0.0F;
+  mat.transmissionTint = float3(1.0F);
 
   mat.attenuationColor    = float3(1.0F);
   mat.attenuationDistance = 1.0F;

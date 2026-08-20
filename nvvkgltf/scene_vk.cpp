@@ -344,6 +344,11 @@ uint16_t addTextureInfo(const tinygltf::Model& model, const T& tinfo, std::vecto
 // On creation: assign texIndex = addTextureInfo(srcTexInfo, textureInfos)
 // On update: if texIndex != 0, update cachedTextureInfos[texIndex] in-place
 //
+// The GPU material is a shared host/device struct with a documented layout (see
+// nvshaders/gltf_scene_io.h.slang). Pin the size so a field added on one side without updating the
+// padding fails the build instead of silently shifting every texture slot.
+static_assert(sizeof(shaderio::GltfShadeMaterial) == 288, "GltfShadeMaterial layout changed");
+
 template <typename TextureHandler>
 static void populateShaderMaterial(shaderio::GltfShadeMaterial& dstMat, const tinygltf::Material& srcMat, TextureHandler handleTexture)
 {
@@ -440,9 +445,12 @@ static void populateShaderMaterial(shaderio::GltfShadeMaterial& dstMat, const ti
   handleTexture(dstMat.diffuseTransmissionTexture, diffuseTransmission.diffuseTransmissionTexture);
   handleTexture(dstMat.diffuseTransmissionColorTexture, diffuseTransmission.diffuseTransmissionColorTexture);
 
-  KHR_materials_volume_scatter volumeScatter = tinygltf::utils::getVolumeScatter(srcMat);
-  dstMat.multiscatterColorFactor             = volumeScatter.multiscatterColorFactor;
-  dstMat.scatterAnisotropy                   = volumeScatter.scatterAnisotropy;
+  KHR_materials_scatter scatter  = tinygltf::utils::getScatter(srcMat);
+  dstMat.scatterStrengthFactor   = scatter.scatterStrengthFactor;
+  dstMat.multiscatterColorFactor = scatter.multiscatterColorFactor;
+  dstMat.scatterAnisotropy       = scatter.scatterAnisotropy;
+  handleTexture(dstMat.scatterStrengthTexture, scatter.scatterStrengthTexture);
+  handleTexture(dstMat.multiscatterColorTexture, scatter.multiscatterColorTexture);
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -1422,13 +1430,15 @@ void nvvkgltf::SceneVk::findSrgbImages(const tinygltf::Model& model)
     }
   };
 
-  // For images in extensions
+  // For images in extensions. Extension texture entries are TextureInfo objects (`{"index": N,
+  // "texCoord": M}`), not scalar indices, so they must be parsed with getValue().
   auto addImageFromExtension = [&](const tinygltf::Material& mat, const std::string& extName, const std::string& name) {
     const auto& ext = mat.extensions.find(extName);
     if(ext != mat.extensions.end())
     {
-      if(ext->second.Has(name))
-        addImage(ext->second.Get(name).Get<int>());
+      tinygltf::TextureInfo texInfo;
+      tinygltf::utils::getValue(ext->second, name, texInfo);
+      addImage(texInfo.index);
     }
   };
 
@@ -1444,6 +1454,14 @@ void nvvkgltf::SceneVk::findSrgbImages(const tinygltf::Model& model)
 
     // https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_materials_sheen/README.md#sheen
     addImageFromExtension(mat, "KHR_materials_sheen", "sheenColorTexture");
+
+    // https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_materials_diffuse_transmission
+    addImageFromExtension(mat, "KHR_materials_diffuse_transmission", "diffuseTransmissionColorTexture");
+
+    // KHR_materials_scatter: multiscatterColorTexture is stored in RGB and encoded in sRGB. The
+    // superseded KHR_materials_volume_scatter name is still loaded, so flag both.
+    addImageFromExtension(mat, KHR_MATERIALS_SCATTER_EXTENSION_NAME, "multiscatterColorTexture");
+    addImageFromExtension(mat, KHR_MATERIALS_VOLUME_SCATTER_EXTENSION_NAME, "multiscatterColorTexture");
 
     // **Deprecated** but still used with some scenes
     // https://kcoley.github.io/glTF/extensions/2.0/Khronos/KHR_materials_pbrSpecularGlossiness

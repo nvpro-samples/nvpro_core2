@@ -612,7 +612,7 @@ dielectric base (Khronos `getClearCoatInfo`: `clearcoatF0 = pow((ior-1)/(ior+1),
 the base IOR via KHR_materials_ior also shifts the clearcoat's reflectance. Used by:
   * The IBL composer (final `mix(., f_clearcoat, clearcoatFactor * clearcoatFresnel)` step).
   * The emissive attenuation `emissive * (1 - clearcoatFactor * clearcoatFresnel)` (`pbr.frag:373`).
-  * The KHR_materials_volume_scatter mask (`pbr.frag:355`).
+  * The KHR_materials_scatter mask (`pbr.frag:355`).
 -------------------------------------------------------------------------------------------------*/
 float3 khronosClearcoatFresnel(PbrMaterial mat, float3 V)
 {

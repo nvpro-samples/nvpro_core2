@@ -235,7 +235,9 @@ float3 _bsdfEvaluatePunctualKhronosCore(PbrMaterial mat,
   if(mat.transmission > 0.0F)
   {
     float3 btdfL            = normalize(pointToLight - transmissionRay);
-    float3 transmittedLight = lightIntensity * getPunctualRadianceTransmission(N, V, btdfL, alphaRoughness, mat.baseColor, ior);
+    // `transmissionTint` is float3(1) for plain glTF materials; see PbrMaterial.
+    float3 transmittedLight =
+        lightIntensity * getPunctualRadianceTransmission(N, V, btdfL, alphaRoughness, mat.baseColor * mat.transmissionTint, ior);
 
     if(mat.thickness > 0.0F && mat.attenuationDistance > 0.0F && length(transmissionRay) > 0.0F)
     {

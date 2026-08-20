@@ -43,10 +43,12 @@ bool begin(const char* label, ImGuiTableFlags flag)
   return result;
 }
 
-// Generic entry, the lambda function should return true if the widget changed
+// Generic entry, the lambda function should return true if the widget changed.
+// Note: the widget itself carries a stable id derived from the property name (the wrappers below give it
+// the label "###<name>"), so it is uniquely identified without an enclosing PushID. This also makes it
+// addressable by UI-automation (Dear ImGui Test Engine) as "<Window>/**/<name>".
 bool entry(const std::string& property_name, const std::function<bool()>& content_fct, const std::string& tooltip)
 {
-  ImGui::PushID(property_name.c_str());
   ImGui::TableNextRow();
   ImGui::TableNextColumn();
   ImGui::AlignTextToFramePadding();
@@ -58,7 +60,6 @@ bool entry(const std::string& property_name, const std::function<bool()>& conten
   bool result = content_fct();
   if(!tooltip.empty())
     nvgui::tooltip(tooltip.c_str());
-  ImGui::PopID();
   return result;  // returning if the widget changed
 }
 
@@ -92,34 +93,42 @@ void end()
 
 bool Button(const char* label, const ImVec2& size, const std::string& tooltip)
 {
-  return PropertyEditor::entry(label, [&] { return ImGui::Button("##hidden", size); }, tooltip);
+  return PropertyEditor::entry(label, [&] { return ImGui::Button((std::string("###") + label).c_str(), size); }, tooltip);
 }
 bool SmallButton(const char* label, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::SmallButton("##hidden"); }, tooltip);
+  return entry(label, [&] { return ImGui::SmallButton((std::string("###") + label).c_str()); }, tooltip);
 }
 bool Checkbox(const char* label, bool* v, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::Checkbox("##hidden", v); }, tooltip);
+  return entry(label, [&] { return ImGui::Checkbox((std::string("###") + label).c_str(), v); }, tooltip);
 }
 bool RadioButton(const char* label, bool active, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::RadioButton("##hidden", active); }, tooltip);
+  return entry(label, [&] { return ImGui::RadioButton((std::string("###") + label).c_str(), active); }, tooltip);
 }
 bool RadioButton(const char* label, int* v, int v_button, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::RadioButton("##hidden", v, v_button); }, tooltip);
+  return entry(label, [&] { return ImGui::RadioButton((std::string("###") + label).c_str(), v, v_button); }, tooltip);
 }
 bool Combo(const char* label, int* current_item, const char* const items[], int items_count, int popup_max_height_in_items, const std::string& tooltip)
 {
-  return entry(label,
-               [&] { return ImGui::Combo("##hidden", current_item, items, items_count, popup_max_height_in_items); });
+  return entry(
+      label,
+      [&] {
+        return ImGui::Combo((std::string("###") + label).c_str(), current_item, items, items_count, popup_max_height_in_items);
+      },
+      tooltip);
 }
 bool Combo(const char* label, int* current_item, const char* items_separated_by_zeros, int popup_max_height_in_items, const std::string& tooltip)
 {
 
   return entry(
-      label, [&] { return ImGui::Combo("##hidden", current_item, items_separated_by_zeros, popup_max_height_in_items); }, tooltip);
+      label,
+      [&] {
+        return ImGui::Combo((std::string("###") + label).c_str(), current_item, items_separated_by_zeros, popup_max_height_in_items);
+      },
+      tooltip);
 }
 bool Combo(const char* label,
            int*        current_item,
@@ -131,43 +140,66 @@ bool Combo(const char* label,
 {
   return entry(
       label,
-      [&] { return ImGui::Combo("##hidden", current_item, getter, user_data, items_count, popup_max_height_in_items); }, tooltip);
+      [&] {
+        return ImGui::Combo((std::string("###") + label).c_str(), current_item, getter, user_data, items_count, popup_max_height_in_items);
+      },
+      tooltip);
 }
 bool SliderFloat(const char* label, float* v, float v_min, float v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::SliderFloat("##hidden", v, v_min, v_max, format, flags); }, tooltip);
+  return entry(
+      label, [&] { return ImGui::SliderFloat((std::string("###") + label).c_str(), v, v_min, v_max, format, flags); }, tooltip);
 }
 bool SliderFloat2(const char* label, float v[2], float v_min, float v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::SliderFloat2("##hidden", v, v_min, v_max, format, flags); }, tooltip);
+  return entry(
+      label, [&] { return ImGui::SliderFloat2((std::string("###") + label).c_str(), v, v_min, v_max, format, flags); }, tooltip);
 }
 bool SliderFloat3(const char* label, float v[3], float v_min, float v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::SliderFloat3("##hidden", v, v_min, v_max, format, flags); }, tooltip);
+  return entry(
+      label, [&] { return ImGui::SliderFloat3((std::string("###") + label).c_str(), v, v_min, v_max, format, flags); }, tooltip);
 }
 bool SliderFloat4(const char* label, float v[4], float v_min, float v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::SliderFloat4("##hidden", v, v_min, v_max, format, flags); }, tooltip);
+  return entry(
+      label, [&] { return ImGui::SliderFloat4((std::string("###") + label).c_str(), v, v_min, v_max, format, flags); }, tooltip);
 }
 bool SliderDouble(const char* label, double* v, double v_min, double v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
   return entry(
-      label, [&] { return ImGui::SliderScalar("##hidden", ImGuiDataType_Double, v, &v_min, &v_max, format, flags); }, tooltip);
+      label,
+      [&] {
+        return ImGui::SliderScalar((std::string("###") + label).c_str(), ImGuiDataType_Double, v, &v_min, &v_max, format, flags);
+      },
+      tooltip);
 }
 bool SliderDouble2(const char* label, double v[2], double v_min, double v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
   return entry(
-      label, [&] { return ImGui::SliderScalarN("##hidden", ImGuiDataType_Double, v, 2, &v_min, &v_max, format, flags); }, tooltip);
+      label,
+      [&] {
+        return ImGui::SliderScalarN((std::string("###") + label).c_str(), ImGuiDataType_Double, v, 2, &v_min, &v_max, format, flags);
+      },
+      tooltip);
 }
 bool SliderDouble3(const char* label, double v[3], double v_min, double v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
   return entry(
-      label, [&] { return ImGui::SliderScalarN("##hidden", ImGuiDataType_Double, v, 3, &v_min, &v_max, format, flags); }, tooltip);
+      label,
+      [&] {
+        return ImGui::SliderScalarN((std::string("###") + label).c_str(), ImGuiDataType_Double, v, 3, &v_min, &v_max, format, flags);
+      },
+      tooltip);
 }
 bool SliderDouble4(const char* label, double v[4], double v_min, double v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
   return entry(
-      label, [&] { return ImGui::SliderScalarN("##hidden", ImGuiDataType_Double, v, 4, &v_min, &v_max, format, flags); }, tooltip);
+      label,
+      [&] {
+        return ImGui::SliderScalarN((std::string("###") + label).c_str(), ImGuiDataType_Double, v, 4, &v_min, &v_max, format, flags);
+      },
+      tooltip);
 }
 bool SliderAngle(const char*        label,
                  float*             v_rad,
@@ -177,23 +209,32 @@ bool SliderAngle(const char*        label,
                  ImGuiSliderFlags   flags,
                  const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::SliderAngle("##hidden", v_rad, v_degrees_min, v_degrees_max, format, flags); }, tooltip);
+  return entry(
+      label,
+      [&] {
+        return ImGui::SliderAngle((std::string("###") + label).c_str(), v_rad, v_degrees_min, v_degrees_max, format, flags);
+      },
+      tooltip);
 }
 bool SliderInt(const char* label, int* v, int v_min, int v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::SliderInt("##hidden", v, v_min, v_max, format, flags); }, tooltip);
+  return entry(
+      label, [&] { return ImGui::SliderInt((std::string("###") + label).c_str(), v, v_min, v_max, format, flags); }, tooltip);
 }
 bool SliderInt2(const char* label, int v[2], int v_min, int v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::SliderInt2("##hidden", v, v_min, v_max, format, flags); }, tooltip);
+  return entry(
+      label, [&] { return ImGui::SliderInt2((std::string("###") + label).c_str(), v, v_min, v_max, format, flags); }, tooltip);
 }
 bool SliderInt3(const char* label, int v[3], int v_min, int v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::SliderInt3("##hidden", v, v_min, v_max, format, flags); }, tooltip);
+  return entry(
+      label, [&] { return ImGui::SliderInt3((std::string("###") + label).c_str(), v, v_min, v_max, format, flags); }, tooltip);
 }
 bool SliderInt4(const char* label, int v[4], int v_min, int v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::SliderInt4("##hidden", v, v_min, v_max, format, flags); }, tooltip);
+  return entry(
+      label, [&] { return ImGui::SliderInt4((std::string("###") + label).c_str(), v, v_min, v_max, format, flags); }, tooltip);
 }
 bool SliderScalar(const char*        label,
                   ImGuiDataType      data_type,
@@ -204,7 +245,12 @@ bool SliderScalar(const char*        label,
                   ImGuiSliderFlags   flags,
                   const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::SliderScalar("##hidden", data_type, p_data, p_min, p_max, format, flags); }, tooltip);
+  return entry(
+      label,
+      [&] {
+        return ImGui::SliderScalar((std::string("###") + label).c_str(), data_type, p_data, p_min, p_max, format, flags);
+      },
+      tooltip);
 }
 bool SliderScalarN(const char*        label,
                    ImGuiDataType      data_type,
@@ -217,31 +263,44 @@ bool SliderScalarN(const char*        label,
                    const std::string& tooltip)
 {
   return entry(
-      label, [&] { return ImGui::SliderScalarN("##hidden", data_type, p_data, components, p_min, p_max, format, flags); }, tooltip);
+      label,
+      [&] {
+        return ImGui::SliderScalarN((std::string("###") + label).c_str(), data_type, p_data, components, p_min, p_max, format, flags);
+      },
+      tooltip);
 }
 
 bool DragFloat(const char* label, float* v, float v_speed, float v_min, float v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::DragFloat("##hidden", v, v_speed, v_min, v_max, format, flags); }, tooltip);
+  return entry(
+      label,
+      [&] { return ImGui::DragFloat((std::string("###") + label).c_str(), v, v_speed, v_min, v_max, format, flags); }, tooltip);
 }
 bool DragFloat2(const char* label, float v[2], float v_speed, float v_min, float v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::DragFloat2("##hidden", v, v_speed, v_min, v_max, format, flags); }, tooltip);
+  return entry(
+      label,
+      [&] { return ImGui::DragFloat2((std::string("###") + label).c_str(), v, v_speed, v_min, v_max, format, flags); }, tooltip);
 }
 bool DragFloat3(const char* label, float v[3], float v_speed, float v_min, float v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::DragFloat3("##hidden", v, v_speed, v_min, v_max, format, flags); }, tooltip);
+  return entry(
+      label,
+      [&] { return ImGui::DragFloat3((std::string("###") + label).c_str(), v, v_speed, v_min, v_max, format, flags); }, tooltip);
 }
 bool DragFloat4(const char* label, float v[4], float v_speed, float v_min, float v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::DragFloat4("##hidden", v, v_speed, v_min, v_max, format, flags); }, tooltip);
+  return entry(
+      label,
+      [&] { return ImGui::DragFloat4((std::string("###") + label).c_str(), v, v_speed, v_min, v_max, format, flags); }, tooltip);
 }
 bool DragDouble(const char* label, double* v, double v_speed, double v_min, double v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
   return entry(
       label,
       [&] {
-        return ImGui::DragScalar("##hidden", ImGuiDataType_Double, v, static_cast<float>(v_speed), &v_min, &v_max, format, flags);
+        return ImGui::DragScalar((std::string("###") + label).c_str(), ImGuiDataType_Double, v,
+                                 static_cast<float>(v_speed), &v_min, &v_max, format, flags);
       },
       tooltip);
 }
@@ -250,7 +309,8 @@ bool DragDouble2(const char* label, double v[2], double v_speed, double v_min, d
   return entry(
       label,
       [&] {
-        return ImGui::DragScalarN("##hidden", ImGuiDataType_Double, v, 2, static_cast<float>(v_speed), &v_min, &v_max, format, flags);
+        return ImGui::DragScalarN((std::string("###") + label).c_str(), ImGuiDataType_Double, v, 2,
+                                  static_cast<float>(v_speed), &v_min, &v_max, format, flags);
       },
       tooltip);
 }
@@ -259,7 +319,8 @@ bool DragDouble3(const char* label, double v[3], double v_speed, double v_min, d
   return entry(
       label,
       [&] {
-        return ImGui::DragScalarN("##hidden", ImGuiDataType_Double, v, 3, static_cast<float>(v_speed), &v_min, &v_max, format, flags);
+        return ImGui::DragScalarN((std::string("###") + label).c_str(), ImGuiDataType_Double, v, 3,
+                                  static_cast<float>(v_speed), &v_min, &v_max, format, flags);
       },
       tooltip);
 }
@@ -268,25 +329,34 @@ bool DragDouble4(const char* label, double v[4], double v_speed, double v_min, d
   return entry(
       label,
       [&] {
-        return ImGui::DragScalarN("##hidden", ImGuiDataType_Double, v, 4, static_cast<float>(v_speed), &v_min, &v_max, format, flags);
+        return ImGui::DragScalarN((std::string("###") + label).c_str(), ImGuiDataType_Double, v, 4,
+                                  static_cast<float>(v_speed), &v_min, &v_max, format, flags);
       },
       tooltip);
 }
 bool DragInt(const char* label, int* v, float v_speed, int v_min, int v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::DragInt("##hidden", v, v_speed, v_min, v_max, format, flags); }, tooltip);
+  return entry(
+      label,
+      [&] { return ImGui::DragInt((std::string("###") + label).c_str(), v, v_speed, v_min, v_max, format, flags); }, tooltip);
 }
 bool DragInt2(const char* label, int v[2], float v_speed, int v_min, int v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::DragInt2("##hidden", v, v_speed, v_min, v_max, format, flags); }, tooltip);
+  return entry(
+      label,
+      [&] { return ImGui::DragInt2((std::string("###") + label).c_str(), v, v_speed, v_min, v_max, format, flags); }, tooltip);
 }
 bool DragInt3(const char* label, int v[3], float v_speed, int v_min, int v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::DragInt3("##hidden", v, v_speed, v_min, v_max, format, flags); }, tooltip);
+  return entry(
+      label,
+      [&] { return ImGui::DragInt3((std::string("###") + label).c_str(), v, v_speed, v_min, v_max, format, flags); }, tooltip);
 }
 bool DragInt4(const char* label, int v[4], float v_speed, int v_min, int v_max, const char* format, ImGuiSliderFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::DragInt4("##hidden", v, v_speed, v_min, v_max, format, flags); }, tooltip);
+  return entry(
+      label,
+      [&] { return ImGui::DragInt4((std::string("###") + label).c_str(), v, v_speed, v_min, v_max, format, flags); }, tooltip);
 }
 bool DragScalar(const char*        label,
                 ImGuiDataType      data_type,
@@ -299,7 +369,11 @@ bool DragScalar(const char*        label,
                 const std::string& tooltip /*= {}*/)
 {
   return entry(
-      label, [&] { return ImGui::DragScalar("##hidden", data_type, p_data, v_speed, p_min, p_max, format, flags); }, tooltip);
+      label,
+      [&] {
+        return ImGui::DragScalar((std::string("###") + label).c_str(), data_type, p_data, v_speed, p_min, p_max, format, flags);
+      },
+      tooltip);
 }
 bool DragScalarN(const char*        label,
                  ImGuiDataType      data_type,
@@ -314,15 +388,20 @@ bool DragScalarN(const char*        label,
 {
   return entry(
       label,
-      [&] { return ImGui::DragScalarN("##hidden", data_type, p_data, components, v_speed, p_min, p_max, format, flags); }, tooltip);
+      [&] {
+        return ImGui::DragScalarN((std::string("###") + label).c_str(), data_type, p_data, components, v_speed, p_min,
+                                  p_max, format, flags);
+      },
+      tooltip);
 }
 bool InputText(const char* label, char* buf, size_t buf_size, ImGuiInputTextFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::InputText("##hidden", buf, buf_size, flags); }, tooltip);
+  return entry(label, [&] { return ImGui::InputText((std::string("###") + label).c_str(), buf, buf_size, flags); }, tooltip);
 }
 bool InputTextMultiline(const char* label, char* buf, size_t buf_size, const ImVec2& size, ImGuiInputTextFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::InputTextMultiline("##hidden", buf, buf_size, size, flags); }, tooltip);
+  return entry(
+      label, [&] { return ImGui::InputTextMultiline((std::string("###") + label).c_str(), buf, buf_size, size, flags); }, tooltip);
 }
 bool InputFloat(const char* label, float* v, float step, float step_fast, const char* format, ImGuiInputTextFlags flags, const std::string& tooltip)
 {
@@ -330,7 +409,8 @@ bool InputFloat(const char* label, float* v, float step, float step_fast, const 
   bool  changed = entry(
       label,
       [&] {
-        return ImGui::InputFloat("##hidden", &tv, step, step_fast, format, (flags & ~ImGuiInputTextFlags_EnterReturnsTrue));
+        return ImGui::InputFloat((std::string("###") + label).c_str(), &tv, step, step_fast, format,
+                                  (flags & ~ImGuiInputTextFlags_EnterReturnsTrue));
       },
       tooltip);
 
@@ -346,22 +426,26 @@ bool InputFloat(const char* label, float* v, float step, float step_fast, const 
 }
 bool InputFloat2(const char* label, float v[2], const char* format, ImGuiInputTextFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::InputFloat2("##hidden", v, format, flags); }, tooltip);
+  return entry(label, [&] { return ImGui::InputFloat2((std::string("###") + label).c_str(), v, format, flags); }, tooltip);
 }
 bool InputFloat3(const char* label, float v[3], const char* format, ImGuiInputTextFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::InputFloat3("##hidden", v, format, flags); }, tooltip);
+  return entry(label, [&] { return ImGui::InputFloat3((std::string("###") + label).c_str(), v, format, flags); }, tooltip);
 }
 bool InputFloat4(const char* label, float v[4], const char* format, ImGuiInputTextFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::InputFloat4("##hidden", v, format, flags); }, tooltip);
+  return entry(label, [&] { return ImGui::InputFloat4((std::string("###") + label).c_str(), v, format, flags); }, tooltip);
 }
 bool InputInt(const char* label, int* v, int step, int step_fast, ImGuiInputTextFlags flags, const std::string& tooltip)
 {
   int  tv      = *v;
   bool changed = entry(
       label,
-      [&] { return ImGui::InputInt("##hidden", &tv, step, step_fast, (flags & ~ImGuiInputTextFlags_EnterReturnsTrue)); }, tooltip);
+      [&] {
+        return ImGui::InputInt((std::string("###") + label).c_str(), &tv, step, step_fast,
+                               (flags & ~ImGuiInputTextFlags_EnterReturnsTrue));
+      },
+      tooltip);
 
   if(changed && (!(flags & ImGuiInputTextFlags_EnterReturnsTrue) || (ImGui::IsItemDeactivatedAfterEdit() || ImGui::IsItemClicked())))
   {
@@ -378,7 +462,11 @@ bool InputIntClamped(const char* label, int* v, int min, int max, int step, int 
   int  tv      = *v;
   bool changed = entry(
       label,
-      [&] { return ImGui::InputInt("##hidden", &tv, step, step_fast, (flags & ~ImGuiInputTextFlags_EnterReturnsTrue)); }, tooltip);
+      [&] {
+        return ImGui::InputInt((std::string("###") + label).c_str(), &tv, step, step_fast,
+                               (flags & ~ImGuiInputTextFlags_EnterReturnsTrue));
+      },
+      tooltip);
 
   changed = changed
             && (!(flags & ImGuiInputTextFlags_EnterReturnsTrue) || (ImGui::IsItemDeactivatedAfterEdit() || ImGui::IsItemClicked()));
@@ -390,27 +478,28 @@ bool InputIntClamped(const char* label, int* v, int min, int max, int step, int 
 }
 bool InputInt2(const char* label, int v[2], ImGuiInputTextFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::InputInt2("##hidden", v, flags); }, tooltip);
+  return entry(label, [&] { return ImGui::InputInt2((std::string("###") + label).c_str(), v, flags); }, tooltip);
 }
 bool InputInt3(const char* label, int v[3], ImGuiInputTextFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::InputInt3("##hidden", v, flags); }, tooltip);
+  return entry(label, [&] { return ImGui::InputInt3((std::string("###") + label).c_str(), v, flags); }, tooltip);
 }
 bool InputInt4(const char* label, int v[4], ImGuiInputTextFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::InputInt4("##hidden", v, flags); }, tooltip);
+  return entry(label, [&] { return ImGui::InputInt4((std::string("###") + label).c_str(), v, flags); }, tooltip);
 }
 bool InputDouble(const char* label, double* v, double step, double step_fast, const char* format, ImGuiInputTextFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::InputDouble("##hidden", v, step, step_fast, format, flags); }, tooltip);
+  return entry(
+      label, [&] { return ImGui::InputDouble((std::string("###") + label).c_str(), v, step, step_fast, format, flags); }, tooltip);
 }
 bool InputDouble2(const char* label, double v[2], double step, double step_fast, const char* format, ImGuiInputTextFlags flags, const std::string& tooltip)
 {
   return entry(
       label,
       [&] {
-        return ImGui::InputScalarN("##hidden", ImGuiDataType_Double, v, 2, step > 0.0 ? &step : nullptr,
-                                   step_fast > 0.0 ? &step_fast : nullptr, format, flags);
+        return ImGui::InputScalarN((std::string("###") + label).c_str(), ImGuiDataType_Double, v, 2,
+                                   step > 0.0 ? &step : nullptr, step_fast > 0.0 ? &step_fast : nullptr, format, flags);
       },
       tooltip);
 }
@@ -419,8 +508,8 @@ bool InputDouble3(const char* label, double v[3], double step, double step_fast,
   return entry(
       label,
       [&] {
-        return ImGui::InputScalarN("##hidden", ImGuiDataType_Double, v, 3, step > 0.0 ? &step : nullptr,
-                                   step_fast > 0.0 ? &step_fast : nullptr, format, flags);
+        return ImGui::InputScalarN((std::string("###") + label).c_str(), ImGuiDataType_Double, v, 3,
+                                   step > 0.0 ? &step : nullptr, step_fast > 0.0 ? &step_fast : nullptr, format, flags);
       },
       tooltip);
 }
@@ -429,8 +518,8 @@ bool InputDouble4(const char* label, double v[4], double step, double step_fast,
   return entry(
       label,
       [&] {
-        return ImGui::InputScalarN("##hidden", ImGuiDataType_Double, v, 4, step > 0.0 ? &step : nullptr,
-                                   step_fast > 0.0 ? &step_fast : nullptr, format, flags);
+        return ImGui::InputScalarN((std::string("###") + label).c_str(), ImGuiDataType_Double, v, 4,
+                                   step > 0.0 ? &step : nullptr, step_fast > 0.0 ? &step_fast : nullptr, format, flags);
       },
       tooltip);
 }
@@ -444,7 +533,11 @@ bool InputScalar(const char*         label,
                  const std::string&  tooltip)
 {
   return entry(
-      label, [&] { return ImGui::InputScalar("##hidden", data_type, p_data, p_step, p_step_fast, format, flags); }, tooltip);
+      label,
+      [&] {
+        return ImGui::InputScalar((std::string("###") + label).c_str(), data_type, p_data, p_step, p_step_fast, format, flags);
+      },
+      tooltip);
 }
 bool InputScalarN(const char*         label,
                   ImGuiDataType       data_type,
@@ -458,28 +551,32 @@ bool InputScalarN(const char*         label,
 {
   return entry(
       label,
-      [&] { return ImGui::InputScalarN("##hidden", data_type, p_data, components, p_step, p_step_fast, format, flags); }, tooltip);
+      [&] {
+        return ImGui::InputScalarN((std::string("###") + label).c_str(), data_type, p_data, components, p_step,
+                                   p_step_fast, format, flags);
+      },
+      tooltip);
 }
 
 bool ColorEdit3(const char* label, float col[3], ImGuiColorEditFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::ColorEdit3("##hidden", col, flags); }, tooltip);
+  return entry(label, [&] { return ImGui::ColorEdit3((std::string("###") + label).c_str(), col, flags); }, tooltip);
 }
 bool ColorEdit4(const char* label, float col[4], ImGuiColorEditFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::ColorEdit4("##hidden", col, flags); }, tooltip);
+  return entry(label, [&] { return ImGui::ColorEdit4((std::string("###") + label).c_str(), col, flags); }, tooltip);
 }
 bool ColorPicker3(const char* label, float col[3], ImGuiColorEditFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::ColorPicker3("##hidden", col, flags); }, tooltip);
+  return entry(label, [&] { return ImGui::ColorPicker3((std::string("###") + label).c_str(), col, flags); }, tooltip);
 }
 bool ColorPicker4(const char* label, float col[4], ImGuiColorEditFlags flags, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::ColorPicker4("##hidden", col, flags); }, tooltip);
+  return entry(label, [&] { return ImGui::ColorPicker4((std::string("###") + label).c_str(), col, flags); }, tooltip);
 }
 bool ColorButton(const char* label, const ImVec4& col, ImGuiColorEditFlags flags, const ImVec2& size, const std::string& tooltip)
 {
-  return entry(label, [&] { return ImGui::ColorButton("##hidden", col, flags, size); }, tooltip);
+  return entry(label, [&] { return ImGui::ColorButton((std::string("###") + label).c_str(), col, flags, size); }, tooltip);
 }
 void Text(const char* label, const std::string& text)
 {

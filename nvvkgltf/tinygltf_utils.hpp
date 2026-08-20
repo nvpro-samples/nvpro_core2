@@ -139,12 +139,18 @@ struct KHR_materials_volume
   glm::vec3             attenuationColor    = {1.0f, 1.0f, 1.0f};
 };
 
-// https://github.com/KhronosGroup/glTF/blob/e17468db6fd9ae3ce73504a9f317bd853af01a30/extensions/2.0/Khronos/KHR_materials_volume_scatter/README.md
+// https://github.com/KhronosGroup/glTF/pull/2579
+#define KHR_MATERIALS_SCATTER_EXTENSION_NAME "KHR_materials_scatter"
+// Superseded draft, still read so existing assets keep scattering. It had no scatterStrengthFactor
+// (scattering was always fully on) and spelled the color "multiscatterColor".
 #define KHR_MATERIALS_VOLUME_SCATTER_EXTENSION_NAME "KHR_materials_volume_scatter"
-struct KHR_materials_volume_scatter
+struct KHR_materials_scatter
 {
-  glm::vec3 multiscatterColorFactor = {0.0f, 0.0f, 0.0f};
-  float     scatterAnisotropy = 0.0f;
+  float                 scatterStrengthFactor    = 0.0f;
+  tinygltf::TextureInfo scatterStrengthTexture   = {};
+  glm::vec3             multiscatterColorFactor  = {1.0f, 1.0f, 1.0f};
+  tinygltf::TextureInfo multiscatterColorTexture = {};
+  float                 scatterAnisotropy        = 0.0f;
 };
 
 
@@ -1055,8 +1061,8 @@ KHR_materials_ior          getIor(const tinygltf::Material& tmat);
 void                       setIor(tinygltf::Material& tmat, const KHR_materials_ior& ior);
 KHR_materials_volume       getVolume(const tinygltf::Material& tmat);
 void                       setVolume(tinygltf::Material& tmat, const KHR_materials_volume& volume);
-KHR_materials_volume_scatter getVolumeScatter(const tinygltf::Material& tmat);
-void                       setVolumeScatter(tinygltf::Material& tmat, const KHR_materials_volume_scatter& scatter);
+KHR_materials_scatter      getScatter(const tinygltf::Material& tmat);
+void                       setScatter(tinygltf::Material& tmat, const KHR_materials_scatter& scatter);
 KHR_materials_displacement getDisplacement(const tinygltf::Material& tmat);
 void                       setDisplacement(tinygltf::Material& tmat, const KHR_materials_displacement& displacement);
 KHR_materials_emissive_strength getEmissiveStrength(const tinygltf::Material& tmat);

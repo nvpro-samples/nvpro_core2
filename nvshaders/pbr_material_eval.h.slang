@@ -107,13 +107,17 @@ bool isTexturePresent(uint16_t tinfo)
 }
 
 /*-------------------------------------------------------------------------------------------------
-* Convert multi-scatter albedo to single-scatter albedo
-* Formula from KHR_materials_volume_scatter specification
+* Convert multi-scatter albedo to single-scatter albedo (Kulla-Conty mapping).
+* Formula from the KHR_materials_scatter specification. The anisotropy g of the Henyey-Greenstein
+* phase function enters the denominator (similarity theory), so forward- and backward-scattering
+* media get the single-scatter albedo that reproduces the requested multi-scatter albedo.
 * -------------------------------------------------------------------------------------------------*/
-float3 multiToSingleScatterAlbedo(float3 rho_ms)
+float3 multiToSingleScatterAlbedo(float3 rho_ms, float g)
 {
-  float3 t = 4.09712 + 4.20863 * rho_ms - sqrt(9.59217 + 41.6808 * rho_ms + 17.7126 * rho_ms * rho_ms);
-  return 1.0 - t * t;
+  float3 s = 4.09712 + 4.20863 * rho_ms - sqrt(9.59217 + 41.6808 * rho_ms + 17.7126 * rho_ms * rho_ms);
+  // g in (-1,1) and s in [0,1] keep the denominator strictly positive. Clamp so the scattering
+  // coefficient can never exceed the total extinction.
+  return clamp((1.0 - s * s) / (1.0 - g * s * s), float3(0.0), float3(1.0));
 }
 
 /*-------------------------------------------------------------------------------------------------
@@ -333,6 +337,9 @@ PbrMaterial evaluateMaterial<F : IGltfTextureFetcher>(in GltfShadeMaterial mater
   {
     pbrMat.transmission *= texFetcher.fetch(texInfos[material.transmissionTexture], state.tc, state.texGrad).r;
   }
+  // No glTF extension tints the transmission lobe on its own; leave it neutral. `pbrMat` is not
+  // zero-initialized above, so this must be assigned explicitly.
+  pbrMat.transmissionTint = float3(1.0F);
 
   // KHR_materials_volume
   pbrMat.attenuationColor    = material.attenuationColor;
@@ -342,20 +349,6 @@ PbrMaterial evaluateMaterial<F : IGltfTextureFetcher>(in GltfShadeMaterial mater
   {
     pbrMat.thickness *= texFetcher.fetch(texInfos[material.thicknessTexture], state.tc, state.texGrad).g;
   }
-
-  // KHR_materials_volume_scatter
-  // Compute scattering coefficient from multi-scatter albedo and attenuation
-  if(any(material.multiscatterColorFactor > float3(0.0)))
-  {
-    float3 singleScatterAlbedo = multiToSingleScatterAlbedo(material.multiscatterColorFactor);
-    float3 attenuationCoef = -log(max(pbrMat.attenuationColor, float3(0.001))) / max(pbrMat.attenuationDistance, 0.001);
-    pbrMat.scatterCoefficient = attenuationCoef * singleScatterAlbedo;
-  }
-  else
-  {
-    pbrMat.scatterCoefficient = float3(0.0);
-  }
-  pbrMat.scatterAnisotropy = material.scatterAnisotropy;
 
   // KHR_materials_clearcoat
   pbrMat.clearcoat          = material.clearcoatFactor;
@@ -467,6 +460,96 @@ PbrMaterial evaluateMaterial<F : IGltfTextureFetcher>(in GltfShadeMaterial mater
   {
     pbrMat.diffuseTransmissionColor =
         texFetcher.fetch(texInfos[material.diffuseTransmissionColorTexture], state.tc, state.texGrad).rgb;
+  }
+
+  // KHR_materials_scatter. Evaluated after KHR_materials_volume (thickness selects the mode) and
+  // after KHR_materials_diffuse_transmission, whose lobes the thin-walled mode repurposes.
+  pbrMat.scatterCoefficient = float3(0.0);
+  pbrMat.scatterAnisotropy  = 0.0;
+
+  // scatterStrength = scatterStrengthFactor * scatterStrengthTexture.a
+  float scatterStrength = material.scatterStrengthFactor;
+  if(isTexturePresent(material.scatterStrengthTexture))
+  {
+    scatterStrength *= texFetcher.fetch(texInfos[material.scatterStrengthTexture], state.tc, state.texGrad).a;
+  }
+
+  // The extension is a no-op at zero strength (the spec default), so only apply it when there is
+  // scattering to do.
+  if(scatterStrength > 0.0)
+  {
+    // multiscatterColor = multiscatterColorFactor * multiscatterColorTexture.rgb
+    float3 multiscatterColor = material.multiscatterColorFactor;
+    if(isTexturePresent(material.multiscatterColorTexture))
+    {
+      multiscatterColor *= texFetcher.fetch(texInfos[material.multiscatterColorTexture], state.tc, state.texGrad).rgb;
+    }
+
+    float g = material.scatterAnisotropy;
+
+    if(pbrMat.thickness > 0.0)
+    {
+      // Volumetric mode (KHR_materials_volume with thickness > 0): the surface BSDF is untouched.
+      // Split the attenuation coefficient sigma_t into scattering and absorption with the
+      // strength-scaled single-scatter albedo; sigma_s drives the in-medium phase function.
+      // The sigma_t expression must match volumeExtinctionCoefficient() in bsdf_functions.h.slang.
+      float3 singleScatterAlbedo = multiToSingleScatterAlbedo(scatterStrength * multiscatterColor, g);
+      float3 attenuationCoef = -log(max(pbrMat.attenuationColor, float3(0.001))) / max(pbrMat.attenuationDistance, 0.001);
+      pbrMat.scatterCoefficient = attenuationCoef * singleScatterAlbedo;
+      pbrMat.scatterAnisotropy  = g;
+    }
+    else
+    {
+      // Thin-walled mode (no volume, or thickness = 0). The spec replaces the transmissive part of
+      // the dielectric base with
+      //   mix(specular_btdf * baseColor, scatter_bsdf(multiscatterColor, g), scatterStrength)
+      // where scatter_bsdf is a Lambertian BSDF sending (1+g)/2 of its energy through the surface
+      // and (1-g)/2 back. There is no dedicated scatter lobe in the BSDF, so it is expressed with
+      // the diffuse-transmission / diffuse-reflection lobes, whose weights below the specular layer
+      // are `transmission` for the BTDF and `1 - transmission` for the diffuse bucket. Moving
+      // `scatterWeight = transmission * scatterStrength` from the BTDF into that bucket reproduces
+      // the spec lobe weights exactly, for any transmission and any g. Note both factors: without
+      // transmission the extension must have no effect at all.
+      float scatterWeight = pbrMat.transmission * scatterStrength;
+      if(scatterWeight > 0.0)
+      {
+        // The diffuse bucket holds four shares: the material's own diffuse reflection and diffuse
+        // transmission (untouched by scatter), plus the two halves of scatter_bsdf.
+        float forwardFraction = 0.5 * (1.0 + g);
+        float baseDiffuse     = 1.0 - pbrMat.transmission;         // base, untouched by scatter
+        float baseDtFactor    = pbrMat.diffuseTransmissionFactor;  // 0 unless KHR_materials_diffuse_transmission
+        float baseTransWeight = baseDiffuse * baseDtFactor;
+        float baseReflWeight  = baseDiffuse * (1.0 - baseDtFactor);
+        float forwardWeight   = scatterWeight * forwardFraction;
+        float backwardWeight  = scatterWeight - forwardWeight;
+        float diffuseWeight   = baseDiffuse + scatterWeight;  // the four shares; >= scatterWeight > 0
+
+        pbrMat.transmission -= scatterWeight;  // = transmission * (1 - scatterStrength)
+
+        // Split the bucket. Note this is the forward share *of the bucket*, not the anisotropy's
+        // forward fraction: the bucket also carries the untouched base, so it has to be normalised
+        // by the bucket's own weight. (Using the bare fraction is only right at transmission = 1.)
+        pbrMat.diffuseTransmissionFactor = (baseTransWeight + forwardWeight) / diffuseWeight;
+
+        // Each of the two diffuse lobes now carries contributions the spec colors differently, so
+        // each takes the energy-weighted average of its own two shares. Both shares of a lobe have
+        // the same Lambertian shape, so averaging their colors is exact, not an approximation.
+        float3 diffuseBaseColor = pbrMat.baseColor;
+        pbrMat.diffuseTransmissionColor =
+            lerp(pbrMat.diffuseTransmissionColor, multiscatterColor, forwardWeight / max(baseTransWeight + forwardWeight, 1e-6));
+        pbrMat.baseColor =
+            lerp(diffuseBaseColor, multiscatterColor, backwardWeight / max(baseReflWeight + backwardWeight, 1e-6));
+
+        // ...but baseColor also tints the residual specular BTDF, which the spec leaves at the
+        // material's baseColor. transmissionTint cancels the blend back out for that lobe alone
+        // (the BSDF tints it by `baseColor * transmissionTint`), and the product is bounded by
+        // baseColor so it can never add energy. It degrades in one corner: at transmission = 1 with
+        // a multiscatterColor channel of exactly 0, the blended color is 0 in that channel and a
+        // multiplier cannot recover baseColor from it, so the residual BTDF loses that channel.
+        pbrMat.transmissionTint =
+            (pbrMat.transmission > 0.0) ? diffuseBaseColor / max(pbrMat.baseColor, float3(1e-4)) : float3(1.0);
+      }
+    }
   }
 
   return pbrMat;

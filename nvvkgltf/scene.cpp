@@ -57,7 +57,8 @@ nvvkgltf::Scene::Scene()
       "KHR_materials_unlit",
       "KHR_materials_variants",
       "KHR_materials_volume",
-      "KHR_materials_volume_scatter",
+      "KHR_materials_scatter",
+      "KHR_materials_volume_scatter",  // superseded draft, still loaded
       "KHR_mesh_quantization",
       "KHR_texture_transform",
       "KHR_materials_dispersion",

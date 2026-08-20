@@ -104,29 +104,68 @@ void tinygltf::utils::setVolume(tinygltf::Material& tmat, const KHR_materials_vo
   tinygltf::utils::setArrayValue(ext, "attenuationColor", 3, glm::value_ptr(volume.attenuationColor));
 }
 
-KHR_materials_volume_scatter tinygltf::utils::getVolumeScatter(const tinygltf::Material& tmat)
+KHR_materials_scatter tinygltf::utils::getScatter(const tinygltf::Material& tmat)
 {
-  KHR_materials_volume_scatter gmat;
-  if(tinygltf::utils::hasElementName(tmat.extensions, KHR_MATERIALS_VOLUME_SCATTER_EXTENSION_NAME))
+  KHR_materials_scatter gmat;
+
+  bool legacy = false;
+  if(!tinygltf::utils::hasElementName(tmat.extensions, KHR_MATERIALS_SCATTER_EXTENSION_NAME))
   {
-    const tinygltf::Value& ext = tinygltf::utils::getElementValue(tmat.extensions, KHR_MATERIALS_VOLUME_SCATTER_EXTENSION_NAME);
-    tinygltf::utils::getArrayValue(ext, "multiscatterColorFactor", gmat.multiscatterColorFactor);
-    tinygltf::utils::getValue(ext, "scatterAnisotropy", gmat.scatterAnisotropy);
-    gmat.scatterAnisotropy = std::clamp(gmat.scatterAnisotropy, -0.999f, 0.999f);
+    if(!tinygltf::utils::hasElementName(tmat.extensions, KHR_MATERIALS_VOLUME_SCATTER_EXTENSION_NAME))
+      return gmat;
+    legacy = true;
   }
+  const tinygltf::Value& ext =
+      tinygltf::utils::getElementValue(tmat.extensions, legacy ? KHR_MATERIALS_VOLUME_SCATTER_EXTENSION_NAME :
+                                                                 KHR_MATERIALS_SCATTER_EXTENSION_NAME);
+
+  // The superseded draft had no scatterStrengthFactor: scattering was always fully on. Defaulting
+  // it to 1 there keeps those assets scattering, while KHR_materials_scatter defaults to 0 per spec.
+  gmat.scatterStrengthFactor = legacy ? 1.0f : 0.0f;
+  // ...and its multiscatterColor defaulted to black, which is what turned scattering off there.
+  if(legacy)
+    gmat.multiscatterColorFactor = glm::vec3(0.0f);
+  tinygltf::utils::getValue(ext, "scatterStrengthFactor", gmat.scatterStrengthFactor);
+  gmat.scatterStrengthFactor = std::clamp(gmat.scatterStrengthFactor, 0.0f, 1.0f);
+  tinygltf::utils::getValue(ext, "scatterStrengthTexture", gmat.scatterStrengthTexture);
+  tinygltf::utils::getArrayValue(ext, "multiscatterColorFactor", gmat.multiscatterColorFactor);
+  tinygltf::utils::getValue(ext, "multiscatterColorTexture", gmat.multiscatterColorTexture);
+  tinygltf::utils::getValue(ext, "scatterAnisotropy", gmat.scatterAnisotropy);
+  // The range is open; keep the phase function away from its delta limits.
+  gmat.scatterAnisotropy = std::clamp(gmat.scatterAnisotropy, -0.999f, 0.999f);
+
+  // The draft spelled the color "multiscatterColor".
+  if(ext.Has("multiscatterColor"))
+    tinygltf::utils::getArrayValue(ext, "multiscatterColor", gmat.multiscatterColorFactor);
+
   return gmat;
 }
 
-void tinygltf::utils::setVolumeScatter(tinygltf::Material& tmat, const KHR_materials_volume_scatter& scatter)
+void tinygltf::utils::setScatter(tinygltf::Material& tmat, const KHR_materials_scatter& scatter)
 {
-  if(!tinygltf::utils::hasElementName(tmat.extensions, KHR_MATERIALS_VOLUME_SCATTER_EXTENSION_NAME))
+  if(!tinygltf::utils::hasElementName(tmat.extensions, KHR_MATERIALS_SCATTER_EXTENSION_NAME))
   {
-    tmat.extensions[KHR_MATERIALS_VOLUME_SCATTER_EXTENSION_NAME] = tinygltf::Value(tinygltf::Value::Object());
+    tmat.extensions[KHR_MATERIALS_SCATTER_EXTENSION_NAME] = tinygltf::Value(tinygltf::Value::Object());
   }
+  // Writing always migrates to the current extension name.
+  tmat.extensions.erase(KHR_MATERIALS_VOLUME_SCATTER_EXTENSION_NAME);
 
-  tinygltf::Value& ext = tmat.extensions[KHR_MATERIALS_VOLUME_SCATTER_EXTENSION_NAME];
+  tinygltf::Value& ext = tmat.extensions[KHR_MATERIALS_SCATTER_EXTENSION_NAME];
+
+  // An unassigned texture must not be written as "index": -1; drop the property instead.
+  auto setOrEraseTexture = [&ext](const char* key, const tinygltf::TextureInfo& info) {
+    if(info.index > -1)
+      tinygltf::utils::setValue(ext, key, info);
+    else
+      ext.Get<tinygltf::Value::Object>().erase(key);
+  };
+
+  // Clamped the same way as getScatter(), so a round-trip through set/get is a no-op.
+  tinygltf::utils::setValue(ext, "scatterStrengthFactor", std::clamp(scatter.scatterStrengthFactor, 0.0f, 1.0f));
+  setOrEraseTexture("scatterStrengthTexture", scatter.scatterStrengthTexture);
   tinygltf::utils::setArrayValue(ext, "multiscatterColorFactor", 3, glm::value_ptr(scatter.multiscatterColorFactor));
-  tinygltf::utils::setValue(ext, "scatterAnisotropy", scatter.scatterAnisotropy);
+  setOrEraseTexture("multiscatterColorTexture", scatter.multiscatterColorTexture);
+  tinygltf::utils::setValue(ext, "scatterAnisotropy", std::clamp(scatter.scatterAnisotropy, -0.999f, 0.999f));
 }
 
 KHR_materials_unlit tinygltf::utils::getUnlit(const tinygltf::Material& tmat)

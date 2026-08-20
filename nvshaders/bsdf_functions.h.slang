@@ -111,10 +111,10 @@ and a V-cavity shadowing-masking function).
 /*-------------------------------------------------------------------------------------------------
 # Function `volumeExtinctionCoefficient`
 > Returns the volumetric extinction coefficient `sigma_t = -log(c) / d` of the material, per
-> KHR_materials_volume / KHR_materials_volume_scatter.
+> KHR_materials_volume / KHR_materials_scatter.
 
 Per spec: when only `KHR_materials_volume` is active, scattering is assumed to be zero
-(`sigma_s = 0`), so `sigma_t = sigma_a`. When `KHR_materials_volume_scatter` is also active, the
+(`sigma_s = 0`), so `sigma_t = sigma_a`. When `KHR_materials_scatter` is also active, the
 same formula `-log(c)/d` continues to give the **total** extinction (`sigma_t = sigma_a +
 sigma_s`); the scattering portion is recovered as `sigma_s = sigma_t * rho_ss`. Beer's-law
 transmittance over a path of length x is therefore `T(x) = exp(-sigma_t * x)` regardless of
@@ -134,7 +134,7 @@ float3 volumeExtinctionCoefficient(PbrMaterial mat)
 > DEPRECATED: kept for backward compatibility. The function name is misleading -- it actually
 > returns the **extinction** coefficient `sigma_t`, not the absorption coefficient `sigma_a`.
 > They coincide only when scattering is disabled (KHR_materials_volume without
-> KHR_materials_volume_scatter). New code should call `volumeExtinctionCoefficient` instead.
+> KHR_materials_scatter). New code should call `volumeExtinctionCoefficient` instead.
 -------------------------------------------------------------------------------------------------*/
 float3 absorptionCoefficient(PbrMaterial mat)
 {
@@ -1059,7 +1059,8 @@ int bsdfEvaluateCore(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data, PbrMaterial ma
   }
   else if(lobe == LOBE_SPECULAR_TRANSMISSION)
   {
-    btdf_ggx_smith_eval(data, mat, tint);
+    // `transmissionTint` is float3(1) for plain glTF materials; see PbrMaterial.
+    btdf_ggx_smith_eval(data, mat, tint * mat.transmissionTint);
   }
   else if(lobe == LOBE_METAL_REFLECTION)
   {
@@ -1156,7 +1157,8 @@ void bsdfSampleLobe(NVSHADERS_INOUT_TYPE(BsdfSampleData) data, PbrMaterial mat, 
   }
   else if(lobe == LOBE_SPECULAR_TRANSMISSION)
   {
-    btdf_ggx_smith_sample(data, mat, tint);
+    // `transmissionTint` is float3(1) for plain glTF materials; see PbrMaterial.
+    btdf_ggx_smith_sample(data, mat, tint * mat.transmissionTint);
   }
   else if(lobe == LOBE_METAL_REFLECTION)
   {
