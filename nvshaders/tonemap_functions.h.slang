@@ -374,22 +374,22 @@ inline float3 applyTonemap(TonemapperData tm, float3 color, float2 pixel, float2
   // Tonemap
   switch(tm.method)
   {
-    case ToneMapMethod::eFilmic:
+    case TONEMAP_METHOD(eFilmic):
       c = tonemapFilmic(color);
       break;
-    case ToneMapMethod::eUncharted2:
+    case TONEMAP_METHOD(eUncharted2):
       c = tonemapUncharted2(color);
       break;
-    case ToneMapMethod::eClip:
+    case TONEMAP_METHOD(eClip):
       c = toSrgb(color);
       break;
-    case ToneMapMethod::eACES:
+    case TONEMAP_METHOD(eACES):
       c = tonemapACES(color);
       break;
-    case ToneMapMethod::eAgX:
+    case TONEMAP_METHOD(eAgX):
       c = tonemapAgX(color);
       break;
-    case ToneMapMethod::eKhronosPBR:
+    case TONEMAP_METHOD(eKhronosPBR):
       c = tonemapKhronosPBR(color);
       break;
   }
@@ -440,8 +440,13 @@ inline float3 applyTonemap(TonemapperData tm, float3 color, float2 pixel, float2
     const float trinoise = sign(noise) * (1.F - sqrt(1.F - 2.F * abs(noise)));
     // We use triangular noise for most of the range (so that the amount of
     // noise appears uniform) but switch to uniform at the ends:
-    const bool3 useUniform = greaterThan(float3(.5F / levelsMinus1), c)  //
-                             || greaterThan(c, float3(1.F - .5F / levelsMinus1));
+    const bool3 lowEnd  = greaterThan(float3(.5F / levelsMinus1), c);
+    const bool3 highEnd = greaterThan(c, float3(1.F - .5F / levelsMinus1));
+#if defined(GL_core_profile)  // GLSL has no || for boolean vectors
+    const bool3 useUniform = bool3(lowEnd.x || highEnd.x, lowEnd.y || highEnd.y, lowEnd.z || highEnd.z);
+#else
+    const bool3 useUniform = lowEnd || highEnd;
+#endif
     // Note that because we add noise in sRGB space, we gain an average of
     // 4 * 10^-6 luminance (roughly 0.279/L^2 where L is the number of levels).
     // http://www.thetenthplanet.de/archives/5367 does energy-preserving dither,

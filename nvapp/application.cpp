@@ -1000,8 +1000,9 @@ void nvapp::Application::initializeImGuiContextAndSettings()
   ImGui::LoadIniSettingsFromDisk(m_iniFilename.c_str());
 
   ImGuiIO& io = ImGui::GetIO();
-  // Set the ini file name
-  io.IniFilename = m_iniFilename.c_str();
+  // Set the ini file name, but only for windowed runs: headless has no real window/docking
+  // layout, so letting ImGui auto-save would overwrite the layout of windowed sessions.
+  io.IniFilename = m_headless ? nullptr : m_iniFilename.c_str();
 
   // Initialize fonts
   nvgui::addDefaultFont();

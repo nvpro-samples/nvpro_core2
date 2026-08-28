@@ -19,7 +19,7 @@
 
 /*-----------------------------------------------------------------------------
  
-nv_ktx 2.0.0
+nv_ktx 3.0.0
 
 This is a mostly self-contained reader and writer for KTX2 files and reader
 for KTX1 files. It only relies on Vulkan (for KTX2), GL (for KTX1), and the
@@ -32,14 +32,21 @@ include the Zstd, Zlib, and Basis Universal headers respectively, and to
 enable reading these formats. This will also enable writing Zstd and
 Basis Universal-compressed formats.
 
+Changelog for nv_ktx 3.0.0:
+* [API break] All types and variables have been renamed to match the
+nvpro_core2 coding guidelines.
+* Added Image::getImageViewType().
+* Fixed a bug where Image::getImageType() would report an image of size
+(1, 0, 0) as using VK_IMAGE_TYPE_2D.
+
 Changelog for nv_ktx 2.0.0:
-- Adds functions that let you read only the header, so you can copy data
+* Adds functions that let you read only the header, so you can copy data
 directly to the GPU or even potentially undo supercompression there.
-- [API break] WriteSupercompressionType and KTXImage::InputSupercompression
+* [API break] WriteSupercompressionType and KTXImage::InputSupercompression
 are now SupercompressionScheme. In particular, KTXImage::input_supercompression
-is now in the read-only KTXImage::getFileInfo()::supercompression_scheme.
-- [API break] getKTXVersion() is now in the read-only KTXImage::getFileInfo().
-- [API break] ReadSettings::max_resource_size_in_bytes has been replaced by
+is now in the read-only KTXImage::getFileInfo()::ktx2_supercompression_scheme.
+* [API break] getKTXVersion() is now in the read-only KTXImage::getFileInfo().
+* [API break] ReadSettings::max_resource_size_in_bytes has been replaced by
 ReadSettings::max_size_in_bytes, which limits the total uncompressed size of
 all subresources together. This protects against resource exhaustion attacks
 when there are many subresources.
@@ -83,17 +90,17 @@ struct ReadSettings
   // Whether to read all mips (true), or only the base mip (false).
   bool mips = true;
   // See docs for CustomExportSizeFuncPtr
-  CustomExportSizeFuncPtr custom_size_callback = nullptr;
+  CustomExportSizeFuncPtr customSizeCallback = nullptr;
   // If true, the reader will validate that the KTX file contains at least 1
   // byte per subresource. This will involve seeking to the end of the stream
   // to determine the length of the stream or file.
-  bool validate_input_size = true;
+  bool validateInputSize = true;
   // Limits the maximum total uncompressed image size and supercompression
   // global data size in bytes; produces errors for any files with a larger size.
-  size_t max_size_in_bytes = size_t(1) << 30;
+  size_t maxSizeInBytes = size_t(1) << 30;
   // By default, UASTC is transcoded to BC7 instead of ASTC. Setting this to
   // true will transcode UASTC to ASTC.
-  bool device_supports_astc = false;
+  bool deviceSupportsAstc = false;
 };
 
 // Names for the KTX2 supercompression schemes
@@ -109,7 +116,7 @@ enum class SupercompressionScheme : uint32_t
 
 // Describes the four valid combinations of ETC1S slices in the KTX2
 // specification. These are listed in the order they appear there.
-enum class ETC1SCombination
+enum class Etc1sCombination
 {
   RGB,   // One slice, RGB
   RGBA,  // Two slices, RGB + AAA
@@ -117,7 +124,7 @@ enum class ETC1SCombination
   RG     // Two slices, RRR + GGG
 };
 
-enum class EncodeRGBA8ToFormat
+enum class EncodeRgba8ToFormat
 {
   NO,  // Don't encode the data to a Basis Universal format.
   // Note that an option other than NO overrides the SupercompressionType when writing.
@@ -129,7 +136,7 @@ enum class EncodeRGBA8ToFormat
   ETC1S_RGB    // RGB channels only; usually decodes to BC7 (8bpp).
 };
 
-enum class UASTCEncodingQuality
+enum class UastcEncodingQuality
 {
   FASTEST  = 0,
   FASTER   = 1,
@@ -148,26 +155,26 @@ struct WriteSettings
   // formats other than ETC1s. This ranges from ZSTD_minCLevel() to
   // ZSTD_maxCLevel().
   // Higher levels are slower.
-  int supercompression_level = 0;
+  int supercompressionLevel = 0;
   // See docs for CustomExportSizeFuncPtr
-  CustomExportSizeFuncPtr custom_size_callback = nullptr;
+  CustomExportSizeFuncPtr customSizeCallback = nullptr;
   // Whether to encode the data to a Basis format. If not NO, the image format
   // must be VK_FORMAT_B8G8R8A8_SRGB or VK_FORMAT_B8G8R8A8_UNORM.
-  EncodeRGBA8ToFormat encode_rgba8_to_format = EncodeRGBA8ToFormat::NO;
+  EncodeRgba8ToFormat encodeRgba8ToFormat = EncodeRgba8ToFormat::NO;
   // Applies when encoding RGBA8 to UASTC. Corresponds to cPackUASTCLevel in Basis.
-  UASTCEncodingQuality uastc_encoding_quality = UASTCEncodingQuality::DEFAULT;
+  UastcEncodingQuality uastcEncodingQuality = UastcEncodingQuality::DEFAULT;
   // Applies when encoding RGBA8 to ETC1S. Ranges from 0 to BASISU_MAX_COMPRESSION_LEVEL.
   // Higher levels are slower.
-  int etc1s_encoding_level = 3;
+  int etc1sEncodingLevel = 3;
   // Lambda for UASTC Rate-Distortion Optimization, from 0 to 50. Higher numbers
   // compress more at lower quality.
-  float rdo_lambda = 10.0f;
+  float rdoLambda = 10.0f;
   // Enables Rate-Distortion Optimization for ETC1S.
-  bool rdo_etc1s = true;
+  bool rdoEtc1s = true;
 };
 
 // An enum for each of the possible elements in a ktxSwizzle value.
-enum class KTX_SWIZZLE
+enum class Swizzle
 {
   ZERO = 0,
   ONE,
@@ -223,7 +230,7 @@ struct SubresourceTarget
 // - and optionally the formatted (i.e. encoded/compressed, but not
 // supercompressed -- we supercompress data when reading from/writing to files)
 // image data for each mip level, array element, and face.
-struct KTXImage
+struct Image
 {
 public:
   // Clears, then sets up storage for an image with the given dimensions. These
@@ -237,24 +244,30 @@ public:
   // memory when allocating space.
   ErrorWithText allocate(
       // The number of mips (levels) in the image, including the base mip.
-      uint32_t _num_mips = 1,
+      uint32_t _numMips = 1,
       // The number of array elements (layers) in the image. 0 for a non-array
       // texture (this has meaning in OpenGL, but not in Vulkan).
       // If representing an incomplete cube map (i.e. a cube map where not all
       // faces are stored), this is
       //   (faces per cube map) * (number of cube maps)
-      // and _num_faces is 1.
-      uint32_t _num_layers = 0,
+      // and _numFaces is 1.
+      uint32_t _numLayers = 0,
       // The number of faces in the image (1 for a 2D texture, 6 for a cube map)
-      uint32_t _num_faces = 1);
+      uint32_t _numFaces = 1);
 
   // Clears all stored image data.
   void clear();
 
-  // Determines the VkImageType corresponding to this KTXImage based on the
-  // dimensions, according to Table 4.1 of the KTX 2.0 specification.
-  // In the invalid case where mip_0_width == 0, returns VK_IMAGE_TYPE_1D.
+  // Determines the VkImageType corresponding to this Image based on
+  // its dimensions, according to Table 4.1 of the KTX 2.0 specification.
+  // In the case where mip0Width == 0 (which the spec considers to be an
+  // invalid image but we permissively accept), returns VK_IMAGE_TYPE_1D.
   VkImageType getImageType() const;
+
+  // Determines the VkImageViewType corresponding to this Image based on
+  // its dimensions. This is more specific than getImageType().
+  // Like getImageType(), returns VK_IMAGE_VIEW_TYPE_1D when the mip0Width is 0.
+  VkImageViewType getImageViewType() const;
 
   // Mutably accesses the subresource at the given mip, layer, and face. If the
   // given indices are out of range, throws an std::out_of_range exception.
@@ -287,29 +300,29 @@ public:
   struct FileInfo
   {
     // Whether the loaded file was a KTX1 (1) or KTX2 (2) file.
-    uint32_t read_ktx_version = 1;
+    uint32_t readKtxVersion = 1;
     // The KTX2 supercompression scheme and supercompression global data.
     // This should be one of the values from SupercompressionType,
     // unless the file used something new.
-    uint32_t ktx2_supercompression_scheme = 0;
-    uint64_t ktx2_global_data_offset      = 0;
-    uint64_t ktx2_global_data_byte_size   = 0;
+    uint32_t ktx2SupercompressionScheme = 0;
+    uint64_t ktx2GlobalDataOffset       = 0;
+    uint64_t ktx2GlobalDataByteSize     = 0;
     // KTX2 Basis ETC1S textures can have 1 or 2 slices:
-    size_t           ktx2_basis_etc1s_num_slices  = 1;
-    ETC1SCombination ktx2_basis_etc1s_combination = {};
+    size_t           ktx2BasisEtc1sNumSlices   = 1;
+    Etc1sCombination ktx2BasisEtc1sCombination = {};
     // The KTX2 Khronos Data Format color model. This is mainly important for
     // the cases 163 (ETC1S) and 166 (UASTC).
-    uint8_t ktx2_color_model = 0;
+    uint8_t ktx2ColorModel = 0;
     // KTX1 data might be encoded in a way that requires you to swap element
     // endianness.
     // These two fields contain the info you need to do the swap yourself:
     // Whether the KTX1 data is endian swapped relative to this system:
-    bool ktx1_needs_endian_swap = false;
+    bool ktx1NeedsEndianSwap = false;
     // KTX1 endian swap element size (glTypeSize from the header).
-    uint32_t ktx1_gl_type_size = 0;
+    uint32_t ktx1GlTypeSize = 0;
   };
 
-  const FileInfo& getFileInfo() const { return m_file_info; }
+  const FileInfo& getFileInfo() const { return m_fileInfo; }
 
   //---------------------------------------------------------------------------
   // We also provide a lower-level API where you can read the file header
@@ -382,35 +395,35 @@ public:
   // specifies a GL format), we automatically convert to a VkFormat.
   VkFormat format = VK_FORMAT_UNDEFINED;
   // The width in pixels of the largest mip. Must be > 0.
-  uint32_t mip_0_width = 1;
+  uint32_t mip0Width = 1;
   // The height in pixels of the largest mip. 0 for a 1D texture.
-  uint32_t mip_0_height = 0;
+  uint32_t mip0Height = 0;
   // The depth in pixels of the largest mip. 0 for a 1D or 2D texture.
-  uint32_t mip_0_depth = 0;
+  uint32_t mip0Depth = 0;
   // The number of mips (levels) in the image, including the base mip. Always
   // greater than or equal to 1.
-  uint32_t num_mips = 1;
+  uint32_t numMips = 1;
   // The number of array elements (layers) in the image. 0 for a non-array
   // texture (this has meaning in OpenGL, but not in Vulkan).
   // If representing an incomplete cube map (i.e. a cube map where not all
   // faces are stored), this is
   //   (faces per cube map) * (number of cube maps)
-  // and _num_faces is 1.
-  uint32_t num_layers_possibly_0 = 0;
+  // and _numFaces is 1.
+  uint32_t numLayersPossibly0 = 0;
   // The number of faces in the image (1 for a 2D texture, 6 for a cube map)
-  uint32_t num_faces = 0;
+  uint32_t numFaces = 0;
   // This file's key/value table. Note that for the ktxSwizzle key, one should
   // use the swizzle element instead!
-  KeyValueData key_value_data{};
+  KeyValueData keyValueData{};
 
   // KTX files can set the number of mips to 0 to indicate that
   // the application should generate a full mip chain.
-  bool app_should_generate_mips = false;
+  bool appShouldGenerateMips = false;
 
   // Whether this data represents an image with premultiplied alpha
   // (generally, storing (r*a, g*a, b*a, a) instead of (r, g, b, a)).
   // This is used when writing the Data Format Descriptor in KTX2.
-  bool is_premultiplied = false;
+  bool isPremultiplied = false;
 
   // Whether the Data Format Descriptor transferFunction for this data is
   // KHR_DF_TRANSFER_SRGB. (Otherwise, it is KHR_DF_TRANSFER_LINEAR.)
@@ -419,16 +432,16 @@ public:
   // textures, and false for normal maps and depth maps. Validation requires
   // this to match the VkFormat - except in special cases such as Basis UASTC
   // and Universal.
-  bool is_srgb = true;
+  bool isSrgb = true;
 
   // Specifies how the red, green, blue, and alpha channels should be sampled
   // from the source data. For instance, {R, G, ZERO, ONE} means the red and
   // green channels should be sampled from the red and green texture components
   // respectively, the blue channel is sampled as 0, and the alpha channel is
   // sampled as 1.
-  // Note that values here should be read in lieu of the key_value_data's
+  // Note that values here should be read in lieu of the keyValueData's
   // ktxSwizzle key! This is to make Basis Universal usage easier in the future.
-  std::array<KTX_SWIZZLE, 4> swizzle = {KTX_SWIZZLE::R, KTX_SWIZZLE::G, KTX_SWIZZLE::B, KTX_SWIZZLE::A};
+  std::array<Swizzle, 4> swizzle = {Swizzle::R, Swizzle::G, Swizzle::B, Swizzle::A};
 
 private:
   // Internal functions.
@@ -445,9 +458,9 @@ private:
   // image data. We store this in a buffer with an entry per subresource, and
   // provide accessors to it.
   std::vector<std::vector<char>> m_data;
-  std::vector<SubresourceLayout> m_level_indices;
-  std::vector<SubresourceLayout> m_subresource_layouts;
-  FileInfo                       m_file_info{};
+  std::vector<SubresourceLayout> m_levelIndices;
+  std::vector<SubresourceLayout> m_subresourceLayouts;
+  FileInfo                       m_fileInfo{};
 };
 
 }  // namespace nv_ktx

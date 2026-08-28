@@ -25,6 +25,7 @@
 nvapp::ElementLogger::ElementLogger(bool show /*= false*/)
     : m_showLog(show)
 {
+  clear();
 }
 
 void nvapp::ElementLogger::onAttach(Application* /*app*/)

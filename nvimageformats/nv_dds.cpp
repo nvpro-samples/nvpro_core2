@@ -572,7 +572,7 @@ bool dxgiExportSize(size_t width, size_t height, size_t depth, uint32_t format, 
   }
 }
 
-bool isDXGIFormatCompressed(const uint32_t dxgiFormat)
+bool isDxgiFormatCompressed(const uint32_t dxgiFormat)
 {
   return (dxgiFormat >= DXGI_FORMAT_BC1_TYPELESS && dxgiFormat <= DXGI_FORMAT_BC5_SNORM)
          || (dxgiFormat >= DXGI_FORMAT_BC6H_TYPELESS && dxgiFormat <= DXGI_FORMAT_BC7_UNORM_SRGB)
@@ -618,10 +618,10 @@ bool dx9HeaderSupported(const uint32_t dxgiFormat, bool allowD3DFormatInFourCC)
 // supported, and write nothing except for pf.dwSize if so.
 // isLuminance should be set in dwFlags separately.
 // Writes color transform only for BC3n and OrthographicNormal.
-void setDX9PixelFormat(const uint32_t format, ColorTransform colorTransform, const WriteSettings& writeSettings, DDSPixelFormat& pf)
+void setDX9PixelFormat(const uint32_t format, ColorTransform colorTransform, const WriteSettings& writeSettings, PixelFormat& pf)
 {
-  pf.dwSize = sizeof(DDSPixelFormat);
-  static_assert((sizeof(DDSPixelFormat)) == 32, "DDS spec states that DDS_PIXELFORMAT size must be 32!");
+  pf.dwSize = sizeof(PixelFormat);
+  static_assert((sizeof(PixelFormat)) == 32, "DDS spec states that DDS_PIXELFORMAT size must be 32!");
 
   if(writeSettings.useCustomBitmask)
   {
@@ -650,7 +650,7 @@ void setDX9PixelFormat(const uint32_t format, ColorTransform colorTransform, con
     {
       case DXGI_FORMAT_BC3_TYPELESS:
       case DXGI_FORMAT_BC3_UNORM:
-        if(colorTransform == ColorTransform::eAGBR)
+        if(colorTransform == ColorTransform::eAgbr)
         {
           pf.dwFlags  = DDPF_FOURCC;
           pf.dwFourCC = FOURCC_RXGB;
@@ -746,9 +746,9 @@ void setDX9PixelFormat(const uint32_t format, ColorTransform colorTransform, con
         pf.dwFourCC = D3DFMT_A32B32G32R32F;
         break;
       default:
-        assert(!"SetDX9PixelFormat was called for an unsupported format! "
-            "Please make sure that DX9HeaderSupported returns true for this "
-            "format and that SetDX9PixelFormat is implemented for this format.");
+        assert(!"setDX9PixelFormat was called for an unsupported format! "
+            "Please make sure that dx9HeaderSupported returns true for this "
+            "format and that setDX9PixelFormat is implemented for this format.");
     }
   }
 }
@@ -774,15 +774,15 @@ const char* getColorTransformString(ColorTransform colorTransform)
       return "None";
     case ColorTransform::eLuminance:
       return "Luminance";
-    case ColorTransform::eAGBR:
+    case ColorTransform::eAgbr:
       return "AGBR (aka RXGB)";
-    case ColorTransform::eYUV:
+    case ColorTransform::eYuv:
       return "YUV";
     case ColorTransform::eYCoCg:
       return "YCoCg";
     case ColorTransform::eYCoCgScaled:
       return "YCoCg Scaled";
-    case ColorTransform::eAEXP:
+    case ColorTransform::eAexp:
       return "AEXP";
     case ColorTransform::eSwapRG:
       return "SwapRG";
@@ -1044,7 +1044,7 @@ ErrorWithText Image::readHeaderFromStream(std::istream& input, const ReadSetting
   switch(i.ddsh.dwReserved1[3])
   {
     case FOURCC_AEXP:
-      colorTransform = ColorTransform::eAEXP;
+      colorTransform = ColorTransform::eAexp;
       break;
     case FOURCC_YCOCG:
       colorTransform = ColorTransform::eYCoCg;
@@ -1104,7 +1104,7 @@ ErrorWithText Image::readHeaderFromStream(std::istream& input, const ReadSetting
           colorTransform = ColorTransform::eSwapRG;
           break;
         case FOURCC_A2D5:
-          colorTransform = ColorTransform::eAGBR;
+          colorTransform = ColorTransform::eAgbr;
           break;
       }
 
@@ -1187,7 +1187,7 @@ ErrorWithText Image::readHeaderFromStream(std::istream& input, const ReadSetting
           break;
         case FOURCC_RXGB:
           dxgiFormat     = DXGI_FORMAT_BC3_UNORM;
-          colorTransform = ColorTransform::eAGBR;
+          colorTransform = ColorTransform::eAgbr;
           break;
           // GLI and DirectXTex will write some DXGI formats without a DX10
           // header and using Direct3D format numbers by default, so we have
@@ -1401,7 +1401,7 @@ ErrorWithText Image::readHeaderFromStream(std::istream& input, const ReadSetting
     // or DX10 mode.
     if((i.ddsh.ddspf.dwFlags & DDPF_YUV) != 0)
     {
-      colorTransform = ColorTransform::eYUV;
+      colorTransform = ColorTransform::eYuv;
     }
     if((i.ddsh.ddspf.dwFlags & DDPF_LUMINANCE) != 0)
     {
@@ -1913,9 +1913,9 @@ ErrorWithText Image::writeToStream(std::ostream& output, const WriteSettings& wr
 {
   //---------------------------------------------------------------------------
   // Image write: Define DDS Header and Pixel Format
-  DDSHeader header = {0};
-  static_assert(sizeof(DDSHeader) == 124, "DDS header size must be 124 by specification!");
-  header.dwSize = sizeof(DDSHeader);
+  Header header = {0};
+  static_assert(sizeof(Header) == 124, "DDS header size must be 124 by specification!");
+  header.dwSize = sizeof(Header);
 
   // Specify which members contain valid data
   // Required components
@@ -1948,7 +1948,7 @@ ErrorWithText Image::writeToStream(std::ostream& output, const WriteSettings& wr
   }
 
   // Pitch or linear size
-  if(isDXGIFormatCompressed(dxgiFormat))
+  if(isDxgiFormatCompressed(dxgiFormat))
   {
     // Linear size, the total number of bytes in the top level texture
     header.dwFlags |= DDSD_LINEARSIZE;
@@ -1998,12 +1998,12 @@ ErrorWithText Image::writeToStream(std::ostream& output, const WriteSettings& wr
   // can tell that they're reading files written with the newest version of
   // NVDDS.
   header.dwReserved1[9]  = FOURCC_LIBRARY_NVPS;
-  header.dwReserved1[10] = (2 << 16) | (2 << 8) | 0;
+  header.dwReserved1[10] = (3 << 16) | (0 << 8) | 0;
 
   //---------------------------------------------------------------------------
   // DDS Pixel Format
   // Specification: https://docs.microsoft.com/en-us/windows/win32/direct3ddds/dds-pixelformat
-  DDSPixelFormat& pixelformat = header.ddspf;
+  PixelFormat& pixelformat = header.ddspf;
   static_assert(sizeof(pixelformat) == 32, "DDS_PIXELFORMAT size must be 32, per specification!");
   pixelformat.dwSize = sizeof(pixelformat);
 
@@ -2023,23 +2023,31 @@ ErrorWithText Image::writeToStream(std::ostream& output, const WriteSettings& wr
   // 3. Array textures must use the DX10 header.
   // 4. If useDX10HeaderIfPossible, use the DX10 header.
   // 5. Otherwise, use the DX10 hader only if dx9HeaderSupported returns false.
-  bool       usesDXT10Header = false;
+  bool       usesDxt10Header = false;
   const bool isBC3N          = (dxgiFormat == DXGI_FORMAT_BC3_UNORM || dxgiFormat == DXGI_FORMAT_BC3_TYPELESS)
-                      && (colorTransform == ColorTransform::eAGBR);
+                      && (colorTransform == ColorTransform::eAgbr);
   if(writeSettings.useCustomBitmask || isBC3N)
   {
-    usesDXT10Header = false;
+    usesDxt10Header = false;
+    if(m_numLayers > 1)
+    {
+      return "This DDS image is impossible to write, to the best knowledge of "
+             "nv_dds' authors. Because a custom bitmask or BC3N was specified, "
+             "the DDS file cannot use the DX10 extension. But the image "
+             "is also an array texture, which can only be written with "
+             "the DX10 extension.";
+    }
   }
   else if(m_numLayers > 1 || writeSettings.useDx10HeaderIfPossible)
   {
-    usesDXT10Header = true;
+    usesDxt10Header = true;
   }
   else
   {
-    usesDXT10Header = !dx9HeaderSupported(dxgiFormat, writeSettings.legacyNvtteStyleFloatCodes);
+    usesDxt10Header = !dx9HeaderSupported(dxgiFormat, writeSettings.legacyNvtteStyleFloatCodes);
   }
 
-  if(usesDXT10Header)
+  if(usesDxt10Header)
   {
     pixelformat.dwFlags |= DDPF_FOURCC;
     pixelformat.dwFourCC = FOURCC_DX10;
@@ -2069,7 +2077,7 @@ ErrorWithText Image::writeToStream(std::ostream& output, const WriteSettings& wr
     case ColorTransform::eLuminance:
       pixelformat.dwFlags |= DDPF_LUMINANCE;
       break;
-    case ColorTransform::eAGBR:
+    case ColorTransform::eAgbr:
       // We can set this in dwRGBBitCount, but only if FourCC is nonzero (so
       // that there's no ambiguity).
       if(pixelformat.dwFourCC != 0)
@@ -2080,7 +2088,7 @@ ErrorWithText Image::writeToStream(std::ostream& output, const WriteSettings& wr
       // GIMP knows it needs to swap channels.
       pixelformat.dwFlags |= DDPF_NORMAL;
       break;
-    case ColorTransform::eYUV:
+    case ColorTransform::eYuv:
       pixelformat.dwFlags |= DDPF_YUV;
       break;
     case ColorTransform::eYCoCg:
@@ -2089,7 +2097,7 @@ ErrorWithText Image::writeToStream(std::ostream& output, const WriteSettings& wr
     case ColorTransform::eYCoCgScaled:
       header.dwReserved1[3] = FOURCC_YCOCG_SCALED;
       break;
-    case ColorTransform::eAEXP:
+    case ColorTransform::eAexp:
       header.dwReserved1[3] = FOURCC_AEXP;
       break;
     case ColorTransform::eSwapRG:
@@ -2099,7 +2107,7 @@ ErrorWithText Image::writeToStream(std::ostream& output, const WriteSettings& wr
       }
       break;
     case ColorTransform::eOrthographicNormal:
-      // This can only be handled by SetDX9PixelFormat().
+      // This can only be handled by setDX9PixelFormat().
       break;
   }
 
@@ -2113,9 +2121,9 @@ ErrorWithText Image::writeToStream(std::ostream& output, const WriteSettings& wr
   //---------------------------------------------------------------------------
   // DX10 DDS extension
   // Specification: https://docs.microsoft.com/en-us/windows/win32/direct3ddds/dds-header-dxt10
-  if(usesDXT10Header)
+  if(usesDxt10Header)
   {
-    DDSHeaderDX10 ddsh10     = {};
+    HeaderDX10 ddsh10        = {};
     ddsh10.dxgiFormat        = dxgiFormat;
     ddsh10.resourceDimension = resourceDimension;
 
@@ -2140,7 +2148,7 @@ ErrorWithText Image::writeToStream(std::ostream& output, const WriteSettings& wr
 
     // Write DDS10 header
     static_assert(sizeof(ddsh10) == 20,
-                  "DDSHeaderDX10 must be 20 bytes long (see "
+                  "HeaderDX10 must be 20 bytes long (see "
                   "https://docs.microsoft.com/en-us/windows/win32/direct3ddds/dds-file-layout-for-textures)!");
     WRITE_OR_ERROR(output, ddsh10, "Could not write DX10 extension.");
   }
@@ -2186,7 +2194,7 @@ ErrorWithText Image::writeToFile(const char* filename, const WriteSettings& writ
 std::string Image::formatInfo() const
 {
   // This initial implementation is based on NVTT 3.2.6's DDS implementation.
-  const DDSHeader& header = m_fileInfo.ddsh;  // Short alias
+  const Header& header = m_fileInfo.ddsh;  // Short alias
 
   std::stringstream s;
   s << std::setfill('0') << std::uppercase;
@@ -2328,7 +2336,7 @@ std::string Image::formatInfo() const
 
   if(m_fileInfo.hadDx10Extension)
   {
-    const nv_dds::DDSHeaderDX10& ddsh10 = m_fileInfo.ddsh10;
+    const nv_dds::HeaderDX10& ddsh10 = m_fileInfo.ddsh10;
 
     s << "DX10 Header:\n";
     const char* dxgiFormatName = texture_formats::getDXGIFormatName(ddsh10.dxgiFormat);

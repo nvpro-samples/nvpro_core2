@@ -19,7 +19,7 @@
 
 /*-----------------------------------------------------------------------------
 
-nv_dds 2.2.0
+nv_dds 3.0.0
      
 A small yet complete library for reading and writing DDS files.
 
@@ -52,11 +52,16 @@ Not currently supported:
 * Paletted textures
 * DirectDraw Surface versions before DX9
 
-## Changes from nv_dds 1.0
+## Changelog for nv_dds 3.0.0
+* [API break] All types and variables have been renamed to match the
+nvpro_core2 coding guidelines.
+
+## Changelog for nv_dds 2.0
 
 nv_dds adds support for many more formats, fixes many issues, and now aims
 to be secure against untrusted input, so it's worth updating. However, the API
-has almost entirely changed, and now looks much more like nv_ktx's API:
+has almost entirely changed from nv_dds 1.0, and now looks much more like
+nv_ktx's API:
 
 * `CSurface` is now `nv_dds::Subresource`
 * `CDDSImage` is now `nv_dds::Image`
@@ -81,7 +86,7 @@ absolutely necessary, consider using a library such as NVTT.)
 
 namespace nv_dds {
 
-struct DDSPixelFormat
+struct PixelFormat
 {
   uint32_t dwSize;
   uint32_t dwFlags;
@@ -93,20 +98,20 @@ struct DDSPixelFormat
   uint32_t dwABitMask;
 };
 
-struct DDSHeader
+struct Header
 {
-  uint32_t       dwSize;
-  uint32_t       dwFlags;
-  uint32_t       dwHeight;
-  uint32_t       dwWidth;
-  uint32_t       dwPitchOrLinearSize;
-  uint32_t       dwDepth;
-  uint32_t       dwMipMapCount;
-  uint32_t       dwReserved1[11];
-  DDSPixelFormat ddspf;
-  uint32_t       dwCaps1;
-  uint32_t       dwCaps2;
-  uint32_t       dwReserved2[3];
+  uint32_t    dwSize;
+  uint32_t    dwFlags;
+  uint32_t    dwHeight;
+  uint32_t    dwWidth;
+  uint32_t    dwPitchOrLinearSize;
+  uint32_t    dwDepth;
+  uint32_t    dwMipMapCount;
+  uint32_t    dwReserved1[11];
+  PixelFormat ddspf;
+  uint32_t    dwCaps1;
+  uint32_t    dwCaps2;
+  uint32_t    dwReserved2[3];
 };
 
 enum class ResourceDimension : uint32_t
@@ -119,7 +124,7 @@ enum class ResourceDimension : uint32_t
   eCount
 };
 
-struct DDSHeaderDX10
+struct HeaderDX10
 {
   uint32_t          dxgiFormat;
   ResourceDimension resourceDimension;
@@ -162,10 +167,10 @@ enum class ColorTransform
   // encoded separately in BC3, this gives higher-quality results than, say,
   // using BC1.
   // Nowadays, a better alternative is to use BC5.
-  eAGBR,
+  eAgbr,
   // The image uses the DDPF_YUV flag. @nbickford is unsure which primaries
   // this uses.
-  eYUV,
+  eYuv,
   // The image stores data in the YCoCg color model.
   // See nvtt::fromYCoCg().
   eYCoCg,
@@ -180,7 +185,7 @@ enum class ColorTransform
   // Note that although this stands for "alpha exponent", it's different than
   // the RGBE encodings used by the .hdr file format and NVTT, and the A
   // channel is only a scaling factor.
-  eAEXP,
+  eAexp,
   // Swap the red and green channels.
   eSwapRG,
   // Reconstruct the blue channel from the red and green channels using
@@ -438,8 +443,8 @@ public:
   {
     // The original DDS headers.
     // The information below is parsed from the headers.
-    DDSHeader     ddsh{};
-    DDSHeaderDX10 ddsh10{};
+    Header     ddsh{};
+    HeaderDX10 ddsh10{};
 
     WriterLibrary writerLibrary = WriterLibrary::eUnknown;
     // Parsing this depends on the library; see formatInfo()'s implementation.

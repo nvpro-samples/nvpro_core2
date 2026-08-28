@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -150,7 +150,14 @@ NAMESPACE_SHADERIO_END()
 #define NVSHADERS_INOUT_TYPE(T) inout T
 #endif
 
+// Slang is row-major default vs GLSL/GLM column-major
+
 vec3 mul(vec3 a, mat3 b)
+{
+  return b * a;
+}
+
+vec3 mul(mat3 a, vec3 b)
 {
   return b * a;
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2020-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -197,6 +197,14 @@ bool FileMapping::open(const std::filesystem::path& filePath, MappingType mappin
       m_mappingPtr = mmap(0, m_mappingSize, mappingType == MAPPING_READONLY ? PROT_READ : (PROT_READ | PROT_WRITE),
                           MAP_SHARED, m_unix.file, 0);
       m_isValid    = (m_mappingPtr != MAP_FAILED);
+
+      if(m_isValid)
+      {
+        // mmap holds its own reference to the file; the descriptor is not needed
+        // afterwards. Keeping it would cap simultaneous mappings at RLIMIT_NOFILE.
+        ::close(m_unix.file);
+        m_unix.file = -1;
+      }
     }
     if(!m_isValid)
     {
@@ -240,10 +248,11 @@ void FileMapping::close()
     m_win32.file        = nullptr;
 
 #elif defined(__linux__)
-    assert(m_unix.file != -1);
-
     munmap(m_mappingPtr, m_mappingSize);
-    ::close(m_unix.file);
+    if(m_unix.file != -1)
+    {
+      ::close(m_unix.file);
+    }
 
     m_mappingPtr = nullptr;
     m_unix.file  = -1;

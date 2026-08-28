@@ -29,11 +29,35 @@ namespace nvutils {
 // id values, or from the back, favoring the highest available values.
 // With this dual region approach one could manage static and dynamic resources
 // in a single flat buffer without requiring a fixed limit split.
+//
+// When to use this vs OffsetAllocator:
+//   * IDPool: fixed slot-per-id workloads (bindless indices, descriptor slots,
+//     mesh id ranges). Guarantees lowest-id / highest-id preference, provides
+//     getUsedBounds for the dual-region use case, and uses ~1-2 bits per id
+//     regardless of fill/fragmentation.
+//   * OffsetAllocator (third_party/offsetallocator): general-purpose variable-
+//     size offset allocator. Faster on pure range create/destroy at larger counts,
+//     but stores a ~28-byte node per live allocation and does not guarantee
+//     lowest-id.
+//
+// Implementation: a free-bitmask (1 == free, 64-bit words) plus a "longest free
+// run" segment tree, using the "occupancy bitmask + bit scan" idea from
+// OffsetAllocator extended to answer run-length queries in O(log). Earlier
+// revisions were based on Emil Persson's MakeID (http://www.humus.name/3D/MakeID.h);
+// the public behavior is preserved.
+//
+// Single-ID ops (count == 1) are specialized and never touch the run tree, which
+// is allocated lazily on the first range op -- pure single-ID pools stay at
+// ~1 bit/id.
+//
+// Per-id memory (poolSize a multiple of the tree-leaf size):
+//   free bitmask       : 1     bit / id                (always allocated)
+//   occupancy summaries: ~0.02 bit / id                (always allocated)
+//   run-length tree    : 0.75  bit / id                (lazy: only after a range op)
+//   -> total, single-ID only pool : ~1.02 bit / id     (tree never built)
+//   -> total, range pool          : ~1.77 bit / id
 class IDPool
 {
-  // Based on Emil Persson's MakeID
-  // http://www.humus.name/3D/MakeID.h (v1.02)
-
 public:
   IDPool() = default;
 
@@ -59,10 +83,10 @@ public:
   // operations return true on success
 
   // single ID from the front of the first available range
-  bool createID(uint32_t& id);
+  bool createID(uint32_t& id) { return createRangeID(id, 1); }
 
   // single ID from the back of the last available range
-  bool createIDFromBack(uint32_t& id);
+  bool createIDFromBack(uint32_t& id) { return createRangeIDFromBack(id, 1); }
 
   // consecutive IDs starting at returned id, preferring low id values
   // count must be >= 1
@@ -77,10 +101,11 @@ public:
   bool destroyRangeID(const uint32_t id, const uint32_t count);
   void destroyAll();
 
-  bool isRangeAvailable(uint32_t searchCount) const;
+  // may lazily build / sync the segment tree.
+  bool isRangeAvailable(uint32_t searchCount);
 
   // number of elements in pool (highest id is `poolSize-1`)
-  uint32_t getPoolSize() const { return m_maxID + 1; }
+  uint32_t getPoolSize() const { return m_poolSize; }
   // number of IDs currently in use
   uint32_t getUsedCount() const { return m_usedIDs; }
 
@@ -99,26 +124,75 @@ public:
   //                   above the gap is >= backUsedBegin.
   // The half-open range [frontUsedEnd, backUsedBegin) is always free. An empty
   // pool yields (0, poolSize); a full pool yields (poolSize, poolSize).
-  void getUsedBounds(uint32_t& frontUsedEnd, uint32_t& backUsedBegin) const;
+  // May lazily sync the segment tree.
+  void getUsedBounds(uint32_t& frontUsedEnd, uint32_t& backUsedBegin);
 
   void printRanges() const;
-  void checkRanges() const;
+  void checkRanges();
 
 private:
-  struct Range
+  // Segment-tree leaf granularity. Each leaf summarizes WORDS_PER_LEAF bitmask
+  // words (WORDS_PER_LEAF*64 ids). 4 hits the speed/memory sweet spot across the
+  // pool sizes and count ranges we care about (see id_pool.cpp for details).
+  static constexpr uint32_t WORDS_PER_LEAF = 4;
+  static constexpr uint32_t LEAF_IDS       = WORDS_PER_LEAF * 64;
+
+  static constexpr uint32_t MAX_OCC_LEVELS = 7;  // 64^6 words > 2^32 ids
+
+  // Longest-free-run summary for a span of ids (`len` is implicit from depth):
+  //   pref = free run length at the low edge, suf = at the high edge,
+  //   best = longest free run anywhere in the span.
+  struct Node
   {
-    uint32_t first;
-    uint32_t last;
+    uint32_t pref;
+    uint32_t suf;
+    uint32_t best;
   };
 
-  Range*   m_ranges   = nullptr;  // Sorted array of ranges of free IDs
-  uint32_t m_count    = 0;        // Number of ranges in list
-  uint32_t m_capacity = 0;        // Total capacity of range list
-  uint32_t m_maxID    = 0;        // Highest ID value
-  uint32_t m_usedIDs  = 0;        // Number of IDs in use
+  uint64_t* m_free     = nullptr;  // m_capWords words, 1 == free (padding words are 0)
+  uint32_t  m_cap      = 0;        // number of tree leaves (a power of two)
+  uint32_t  m_capWords = 0;        // allocated bitmask words == m_cap * WORDS_PER_LEAF
+  uint32_t  m_numWords = 0;        // number of words actually covering the pool
+  uint32_t  m_poolSize = 0;        // number of ids
+  uint32_t  m_usedIDs  = 0;        // number of ids in use
 
-  void insertRange(const uint32_t index);
-  void destroyRange(const uint32_t index);
+  // Occupancy hierarchy: level 0 is m_free; level k+1 has one bit per level-k word,
+  // set iff that word holds a free id. Always current; used to find the lowest /
+  // highest free id (count == 1) in O(levels) without the segment tree.
+  uint64_t* m_occStore                 = nullptr;  // storage for summary levels 1..
+  uint64_t* m_occ[MAX_OCC_LEVELS]      = {};       // m_occ[0] == m_free, m_occ[1..] are summaries
+  uint32_t  m_occWords[MAX_OCC_LEVELS] = {};       // words at each level
+  uint32_t  m_occLevels                = 0;
+
+  // The segment tree is a lazily-maintained (and lazily-allocated) cache over
+  // m_free: single-ID ops dirty words without updating it, and a range query
+  // resyncs before reading it. Because these three fields mutate on read-shaped
+  // queries (getUsedBounds, isRangeAvailable), those methods are non-const.
+  Node*    m_tree    = nullptr;  // 2*m_cap nodes; index 1 == root, leaves at [m_cap, 2*m_cap)
+  uint32_t m_dirtyLo = 0;        // dirtied word range [m_dirtyLo, m_dirtyHi];
+  uint32_t m_dirtyHi = 0;        // clean when m_dirtyLo > m_dirtyHi
+
+  static Node computeLeaf(const uint64_t* leafWords);  // summarize WORDS_PER_LEAF words
+  static Node mergeNodes(const Node& a, const Node& b, uint32_t childLen);
+
+  void     moveFrom(IDPool& other) noexcept;
+  void     resetBits();
+  void     buildTree();         // allocate + build the (lazy) segment tree
+  void     rebuildTreeNodes();  // recompute all tree nodes from the bitmask
+  void     bitmaskWrite(uint32_t word, uint64_t newVal);
+  void     occPropagate(uint32_t word, bool becameNonEmpty);
+  uint32_t occLowestFreeID() const;
+  uint32_t occHighestFreeID() const;
+  uint32_t childLenOf(uint32_t nodeIndex) const;
+  void     markDirty(uint32_t firstWord, uint32_t lastWord);
+  void     syncTree();
+  void     updateWords(uint32_t firstWord, uint32_t lastWord);
+  void     setBits(uint32_t id, uint32_t count, bool setFree);
+  bool     anyFreeInRange(uint32_t id, uint32_t count) const;
+  uint32_t descendLeftmost(uint32_t count) const;
+  uint32_t descendRightmost(uint32_t count) const;
+  uint32_t scanLeafLowest(uint32_t leaf, uint32_t count) const;   // lowest run>=count in a leaf's words
+  uint32_t scanLeafHighest(uint32_t leaf, uint32_t count) const;  // highest run>=count in a leaf's words
 };
 
 }  // namespace nvutils
