@@ -43,7 +43,7 @@ public:
   static void init(const char* projectName);
   static void deinit();
 
-  static void pollEvents(); ///< polls events. Non blicking
+  static void pollEvents(); ///< polls events. Non blocking
   static void waitEvents(); ///< wait for events. Will return when at least 1 event happened
 
   static double getTime();  ///< returns time in seconds
