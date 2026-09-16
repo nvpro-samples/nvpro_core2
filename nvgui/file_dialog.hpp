@@ -32,6 +32,12 @@ namespace nvgui {
 std::filesystem::path windowOpenFileDialog(GLFWwindow* glfwin, const char* title, const char* exts);
 // opens a file chooser dialog with an initial directory and returns the path to the selected file, and initialDir is updated to the directory of the selected file
 std::filesystem::path windowOpenFileDialog(GLFWwindow* glfwin, const char* title, const char* exts, std::filesystem::path& initialDir);
+// opens a file chooser dialog with an initial directory and a pre-filled filename; initialDir is updated to the directory of the selected file
+std::filesystem::path windowOpenFileDialog(GLFWwindow*                  glfwin,
+                                           const char*                  title,
+                                           const char*                  exts,
+                                           std::filesystem::path&       initialDir,
+                                           const std::filesystem::path& initialFilename);
 // opens a file save dialog and returns the path to the saved file.
 // Optionally, a default filename can be specified.
 std::filesystem::path windowSaveFileDialog(GLFWwindow*                  glfwin,

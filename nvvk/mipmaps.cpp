@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2014-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -57,11 +57,17 @@ void nvvk::cmdGenerateMipmaps(VkCommandBuffer   cmd,
 
   if(levelCount > 1)
   {
-    // Transfer remaining mips to DST optimal (Src -> Dst)
-    barrier.newLayout                     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    barrier.dstAccessMask                 = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-    barrier.subresourceRange.baseMipLevel = 1;
-    barrier.subresourceRange.levelCount   = VK_REMAINING_MIP_LEVELS;
+    // Transfer remaining mips to DST optimal.
+    barrier = nvvk::makeImageMemoryBarrier({
+        .image            = image,
+        .oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED,
+        .newLayout        = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .subresourceRange = {.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT,
+                             .baseMipLevel   = 1,
+                             .levelCount     = VK_REMAINING_MIP_LEVELS,
+                             .baseArrayLayer = 0,
+                             .layerCount     = layerCount},
+    });
 
     vkCmdPipelineBarrier2(cmd, &depInfo);
   };

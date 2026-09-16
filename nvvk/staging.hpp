@@ -24,6 +24,7 @@
 #include "semaphore.hpp"
 #include "barriers.hpp"
 #include "resource_allocator.hpp"
+#include "uploader_interface.hpp"
 
 //-----------------------------------------------------------------
 // StagingUploader is a class that allows to upload data to the GPU,
@@ -165,7 +166,15 @@ public:
 // We do recommend more sophisticated designs than this, that
 // are tuned for the application need, like per-frame submissions
 // or asynchronous submissions.
-class StagingUploader
+//
+// We intend to deprecate this class, and encourage the use of
+// `nvvk::AsyncUploader` and `nvvk::FrameUploader`.
+// We recognized that the design of this class, where one has
+// to provide the `semaphoreState` for each copy operation
+// before it is performed, to be somewhat unintuitive. Hence
+// the new interfaces do the opposite, they return a state that
+// one can check / wait on for completion.
+class StagingUploader : public CmdUploaderInterface
 {
 public:
   static constexpr VkDeviceSize DEFAULT_LARGE_CHUNK_SIZE = 256ull * 1024 * 1024;
@@ -213,7 +222,7 @@ public:
   // at the acquiring queue before calling this function.
   // Triggers `m_batch.reset(); resetStaging(false);`
   // This call may also flush non-coherently mapped staging buffers when applicable
-  virtual void cmdUploadAppended(VkCommandBuffer cmd);
+  void cmdUploadAppended(VkCommandBuffer cmd) override;
 
   // Clears all pending copy operations and their
   // acquired staging spaces.
@@ -452,7 +461,73 @@ public:
                                  VkImageLayout                   newLayout      = VK_IMAGE_LAYOUT_UNDEFINED,
                                  const SemaphoreState&           semaphoreState = {});
 
+  //////////////////////////////////////////////////////////////////////////
+  // UploaderInterface / CmdUploaderInterface
+  //
+  // The functions above take the SemaphoreState per call, while the interface reports
+  // it back instead. All interface uploads therefore use the state provided through
+  // `setSemaphoreState` and hand that out via their `outSemaphoreState`.
+
+  // Sets the SemaphoreState that all following interface uploads are associated with.
+  // Typically the state of the submit that the `cmdUploadAppended` command buffer ends
+  // up in, so that `releaseStaging` can tell when the staging memory is free again.
+  void                  setSemaphoreState(const SemaphoreState& semaphoreState) { m_semaphoreState = semaphoreState; }
+  const SemaphoreState& getSemaphoreState() const { return m_semaphoreState; }
+
+  // The acquired space stays valid until `cmdUploadAppended` or `cancelAppended`.
+  VkResult acquireMapping(size_t dataSize, nvvk::BufferRange& mappingSpace, MappingHandle& mappingHandle) override;
+  // Neither of these frees the staging buffer, that always happens per batch.
+  // They only invalidate the handle.
+  void commitMapping(MappingHandle& mappingHandle) override;
+  void releaseMapping(MappingHandle& mappingHandle) override;
+
+  // Note: these intentionally don't repeat the interface's default arguments, otherwise
+  // calls to the same-named functions above would become ambiguous.
+  VkResult appendBufferRange(const nvvk::BufferRange& bufferRange, const void* data, nvvk::SemaphoreState* outSemaphoreState) override;
+  VkResult appendBufferRangeMappings(size_t                    rangeCount,
+                                     const MappedBufferRanges* ranges,
+                                     MappingHandle&            mappingHandle,
+                                     bool                      commitMapping_,
+                                     nvvk::SemaphoreState*     outSemaphoreState) override;
+  VkResult appendImageSub(nvvk::Image&                    image,
+                          const VkOffset3D&               offset,
+                          const VkExtent3D&               extent,
+                          const VkImageSubresourceLayers& subresource,
+                          size_t                          dataSize,
+                          const void*                     data,
+                          VkImageLayout                   newLayout,
+                          nvvk::SemaphoreState*           outSemaphoreState) override;
+  VkResult appendImageSubMappings(nvvk::Image&           image,
+                                  size_t                 imageSubCount,
+                                  const MappedImageSubs* imageSubs,
+                                  MappingHandle&         mappingHandle,
+                                  bool                   commitMapping_,
+                                  VkImageLayout          newLayout,
+                                  nvvk::SemaphoreState*  outSemaphoreState) override;
+
 protected:
+  union MappingHandleDetail
+  {
+    uint64_t handle;
+    struct
+    {
+      uint8_t  valid;
+      uint8_t  used;
+      uint16_t reserved;
+      // all staging of a batch is retired together, so the batch acts as the
+      // lifetime of every handle acquired within it
+      uint32_t batchIndex;
+    };
+  };
+
+  inline void getOutSemaphoreState(nvvk::SemaphoreState* out)
+  {
+    if(out != nullptr)
+    {
+      *out = m_semaphoreState;
+    }
+  }
+
   virtual void resetStaging(bool isCancel);
 
   struct StagingResource
@@ -466,8 +541,11 @@ protected:
   size_t                       m_stagingResourcesSize = 0;
   StagingCopyBatch             m_batch;
   size_t                       m_batchStagingCount    = 0;
+  uint32_t                     m_batchIndex           = 0;
   bool                         m_batchRequiresFlush   = false;
   bool                         m_forceCoherentMapping = true;
+  // only used by the UploaderInterface uploads
+  SemaphoreState m_semaphoreState;
 };
 
 }  // namespace nvvk

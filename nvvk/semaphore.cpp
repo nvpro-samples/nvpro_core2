@@ -63,7 +63,19 @@ VkResult SemaphoreState::wait(VkDevice device, uint64_t timeout)
   fixate();
   return static_cast<const SemaphoreState*>(this)->wait(device, timeout);
 }
+
+
 #endif
+
+uint64_t SemaphoreState::getSemaphoreCounterValue(VkDevice device) const
+{
+  assert(m_semaphore);
+
+  // on failure we keep 0, which makes callers treat the timeline as not yet advanced
+  uint64_t currentValue = 0;
+  vkGetSemaphoreCounterValue(device, m_semaphore, &currentValue);
+  return currentValue;
+}
 
 bool SemaphoreState::testSignaled(VkDevice device) const
 {

@@ -138,7 +138,7 @@ BufferSubAllocator::Report BufferSubAllocator::getReport() const
     {
       OffsetAllocator::StorageReport storageReport = offsetAllocator->storageReport();
       report.reservedSize += VkDeviceSize(m_state.internalBlockUnits - storageReport.totalFreeSpace) * m_info.minAlignment;
-      report.freeSize = VkDeviceSize(storageReport.totalFreeSpace) * m_info.minAlignment;
+      report.freeSize += VkDeviceSize(storageReport.totalFreeSpace) * m_info.minAlignment;
     }
     else
     {
@@ -171,6 +171,14 @@ uint32_t BufferSubAllocator::acquireBlockIndex()
   return freeBlockIndex;
 }
 
+void BufferSubAllocator::releaseBlockIndex(uint32_t blockIndex)
+{
+  // nuke it completely and chain into the linked list of empty blocks
+  m_blocks[blockIndex]               = {};
+  m_blocks[blockIndex].nextFreeIndex = m_state.freeBlockIndex;
+  m_state.freeBlockIndex             = blockIndex;
+}
+
 VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkDeviceSize size, uint32_t alignment)
 {
   subAllocation = {};
@@ -186,7 +194,8 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
     return VK_ERROR_OUT_OF_DEVICE_MEMORY;
   }
 
-  m_state.allocatedSize += size;
+  // note: m_state.allocatedSize is only advanced on the success paths below,
+  // so a failed allocation does not permanently eat into m_info.maxAllocatedSize
 
   // if large use a dedicated block
   if(size >= m_info.blockSize)
@@ -217,8 +226,16 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
       alignment = newAlignment;
     }
 
-    Block& block = m_blocks[freeBlockIndex];
-    NVVK_FAIL_RETURN(createNewBuffer(block.buffer, size, std::max(m_info.minAlignment, alignment), freeBlockIndex));
+    Block&         block = m_blocks[freeBlockIndex];
+    const VkResult result =
+        NVVK_FAIL_REPORT(createNewBuffer(block.buffer, size, std::max(m_info.minAlignment, alignment), freeBlockIndex));
+    if(result != VK_SUCCESS)
+    {
+      // createBuffer may have gotten partway, and releaseBlockIndex drops the Block
+      m_info.resourceAllocator->destroyBuffer(block.buffer);
+      releaseBlockIndex(freeBlockIndex);
+      return result;
+    }
 
     subAllocation.m_allocation.offset   = 0;
     subAllocation.m_allocation.metadata = OffsetAllocator::Allocation::NO_SPACE;
@@ -228,6 +245,8 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
 #if !defined(NDEBUG) && !defined(NVVK_DISABLE_BUFFER_SUB_ALLOCATOR_DEBUG_POINTER)
     subAllocation.m_allocator = this;
 #endif
+
+    m_state.allocatedSize += size;
 
     // dedicated blocks are _not_ thrown into the active block list (m_activeBlockIndex)
 
@@ -276,6 +295,8 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
       subAllocation.m_allocator = this;
 #endif
 
+      m_state.allocatedSize += size;
+
       return VK_SUCCESS;
     }
 
@@ -297,8 +318,17 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
 
     Block& block = m_blocks[freeBlockIndex];
     block.offsetAllocator = std::make_unique<OffsetAllocator::Allocator>(m_state.internalBlockUnits, m_info.perBlockAllocations);
-    NVVK_FAIL_RETURN(createNewBuffer(block.buffer, VkDeviceSize(m_state.internalBlockUnits) * m_info.minAlignment,
-                                     m_info.minAlignment, freeBlockIndex));
+    const VkResult result =
+        NVVK_FAIL_REPORT(createNewBuffer(block.buffer, VkDeviceSize(m_state.internalBlockUnits) * m_info.minAlignment,
+                                         m_info.minAlignment, freeBlockIndex));
+    if(result != VK_SUCCESS)
+    {
+      // not inserted into the active block list yet, so it is enough to hand the index back
+      // createBuffer may have gotten partway, and releaseBlockIndex drops the Block
+      m_info.resourceAllocator->destroyBuffer(block.buffer);
+      releaseBlockIndex(freeBlockIndex);
+      return result;
+    }
 
     // insert block into active block list
     if(m_state.activeBlockIndex != INVALID_BLOCK_INDEX)
@@ -326,6 +356,8 @@ VkResult BufferSubAllocator::subAllocate(BufferSubAllocation& subAllocation, VkD
 #if !defined(NDEBUG) && !defined(NVVK_DISABLE_BUFFER_SUB_ALLOCATOR_DEBUG_POINTER)
       subAllocation.m_allocator = this;
 #endif
+
+      m_state.allocatedSize += size;
 
       return VK_SUCCESS;
     }

@@ -100,8 +100,19 @@ public:
     return int(parse(std::span((const char**)argv, argc), skipExe, filenameBasePath));
   }
 
-  // Returning whether a parameter with the given `name` was successfully parsed by this parser
+  // Returning whether a parameter with the given `name` was successfully parsed since the last
+  // `clearWasParsed()`. Does not auto-clear at the start of `parse()` due to nested calling.
+  // `ParameterSequencer` clears before each SEQUENCE so `wasParsed` can be polled for that block alone.
   bool wasParsed(const std::string& name) const { return m_wasParsed.find(name) != m_wasParsed.end(); }
+
+  // Clears the set used by `wasParsed()`. Call after consuming a parse pass, or before a new one
+  // that should be queried independently.
+  void clearWasParsed() { m_wasParsed.clear(); }
+
+  // Optional, invoked after every successful parse (command line, config file, or sequence) in
+  // addition to `ParameterBase::Info::callbackSuccess`. Useful when many parameters share one
+  // reaction rather than each registering its own callback.
+  void setSuccessCallback(ParameterBase::CallbackSuccess callback);
 
   static std::filesystem::path getFilename(const std::filesystem::path& filenameBasePath, const std::filesystem::path& arg);
 
@@ -136,6 +147,8 @@ private:
 
   const ParameterBase* findViaExtension(const std::string& arg) const;
 
+  void markParsed(const ParameterBase* parameter);
+
   // verbose logging
   bool m_verbose{};
   // map with keywords from parameters
@@ -149,8 +162,9 @@ private:
   // linear list of added parameters used for printing the help in order
   std::vector<const ParameterBase*> m_parsedParameters;
 
-  // names of parameters successfully parsed during this parser's lifetime (see `wasParsed()`)
+  // names of parameters successfully parsed since the last `clearWasParsed()` (see `wasParsed()`)
   std::unordered_set<std::string> m_wasParsed;
+  ParameterBase::CallbackSuccess  m_successCallback{};
 
   // used for the built-in parameters (configfile,help)
   ParameterRegistry m_builtinRegistry;

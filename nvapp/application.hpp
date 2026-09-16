@@ -20,10 +20,13 @@
 #pragma once
 #include <vulkan/vulkan_core.h>
 
+#include <chrono>
 #include <functional>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <glm/vec2.hpp>
 #include <imgui/imgui.h>
@@ -123,10 +126,15 @@ struct IAppElement
   virtual void onAttach(Application* app) {}                             // Called once at start
   virtual void onDetach() {}                                             // Called before destroying the application
   virtual void onResize(VkCommandBuffer cmd, const VkExtent2D& size) {}  // Called when the viewport size is changing
-  virtual void onUIRender() {}                                           // Called for anything related to UI
-  virtual void onUIMenu() {}                                             // This is the menubar to create
+  // Keeps non-render application work responsive before an application loop can skip drawing.
+  virtual void onUpdate() {}                     // Called once per application loop, before any render early-out
+  virtual void onUIRender() {}                   // Called for anything related to UI
+  virtual void onUIMenu() {}                     // This is the menubar to create
   virtual void onPreRender() {}                  // called post onUIRender and prior onRender (looped over all elements)
   virtual void onRender(VkCommandBuffer cmd) {}  // For anything to render within a frame
+  // Called after submission and before presentation takes ownership. Consumers
+  // that read pixels on the CPU must wait for the submission to complete.
+  virtual void onPostRender() {}
   virtual void onFileDrop(const std::filesystem::path& filename) {}  // For when a file is dragged on top of the window
   virtual void onLastHeadlessFrame() {};  // Called at the end of the last frame in headless mode
 
@@ -160,7 +168,7 @@ struct ApplicationCreateInfo
 
   // Headless
   bool     headless{false};        // Run without a window
-  uint32_t headlessFrameCount{1};  // Frames to render in headless mode
+  uint32_t headlessFrameCount{1};  // Frames to render in headless mode; 0 runs until close()
 
   // Swapchain
   // VK_PRESENT_MODE_MAX_ENUM_KHR means no preference
@@ -199,6 +207,11 @@ public:
   bool     isHeadless() const { return m_headless; }                        // Return true if headless
   void     setRenderWhileMinimized(bool v) { m_renderWhileMinimized = v; }  // Continue rendering when minimized
   uint32_t getHeadlessFrameCount() const { return m_headlessFrameCount; }   // Number of frames to render in headless
+
+  // Sets how long frame preparation waits for a presentable image. The default
+  // is nanoseconds::max(), which maps to Vulkan's infinite acquire timeout.
+  void                     setSwapchainAcquireTimeout(std::chrono::nanoseconds timeout);
+  std::chrono::nanoseconds getSwapchainAcquireTimeout() const;
 
   // Swapchain format control
   void setPreferredSurfaceFormat(VkSurfaceFormatKHR format);  // Set preferred surface format and request rebuild
@@ -261,51 +274,54 @@ public:
   // frame cycle loop (so that ImGui has time to clear the menu).
   void requestScreenShot(const std::filesystem::path& filename, int quality = 90);
 
-  // Immediately saves the current swapchain image, using a temporary command buffer
-  // submitted on the primary queue. Implicitly calls `saveImageToFile`.
-  void saveScreenShot(const std::filesystem::path& filename, int quality = 90);
+  // Saves the current swapchain image. Windowed only; transfer-source usage
+  // must be active, and this may only be called after submission and before
+  // presentation. Use requestScreenShot() outside that frame phase.
+  VkResult saveScreenShot(const std::filesystem::path& filename, int quality = 90);
+
+  // Returns an RGBA8 PNG of the current swapchain image in pngData. Windowed
+  // only; the same usage and frame-phase restrictions as saveScreenShot apply.
+  VkResult encodeScreenShotToPng(std::vector<uint8_t>& pngData);
 
   // Saves a VkImage to a file, blitting it to RGBA8 (default) or RGBA32F (.hdr) format along the way.
   // Calls vkDeviceWaitIdle prior saving the image.
   // The `srcLayout` must be the current imageLayout when this operation is executed.
   // The saving is done using a temporary command buffer on the primary queue and vkDeviceWaitIdle will
   // be called in advance.
-  void saveImageToFile(VkImage                      srcImage,
-                       VkExtent2D                   srcSize,
-                       const std::filesystem::path& filename,
-                       int                          quality   = 100,
-                       VkImageLayout                srcLayout = VK_IMAGE_LAYOUT_GENERAL);
+  VkResult saveImageToFile(VkImage                      srcImage,
+                           VkExtent2D                   srcSize,
+                           const std::filesystem::path& filename,
+                           int                          quality   = 100,
+                           VkImageLayout                srcLayout = VK_IMAGE_LAYOUT_GENERAL);
 
 
 protected:
-  VkResult        initGlfw(ApplicationCreateInfo& info);
-  static void     centerOnPrimaryMonitor(const glm::ivec2& winSize, glm::ivec2& winPos);
-  VkResult        createTransientCommandPool();
-  VkResult        createFrameSubmission(uint32_t numFrames);
-  VkResult        createDescriptorPool();
-  void            onViewportSizeChange(VkExtent2D size);
-  void            headlessRun();
-  VkCommandBuffer beginCommandRecording();
-  void            addSwapchainSemaphores();
-  void            drawFrame(VkCommandBuffer cmd);
-  void            renderToSwapchain(VkCommandBuffer cmd);
-  bool            prepareFrameResources();
-  void            endFrame(VkCommandBuffer cmd, uint32_t frameInFlights);
-  void            presentFrame();
-  void            advanceFrame(uint32_t frameInFlights);
-  void            waitForFrameCompletion() const;
-  void            beginDynamicRenderingToSwapchain(VkCommandBuffer cmd);
-  void            endDynamicRenderingToSwapchain(VkCommandBuffer cmd);
-  void            resetFreeQueue(uint32_t size);
-  void            freeResourcesQueue();
-  void            setupImguiDock();
-  void            prepareFrameToSignal(int32_t numFramesInFlight);
-  void            testAndSetWindowSizeAndPos(const glm::uvec2& winSize);
-  bool            isWindowPosValid(const glm::ivec2& winPos);
-  void            initializeImGuiContextAndSettings();
-  void            setupImGuiVulkanBackend(ImGuiConfigFlags configFlags);
-
-
+  VkResult                                  initGlfw(ApplicationCreateInfo& info);
+  static void                               centerOnPrimaryMonitor(const glm::ivec2& winSize, glm::ivec2& winPos);
+  VkResult                                  createTransientCommandPool();
+  VkResult                                  createFrameSubmission(uint32_t numFrames);
+  VkResult                                  createDescriptorPool();
+  void                                      onViewportSizeChange(VkExtent2D size);
+  void                                      headlessRun();
+  VkCommandBuffer                           beginCommandRecording();
+  void                                      addSwapchainSemaphores();
+  void                                      drawFrame(VkCommandBuffer cmd);
+  void                                      renderToSwapchain(VkCommandBuffer cmd);
+  bool                                      prepareFrameResources();
+  void                                      endFrame(VkCommandBuffer cmd, uint32_t frameInFlights);
+  void                                      presentFrame();
+  void                                      advanceFrame(uint32_t frameInFlights);
+  void                                      waitForFrameCompletion() const;
+  void                                      beginDynamicRenderingToSwapchain(VkCommandBuffer cmd);
+  void                                      endDynamicRenderingToSwapchain(VkCommandBuffer cmd);
+  void                                      resetFreeQueue(uint32_t size);
+  void                                      freeResourcesQueue();
+  void                                      setupImguiDock();
+  void                                      prepareFrameToSignal(int32_t numFramesInFlight);
+  void                                      testAndSetWindowSizeAndPos(const glm::uvec2& winSize);
+  bool                                      isWindowPosValid(const glm::ivec2& winPos);
+  void                                      initializeImGuiContextAndSettings();
+  void                                      setupImGuiVulkanBackend(ImGuiConfigFlags configFlags);
   std::vector<std::shared_ptr<IAppElement>> m_elements;  // List of application elements to be called
 
   bool        m_useMenubar{true};   // Will use a menubar
@@ -367,6 +383,9 @@ protected:
   int      m_screenShotQuality   = 0;
   std::filesystem::path m_screenShotFilename;
   bool                  m_useFrameBoundary{false};  // Enables VK_EXT_frame_boundary markers; extension must be enabled.
+
+  // Timeout passed to vkAcquireNextImageKHR. UINT64_MAX waits indefinitely.
+  uint64_t m_swapchainAcquireTimeout{std::numeric_limits<uint64_t>::max()};
 
   // Use for persist the data
   nvgui::SettingsHandler m_settingsHandler;

@@ -1,0 +1,33 @@
+diff --git a/src/mcp_server.cpp b/src/mcp_server.cpp
+index 6b5c9d9..9620161 100644
+--- a/src/mcp_server.cpp
++++ b/src/mcp_server.cpp
+@@ -51,0 +52,10 @@ server::server(const server::configuration& conf)
++
++    http_server_->set_socket_options([](socket_t socket) {
++        httplib::detail::set_socket_opt(socket, SOL_SOCKET,
++        #ifdef _WIN32
++            SO_EXCLUSIVEADDRUSE,
++        #else
++            SO_REUSEADDR,
++        #endif
++            1);
++    });
+@@ -163,0 +174,7 @@ bool server::start(bool blocking) {
++    // Bind before starting any worker threads so startup failures are reported
++    // synchronously and do not leave joinable threads behind.
++    if (!http_server_->bind_to_port(host_.c_str(), port_)) {
++        LOG_ERROR("Failed to bind server to ", host_, ":", port_);
++        return false;
++    }
++
+@@ -195 +212 @@ bool server::start(bool blocking) {
+-        if (!http_server_->listen(host_.c_str(), port_)) {
++        if (!http_server_->listen_after_bind()) {
+@@ -202,0 +220 @@ bool server::start(bool blocking) {
++        running_ = true;
+@@ -205 +223 @@ bool server::start(bool blocking) {
+-            if (!http_server_->listen(host_.c_str(), port_)) {
++            if (!http_server_->listen_after_bind()) {
+@@ -211 +228,0 @@ bool server::start(bool blocking) {
+-        running_ = true;

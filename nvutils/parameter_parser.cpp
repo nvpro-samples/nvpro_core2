@@ -22,6 +22,7 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <utility>
 
 #include <fmt/ranges.h>
 
@@ -180,6 +181,19 @@ void ParameterParser::add(const ParameterRegistry& registry, uint32_t visibility
   {
     if(param->info.visibility & visibilityMask)
       add(param);
+  }
+}
+
+void ParameterParser::markParsed(const ParameterBase* parameter)
+{
+  m_wasParsed.insert(parameter->info.name);
+  if(parameter->info.callbackSuccess)
+  {
+    parameter->info.callbackSuccess(parameter);
+  }
+  if(m_successCallback)
+  {
+    m_successCallback(parameter);
   }
 }
 
@@ -353,12 +367,7 @@ size_t ParameterParser::parse(std::span<const char* const> args,
 
         if(success)
         {
-          m_wasParsed.insert(parameter.info.name);
-
-          if(parameter.info.callbackSuccess)
-          {
-            parameter.info.callbackSuccess(&parameter);
-          }
+          markParsed(&parameter);
         }
 
         if(m_verbose && success)
@@ -411,12 +420,7 @@ size_t ParameterParser::parse(std::span<const char* const> args,
 
         if(success)
         {
-          m_wasParsed.insert(parameter->info.name);
-
-          if(parameter->info.callbackSuccess)
-          {
-            parameter->info.callbackSuccess(parameter);
-          }
+          markParsed(parameter);
         }
         if(m_verbose)
         {
@@ -444,6 +448,11 @@ size_t ParameterParser::parse(std::span<const char* const> args,
   }
 
   return args.size();
+}
+
+void ParameterParser::setSuccessCallback(ParameterBase::CallbackSuccess callback)
+{
+  m_successCallback = std::move(callback);
 }
 
 std::filesystem::path ParameterParser::getFilename(const std::filesystem::path& filenameBasePath, const std::filesystem::path& arg)
@@ -644,4 +653,13 @@ static void usage_ParameterParser()
 
   // blah would be clamped to 10
   // filename would be set to "/somedirectory/test.jpg"
+
+  // `wasParsed` is sticky until `clearWasParsed()`.
+  if(parser.wasParsed("blah"))
+  {
+    parser.clearWasParsed();
+  }
+
+  // Alternatively, one callback for every successful parse instead of per-parameter hooks:
+  parser.setSuccessCallback([](const nvutils::ParameterBase* const parameter) { (void)parameter; });
 }

@@ -255,10 +255,11 @@ float henyeyGreensteinPdf(float cosTheta, float g)
 #define LOBE_DIFFUSE_TRANSMISSION 6
 #define LOBE_COUNT 7
 
-// Helper function to check if a lobe is a reflection lobe (as opposed to a transmission lobe).
-bool isReflectionLobe(int lobe)
+// KHR_materials_retroreflection (MRM) excludes transmission, clearcoat, and sheen from the
+// mirrored-V blend -- only the base metal/dielectric specular lobes participate.
+bool isRetroreflectionLobe(int lobe)
 {
-  return lobe != LOBE_SPECULAR_TRANSMISSION && lobe != LOBE_DIFFUSE_TRANSMISSION;
+  return lobe == LOBE_DIFFUSE_REFLECTION || lobe == LOBE_SPECULAR_REFLECTION || lobe == LOBE_METAL_REFLECTION;
 }
 
 // The Fresnel factor depends on the cosine between the view vector k1 and the
@@ -1123,8 +1124,9 @@ void bsdfEvaluate(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data, PbrMaterial mat)
   // Evaluate forward directly into the output; no dForward copy.
   const int   lobe  = bsdfEvaluateCore(data, mat);
   const float blend = mat.retroreflection;
-  // Portsmouth et al. Sec. 5 / MaterialX: MRM applies to reflection lobes only; keep regular BTDF.
-  if(blend > 0.0f && isReflectionLobe(lobe))
+  // Portsmouth et al. Sec. 5 / MaterialX: MRM applies to the base specular lobes only; keep
+  // regular BTDF, clearcoat, and sheen unaffected.
+  if(blend > 0.0f && isRetroreflectionLobe(lobe))
   {
     bsdfEvaluateRetroreflectionBlend(data, mat, blend);
   }
@@ -1233,14 +1235,16 @@ There are two things you should check after calling this function:
 -------------------------------------------------------------------------------------------------*/
 void bsdfSample(NVSHADERS_INOUT_TYPE(BsdfSampleData) data, PbrMaterial mat)
 {
-  // Select lobe with the forward view direction, then optionally apply MRM only on reflection lobes.
+  // Select lobe with the forward view direction, then optionally apply MRM only on
+  // retroreflection-eligible lobes (see isRetroreflectionLobe: diffuse/specular/metal
+  // reflection, not transmission, clearcoat, or sheen).
   float3 tint  = mat.baseColor;
   float  VdotN = dot(data.k1, mat.N);
   int    lobe  = findLobe(mat, VdotN, data.xi.z, tint);
 
   float       pathProb = 1.0f;
   const float blend    = mat.retroreflection;
-  const bool  hasRetro = blend > 0.0f && isReflectionLobe(lobe);
+  const bool  hasRetro = blend > 0.0f && isRetroreflectionLobe(lobe);
   if(hasRetro)
   {
     data.xi.z = rerandomize(data.xi.z);

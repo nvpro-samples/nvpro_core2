@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 *
-* SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+* SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 * SPDX-License-Identifier: Apache-2.0
 */
 
@@ -109,7 +109,8 @@ public:
 
   // The main function to call every frame while the sequencer wasn't completed.
   // This function triggers the parameter parsing of the next sequence within the sequence
-  // script.
+  // script. Each SEQUENCE starts with `ParameterParser::clearWasParsed()` so `wasParsed()` reflects
+  // only that block.
   // When a previous sequence completed it will query the profiler for a string of the statistics in
   // `full` detail mode and the log them via `LogLevel::eSTATS
   //

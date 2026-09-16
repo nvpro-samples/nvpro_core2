@@ -22,6 +22,10 @@
 #include <volk/volk.h>
 
 #include <GLFW/glfw3.h>
+#ifdef _WIN32
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#endif
 #undef APIENTRY
 
 #include <backends/imgui_impl_glfw.h>
@@ -234,8 +238,42 @@ VkResult nvapp::Application::initGlfw(ApplicationCreateInfo& info)
   glfwSetWindowSize(m_windowHandle, m_windowSize.width, m_windowSize.height);  // Sets the size of the window using the DPI scaling
   glfwSetWindowPos(m_windowHandle, m_winPos.x, m_winPos.y);
 
-  // Create the window surface
-  NVVK_FAIL_RETURN(glfwCreateWindowSurface(m_instance, m_windowHandle, nullptr, reinterpret_cast<VkSurfaceKHR*>(&m_surface)));
+  // Create the window surface. Streamline needs it created through its own
+  // vkCreateWin32SurfaceKHR proxy: that is where SL learns the app's window,
+  // and without it swapchain creation fails outright. Falls back to GLFW when
+  // SL is not loaded; NVAPP_SL_SURFACE_PROXY=0 forces the GLFW path.
+  bool slSurfaceDone = false;
+#ifdef _WIN32
+  const char* slSurfaceEnv = std::getenv("NVAPP_SL_SURFACE_PROXY");
+  if(slSurfaceEnv == nullptr || (slSurfaceEnv[0] != '0' && slSurfaceEnv[0] != 0))
+  {
+    if(HMODULE slModule = GetModuleHandleA("sl.interposer.dll"))
+    {
+      const PFN_vkCreateWin32SurfaceKHR slCreateWin32Surface =
+          reinterpret_cast<PFN_vkCreateWin32SurfaceKHR>(GetProcAddress(slModule, "vkCreateWin32SurfaceKHR"));
+      if(slCreateWin32Surface != nullptr)
+      {
+        const VkWin32SurfaceCreateInfoKHR surfaceCreateInfo{.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
+                                                            .hinstance = GetModuleHandleA(nullptr),
+                                                            .hwnd      = glfwGetWin32Window(m_windowHandle)};
+        if(VK_SUCCESS
+           == NVVK_FAIL_REPORT(slCreateWin32Surface(m_instance, &surfaceCreateInfo, nullptr,
+                                                    reinterpret_cast<VkSurfaceKHR*>(&m_surface))))
+        {
+          slSurfaceDone = true;
+        }
+        else
+        {
+          LOGW("Application::initGlfw(): Streamline vkCreateWin32SurfaceKHR proxy failed; falling back to GLFW.\n");
+        }
+      }
+    }
+  }
+#endif
+  if(!slSurfaceDone)
+  {
+    NVVK_FAIL_RETURN(glfwCreateWindowSurface(m_instance, m_windowHandle, nullptr, reinterpret_cast<VkSurfaceKHR*>(&m_surface)));
+  }
   NVVK_DBG_NAME(m_surface);
 
   // Set the Drop callback
@@ -258,6 +296,11 @@ void nvapp::Application::deinit()
     glfwGetWindowPos(m_windowHandle, &m_winPos.x, &m_winPos.y);
   }
 
+  // Deferred frees can capture allocator/tracker state owned by application elements. Drain them
+  // while every element is still attached; otherwise an element may destroy its allocator in
+  // onDetach() before resetFreeQueue() invokes one of its pending callbacks.
+  resetFreeQueue(0);
+
   // This will call the onDetach of the elements
   for(std::shared_ptr<IAppElement>& e : m_elements)
   {
@@ -274,9 +317,9 @@ void nvapp::Application::deinit()
   // Destroy the elements
   m_elements.clear();
 
+  // A callback submitted during onDetach executes immediately while the queue has size zero. Keep a
+  // final drain as a defensive cleanup before destroying application-owned Vulkan state.
   NVVK_CHECK(vkDeviceWaitIdle(m_device));
-
-  // Clean pending
   resetFreeQueue(0);
 
   // ImGui cleanup
@@ -318,6 +361,20 @@ void nvapp::Application::addElement(const std::shared_ptr<IAppElement>& layer)
 {
   m_elements.emplace_back(layer);
   layer->onAttach(this);
+}
+
+void nvapp::Application::setSwapchainAcquireTimeout(std::chrono::nanoseconds timeout)
+{
+  assert(timeout >= std::chrono::nanoseconds::zero());
+  m_swapchainAcquireTimeout = timeout == std::chrono::nanoseconds::max() ? std::numeric_limits<uint64_t>::max() :
+                                                                           static_cast<uint64_t>(timeout.count());
+}
+
+std::chrono::nanoseconds nvapp::Application::getSwapchainAcquireTimeout() const
+{
+  return m_swapchainAcquireTimeout == std::numeric_limits<uint64_t>::max() ?
+             std::chrono::nanoseconds::max() :
+             std::chrono::nanoseconds(m_swapchainAcquireTimeout);
 }
 
 void nvapp::Application::setVsync(bool v)
@@ -416,6 +473,13 @@ void nvapp::Application::run()
       }
     }
 
+    // Run non-render application work before the minimized early-out so services
+    // waiting on the application thread can complete without forcing a frame.
+    for(std::shared_ptr<IAppElement>& e : m_elements)
+    {
+      e->onUpdate();
+    }
+
     // Skip rendering when minimized (unless we need to keep rendering for external presenters)
     if(glfwGetWindowAttrib(m_windowHandle, GLFW_ICONIFIED) == GLFW_TRUE && !m_renderWhileMinimized)
     {
@@ -472,6 +536,13 @@ void nvapp::Application::run()
       renderToSwapchain(cmd);    // Render ImGui to swapchain
       addSwapchainSemaphores();  // Setup synchronization
       endFrame(cmd, m_swapchain.getFramesInFlight());
+
+      // This is the last application-owned point for the submitted image.
+      // Consumers that read it on the CPU synchronize before accessing it.
+      for(std::shared_ptr<IAppElement>& e : m_elements)
+      {
+        e->onPostRender();
+      }
 
       // Handle Screenshot Requests here: capture the composited frame while the swapchain image is still
       // ACQUIRED (after endFrame, before presentFrame). Doing this at the top of the loop would transition
@@ -625,7 +696,7 @@ bool nvapp::Application::prepareFrameResources()
 
   waitForFrameCompletion();  // Wait until GPU has finished processing
 
-  VkResult result = m_swapchain.acquireNextImage(m_device);
+  VkResult result = m_swapchain.acquireNextImage(m_device, m_swapchainAcquireTimeout);
   return (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR);  // Continue only if we got a valid image
 }
 
@@ -770,7 +841,7 @@ void nvapp::Application::waitForFrameCompletion() const
       .pSemaphores    = &m_frameTimelineSemaphore,
       .pValues        = &m_frameData[m_frameRingCurrent].frameNumber,
   };
-  vkWaitSemaphores(m_device, &waitInfo, std::numeric_limits<uint64_t>::max());
+  NVVK_CHECK(vkWaitSemaphores(m_device, &waitInfo, std::numeric_limits<uint64_t>::max()));
 }
 
 
@@ -855,9 +926,15 @@ void nvapp::Application::headlessRun()
     ImGui::EndFrame();
   }
 
-  // Rendering n-times the scene
-  for(uint32_t frameID = 0; frameID < m_headlessFrameCount && !m_headlessClose; frameID++)
+  // Rendering n-times the scene. A zero count keeps a headless application
+  // alive for an external controller until close() is requested.
+  for(uint32_t frameID = 0; (m_headlessFrameCount == 0 || frameID < m_headlessFrameCount) && !m_headlessClose; frameID++)
   {
+    for(std::shared_ptr<IAppElement>& e : m_elements)
+    {
+      e->onUpdate();
+    }
+
     ImGui_ImplVulkan_NewFrame();
     ImGui::NewFrame();  // Even if isn't directly used, helps advancing time if query
 
@@ -868,7 +945,11 @@ void nvapp::Application::headlessRun()
     VkCommandBuffer cmd = beginCommandRecording();  // Start the command buffer
     drawFrame(cmd);                                 // Call onUIRender() and onRender() for each element
     endFrame(cmd, getFrameCycleSize());             // End the frame and submit it
-    advanceFrame(getFrameCycleSize());              // Advance to the next frame in the ring buffer
+    for(std::shared_ptr<IAppElement>& e : m_elements)
+    {
+      e->onPostRender();
+    }
+    advanceFrame(getFrameCycleSize());  // Advance to the next frame in the ring buffer
 
     ImGui::EndFrame();
   }
@@ -1063,39 +1144,10 @@ void nvapp::Application::setupImGuiVulkanBackend(ImGuiConfigFlags configFlags)
 }
 
 
-void nvapp::Application::saveImageToFile(VkImage srcImage, VkExtent2D srcSize, const std::filesystem::path& filename, int quality, VkImageLayout srcLayout)
+VkResult nvapp::Application::saveImageToFile(VkImage srcImage, VkExtent2D srcSize, const std::filesystem::path& filename, int quality, VkImageLayout srcLayout)
 {
-  VkDevice         device         = m_device;
-  VkPhysicalDevice physicalDevice = m_physicalDevice;
-  VkImage          dstImage       = {};
-  VkDeviceMemory   dstImageMemory = {};
-
-  vkDeviceWaitIdle(m_device);
-
-  VkCommandBuffer cmd = createTempCmdBuffer();
-
-  VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
-  if(filename.extension() == ".hdr")
-  {
-    format = VK_FORMAT_R32G32B32A32_SFLOAT;
-  }
-  VkResult result = nvvk::imageToLinear(cmd, device, physicalDevice, srcImage, srcSize, dstImage, dstImageMemory, format, srcLayout);
-  submitAndWaitTempCmdBuffer(cmd);
-
-  if(result == VK_SUCCESS)
-  {
-    result = nvvk::saveImageToFile(device, dstImage, dstImageMemory, srcSize, filename, quality);
-  }
-
-  // Clean up resources
-  if(dstImage)
-  {
-    vkDestroyImage(m_device, dstImage, nullptr);
-  }
-  if(dstImageMemory)
-  {
-    vkFreeMemory(m_device, dstImageMemory, nullptr);
-  }
+  return nvvk::saveImageToFile(m_device, m_physicalDevice, m_transientCmdPool, m_queues[0].queue, srcImage, srcSize,
+                               filename, quality, srcLayout);
 }
 
 
@@ -1103,6 +1155,11 @@ void nvapp::Application::saveImageToFile(VkImage srcImage, VkExtent2D srcSize, c
 // frame cycle loop (so that ImGui has time to clear the menu).
 void nvapp::Application::requestScreenShot(const std::filesystem::path& filename, int quality)
 {
+  if(m_headless)
+  {
+    LOGE("Screenshot capture requires a windowed application\n");
+    return;
+  }
   m_screenShotRequested = true;
   m_screenShotFilename  = filename;
   // Making sure the screenshot is taken after the swapchain loop (remove the menu after click)
@@ -1111,12 +1168,33 @@ void nvapp::Application::requestScreenShot(const std::filesystem::path& filename
 }
 
 // Save the current swapchain image to a file
-void nvapp::Application::saveScreenShot(const std::filesystem::path& filename, int quality)
+VkResult nvapp::Application::saveScreenShot(const std::filesystem::path& filename, int quality)
 {
+  if(m_headless)
+  {
+    LOGE("Screenshot capture requires a windowed application\n");
+    return VK_ERROR_FEATURE_NOT_PRESENT;
+  }
+
   VkExtent2D size     = m_windowSize;
   VkImage    srcImage = m_swapchain.getImage();
 
-  saveImageToFile(srcImage, size, filename, quality, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+  return saveImageToFile(srcImage, size, filename, quality, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+}
+
+VkResult nvapp::Application::encodeScreenShotToPng(std::vector<uint8_t>& pngData)
+{
+  pngData.clear();
+  if(m_headless)
+  {
+    LOGE("Screenshot capture requires a windowed application\n");
+    return VK_ERROR_FEATURE_NOT_PRESENT;
+  }
+
+  const VkExtent2D size     = m_windowSize;
+  const VkImage    srcImage = m_swapchain.getImage();
+  return nvvk::encodeImageToPng(m_device, m_physicalDevice, m_transientCmdPool, m_queues[0].queue, srcImage, size,
+                                pngData, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 }
 
 

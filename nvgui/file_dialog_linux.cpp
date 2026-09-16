@@ -136,6 +136,29 @@ std::filesystem::path nvgui::windowOpenFileDialog(struct GLFWwindow* glfwin, con
   return result;
 }
 
+std::filesystem::path nvgui::windowOpenFileDialog(struct GLFWwindow*           glfwin,
+                                                  const char*                  title,
+                                                  const char*                  exts,
+                                                  std::filesystem::path&       initialDir,
+                                                  const std::filesystem::path& initialFilename)
+{
+  [[maybe_unused]] Window hwnd = glfwGetX11Window(glfwin);
+
+  std::vector<std::string> filterArgs = toFilterArgs(exts);
+  std::string              initialPath =
+      !initialFilename.empty() ? initialFilename.string() : (initialDir.empty() ? "." : initialDir.string());
+  std::vector<std::string> resultVector = open_file(title, initialPath, filterArgs).result();
+  assert(resultVector.size() <= 1);
+  std::filesystem::path result = resultVector.empty() ? "" : std::move(resultVector[0]);
+
+  if(!result.empty())
+  {
+    initialDir = result.parent_path();
+  }
+
+  return result;
+}
+
 std::filesystem::path nvgui::windowSaveFileDialog(struct GLFWwindow*           glfwin,
                                                   const char*                  title,
                                                   const char*                  exts,

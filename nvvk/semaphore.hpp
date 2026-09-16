@@ -127,6 +127,14 @@ public:
     }
   }
 
+  inline uint64_t getTimelineValueFixated()
+  {
+#ifndef NVVK_DISABLE_DYNAMIC_SEMAPHORE_STATE
+    fixate();
+#endif
+    return getTimelineValue();
+  }
+
 #ifndef NVVK_DISABLE_DYNAMIC_SEMAPHORE_STATE
   // this function can be called only once and is only legal for
   // dynamic semaphore state
@@ -153,6 +161,8 @@ public:
 
   VkResult wait(VkDevice device, uint64_t timeout) const;
   VkResult wait(VkDevice device, uint64_t timeout);
+
+  uint64_t getSemaphoreCounterValue(VkDevice) const;
 
   bool testSignaled(VkDevice device) const;
   bool testSignaled(VkDevice device);
@@ -209,36 +219,48 @@ private:
 struct SemaphoreStateSignalCache
 {
   VkSemaphore semaphore{};
-  uint64_t    timelineValue = ~0;
-  bool        signaled      = false;
+  // last observed counter of `semaphore`, the timeline is monotonic, so
+  // anything at or below this value is signaled.
+  // Note we deliberately never re-query a semaphore we already have, a counter
+  // that advances mid-loop is not observed. Callers scan their arrays from
+  // oldest to newest, so refreshing would cost a query per pending entry.
+  uint64_t timelineValue = 0;
 
   inline bool testSignaled(VkDevice device, const SemaphoreState& semaphoreState)
   {
-    if(semaphore == semaphoreState.getSemaphore() && timelineValue == semaphoreState.getTimelineValue())
+    // a value of 0 means the state's submit is still pending
+    const uint64_t value = semaphoreState.getTimelineValue();
+    if(value == 0)
     {
-      return signaled;
+      return false;
     }
 
-    semaphore     = semaphoreState.getSemaphore();
-    timelineValue = semaphoreState.getTimelineValue();
-    signaled      = semaphoreState.testSignaled(device);
+    if(semaphore != semaphoreState.getSemaphore())
+    {
+      semaphore     = semaphoreState.getSemaphore();
+      timelineValue = semaphoreState.getSemaphoreCounterValue(device);
+    }
 
-    return signaled;
+    return timelineValue >= value;
   }
 #ifndef NVVK_DISABLE_DYNAMIC_SEMAPHORE_STATE
   // semaphore state has an optimization for non-const testing
   inline bool testSignaled(VkDevice device, SemaphoreState& semaphoreState)
   {
-    if(semaphore == semaphoreState.getSemaphore() && timelineValue == semaphoreState.getTimelineValue())
+    // a value of 0 means the state's submit is still pending
+    const uint64_t value = semaphoreState.getTimelineValueFixated();
+    if(value == 0)
     {
-      return signaled;
+      return false;
     }
 
-    semaphore     = semaphoreState.getSemaphore();
-    timelineValue = semaphoreState.getTimelineValue();
-    signaled      = semaphoreState.testSignaled(device);
+    if(semaphore != semaphoreState.getSemaphore())
+    {
+      semaphore     = semaphoreState.getSemaphore();
+      timelineValue = semaphoreState.getSemaphoreCounterValue(device);
+    }
 
-    return signaled;
+    return timelineValue >= value;
   }
 #endif
 };

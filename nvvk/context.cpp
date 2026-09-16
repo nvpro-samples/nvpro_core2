@@ -136,6 +136,22 @@ VkResult nvvk::Context::createInstance()
     layers.push_back("VK_LAYER_KHRONOS_validation");
   }
 
+  // Turn off VK_LAYER_OBS_HOOK when using internally synchronized queues
+  // to avoid a validation layer error.
+  // This is because VK_KHR_internally_synchronized_queues requires a flag
+  // on each of the VkDeviceQueueCreateInfo structs, but that requires apps
+  // to use vkGetDeviceQueue2 instead of vkGetDeviceQueue... and OBS'
+  // capture hook unconditionally uses vkGetDeviceQueue.
+  // See https://github.com/obsproject/obs-studio/blob/6b3e550729f125b6c5b3767df88c08f5aef9d264/plugins/win-capture/graphics-hook/vulkan-capture.c#L1578 .
+  if(contextInfo.internallySynchronizedQueues && !getenv("VK_LOADER_LAYERS_DISABLE"))
+  {
+#ifdef WIN32
+    std::ignore = _putenv("VK_LOADER_LAYERS_DISABLE=VK_LAYER_OBS_HOOK");
+#else
+    std::ignore = putenv("VK_LOADER_LAYERS_DISABLE=VK_LAYER_OBS_HOOK");
+#endif
+  }
+
   VkInstanceCreateInfo createInfo{
       .sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
       .pNext                   = contextInfo.instanceCreateInfoExt,
@@ -350,8 +366,21 @@ VkResult nvvk::Context::createDevice()
   }
   volkLoadDevice(m_device);
 
-  for(auto& queue : m_queueInfos)
-    vkGetDeviceQueue(m_device, queue.familyIndex, queue.queueIndex, &queue.queue);
+  for(size_t i = 0; i < m_queueInfos.size(); i++)
+  {
+    for(size_t j = 0; j < m_queueCreateInfos.size(); j++)
+    {
+      if(m_queueInfos[i].familyIndex == m_queueCreateInfos[j].queueFamilyIndex)
+      {
+        const VkDeviceQueueInfo2 queueInfo{.sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2,
+                                           .flags            = m_queueCreateInfos[j].flags,
+                                           .queueFamilyIndex = m_queueInfos[i].familyIndex,
+                                           .queueIndex       = m_queueInfos[i].queueIndex};
+        vkGetDeviceQueue2(m_device, &queueInfo, &m_queueInfos[i].queue);
+        break;
+      }
+    }
+  }
 
   return VK_SUCCESS;
 }
@@ -451,6 +480,11 @@ bool nvvk::Context::findQueueFamilies()
       m_queuePriorities.emplace_back(usage.second, 1.0f);  // Same priority for all queues in a family
       m_queueCreateInfos.push_back({VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, nullptr, 0, usage.first, usage.second,
                                     m_queuePriorities.back().data()});
+
+      if(contextInfo.internallySynchronizedQueues)
+      {
+        m_queueCreateInfos.back().flags |= VK_DEVICE_QUEUE_CREATE_INTERNALLY_SYNCHRONIZED_BIT_KHR;
+      }
     }
   }
   return true;

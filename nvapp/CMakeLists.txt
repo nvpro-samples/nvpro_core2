@@ -5,8 +5,15 @@ set(LIB_NAME nvapp)
 file(GLOB LIB_SOURCES "*.cpp" "*.hpp")
 source_group("Source Files" FILES ${LIB_SOURCES})
 
+# Shaders that are not compiled by the build system, together with the generated
+# headers holding their SPIR-V. Listed so they show up in the IDE.
+file(GLOB LIB_SHADERS "*.slang" "*.slang.h")
+source_group("Shaders" FILES ${LIB_SHADERS})
+
 # Define the utils library
-add_library(${LIB_NAME} STATIC ${LIB_SOURCES})
+add_library(${LIB_NAME} STATIC ${LIB_SOURCES} ${LIB_SHADERS})
+
+set_source_files_properties(${LIB_SHADERS} PROPERTIES HEADER_FILE_ONLY TRUE)
 
 # All libraries use nvpro_core2 as their include root
 cmake_path(GET CMAKE_CURRENT_LIST_DIR PARENT_PATH PARENT_DIR)

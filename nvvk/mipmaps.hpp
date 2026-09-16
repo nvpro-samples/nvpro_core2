@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2014-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -45,7 +45,8 @@ inline uint32_t mipLevels(VkExtent3D extent)
 // To get the number of mip levels, use the helper functions
 //      uint32_t levelCount = nvvk::mipLevels(extent);
 //
-// The current layout of the image is the layout of the image before the mipmaps are generated.
+// `currentLayout` is the layout mip level 0 (the blit source) must be in on entry, and the layout
+// every level is left in on exit.
 void cmdGenerateMipmaps(VkCommandBuffer   cmd,                // Command buffer to record the command
                         VkImage           image,              // Image to generate mipmaps for
                         const VkExtent2D& size,               // Size of the image

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,16 +13,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <mutex>
 #include <string>
+#include <utility>
+#include <vector>
 
 /*
 
@@ -108,6 +111,7 @@ public:
   using ShowFlags = uint32_t;
 
   using LogCallback = std::function<void(LogLevel, const std::string&)>;
+  using LogObserver = uint64_t;
 
   // Get the logger instance
   static Logger& getInstance() noexcept
@@ -135,6 +139,11 @@ public:
   // Set a custom log callback
   void setLogCallback(LogCallback&& callback) noexcept;
 
+  // Adds an independent observer without replacing the callback used by an
+  // application's existing log UI. Remove it before destroying its captures.
+  LogObserver addLogObserver(LogCallback callback);
+  void        removeLogObserver(LogObserver observer) noexcept;
+
   // Log a message
   void log(LogLevel level,
 #ifdef _MSC_VER
@@ -156,13 +165,15 @@ private:
 #else
   LogLevel m_minLogLevel = LogLevel::eSTATS;  // Messages with levels lower than this are omitted
 #endif
-  std::ofstream        m_logFile;                    // Output file stream
-  bool                 m_logToFile = true;           // Enable file output
-  bool                 m_fileFlush = false;          // Whether to flush all prints to the log file
-  std::recursive_mutex m_logMutex;                   // Mutex to protect member variables
-  LogCallback          m_logCallback  = nullptr;     // Custom log callback
-  ShowFlags            m_show         = eSHOW_NONE;  // Default shows no extra information
-  bool                 m_breakOnError = true;        // Break on errors by default
+  std::ofstream                                    m_logFile;            // Output file stream
+  bool                                             m_logToFile = true;   // Enable file output
+  bool                                             m_fileFlush = false;  // Whether to flush all prints to the log file
+  std::recursive_mutex                             m_logMutex;           // Mutex to protect member variables
+  LogCallback                                      m_logCallback = nullptr;  // Custom log callback
+  std::vector<std::pair<LogObserver, LogCallback>> m_logObservers;  // Additional independently owned log consumers
+  LogObserver                                      m_nextLogObserver{1};
+  ShowFlags                                        m_show         = eSHOW_NONE;  // Default shows no extra information
+  bool                                             m_breakOnError = true;        // Break on errors by default
 
   Logger() {}
   ~Logger();

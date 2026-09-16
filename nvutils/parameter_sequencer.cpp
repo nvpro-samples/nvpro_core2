@@ -112,7 +112,9 @@ bool ParameterSequencer::prepareFrame()
       m_sequenceState.description = m_tokenizedScript.getArgs(m_currentArgument)[0];
       m_currentArgument++;
 
-      auto   args       = m_tokenizedScript.getArgs(m_currentArgument);
+      auto args = m_tokenizedScript.getArgs(m_currentArgument);
+      // clear, so `wasParsed` after this parse is this SEQUENCE only
+      m_info.parameterParser->clearWasParsed();
       size_t stopOffset = m_info.parameterParser->parse(args, false, m_tokenizedScript.getFilenameBasePath(), "SEQUENCE");
 
       if(m_info.profilerManager)

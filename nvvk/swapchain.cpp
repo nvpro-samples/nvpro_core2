@@ -18,6 +18,7 @@
  */
 
 #include <algorithm>
+#include <limits>
 
 #include "nvutils/logger.hpp"
 
@@ -213,8 +214,10 @@ void nvvk::Swapchain::cmdTransitionImageForPresent(VkCommandBuffer cmd)
 
 VkResult nvvk::Swapchain::reinitResources(VkExtent2D& outWindowSize, bool vSync)
 {
-  // Wait for all frames to finish rendering before recreating the swapchain
-  vkQueueWaitIdle(m_queue.queue);
+  // Presentation may still be using an acquired image after the rendering
+  // queue itself becomes idle. Drain the whole device, then destroy the old
+  // WSI resources before allowing another thread to access any device queue.
+  NVVK_FAIL_RETURN(vkDeviceWaitIdle(m_device));
 
   m_frameResourceIndex = 0;
   m_needRebuild        = false;
@@ -224,21 +227,34 @@ VkResult nvvk::Swapchain::reinitResources(VkExtent2D& outWindowSize, bool vSync)
 
 void nvvk::Swapchain::deinitResources()
 {
-  vkDestroySwapchainKHR(m_device, m_swapChain, nullptr);
-  for(auto& frameRes : m_frameResources)
-  {
-    vkDestroySemaphore(m_device, frameRes.acquireSemaphore, nullptr);
-  }
-  m_frameResources.clear();
+  // Image views are application-owned children of the swapchain images and
+  // must disappear before vkDestroySwapchainKHR releases those images.
   for(auto& image : m_images)
   {
     vkDestroyImageView(m_device, image.imageView, nullptr);
     vkDestroySemaphore(m_device, image.presentSemaphore, nullptr);
   }
   m_images.clear();
+
+  for(auto& frameRes : m_frameResources)
+  {
+    vkDestroySemaphore(m_device, frameRes.acquireSemaphore, nullptr);
+  }
+  m_frameResources.clear();
+
+  if(m_swapChain != VK_NULL_HANDLE)
+  {
+    vkDestroySwapchainKHR(m_device, m_swapChain, nullptr);
+    m_swapChain = VK_NULL_HANDLE;
+  }
 }
 
 VkResult nvvk::Swapchain::acquireNextImage(VkDevice device)
+{
+  return acquireNextImage(device, std::numeric_limits<uint64_t>::max());
+}
+
+VkResult nvvk::Swapchain::acquireNextImage(VkDevice device, uint64_t timeout)
 {
   assert((m_needRebuild == false) && "Swapbuffer need to call reinitResources()");
 
@@ -250,13 +266,15 @@ VkResult nvvk::Swapchain::acquireNextImage(VkDevice device)
   // Acquire the next image from the swapchain
   // This will signal frame.acquireSemaphore when the image is ready
   // and store the index of the acquired image in m_frameImageIndex
-  VkResult result = vkAcquireNextImageKHR(device, m_swapChain, std::numeric_limits<uint64_t>::max(),
-                                          frame.acquireSemaphore, VK_NULL_HANDLE, &m_frameImageIndex);
+  VkResult result = vkAcquireNextImageKHR(device, m_swapChain, timeout, frame.acquireSemaphore, VK_NULL_HANDLE, &m_frameImageIndex);
 
   switch(result)
   {
     case VK_SUCCESS:
     case VK_SUBOPTIMAL_KHR:  // Still valid for presentation
+      return result;
+
+    case VK_TIMEOUT:
       return result;
 
     case VK_ERROR_OUT_OF_DATE_KHR:  // The swapchain is no longer compatible with the surface and needs to be recreated

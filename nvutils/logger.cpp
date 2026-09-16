@@ -125,6 +125,30 @@ void nvutils::Logger::setLogCallback(LogCallback&& callback) noexcept
   m_logCallback = std::move(callback);
 }
 
+nvutils::Logger::LogObserver nvutils::Logger::addLogObserver(LogCallback callback)
+{
+  if(!callback)
+    return 0;
+
+  std::lock_guard<std::recursive_mutex> lock(m_logMutex);
+  const LogObserver                     observer = m_nextLogObserver++;
+  m_logObservers.emplace_back(observer, std::move(callback));
+  return observer;
+}
+
+void nvutils::Logger::removeLogObserver(LogObserver observer) noexcept
+{
+  std::lock_guard<std::recursive_mutex> lock(m_logMutex);
+  for(size_t observerIndex = 0; observerIndex < m_logObservers.size(); observerIndex++)
+  {
+    if(m_logObservers[observerIndex].first == observer)
+    {
+      m_logObservers.erase(m_logObservers.begin() + observerIndex);
+      return;
+    }
+  }
+}
+
 
 void nvutils::Logger::log(LogLevel level,
 #ifdef _MSC_VER
@@ -386,9 +410,40 @@ void nvutils::Logger::outputToFile(const std::string& message) noexcept
 
 void nvutils::Logger::outputToCallback(LogLevel level, const std::string& message) noexcept
 {
-  if(m_logCallback)
+  try
   {
-    m_logCallback(level, message);
+    // A callback may replace itself or add/remove observers. Snapshot first so every callback that
+    // was registered for this message remains alive and is invoked exactly once.
+    std::vector<LogCallback> callbacks;
+    callbacks.reserve(m_logObservers.size() + (m_logCallback ? 1 : 0));
+    if(m_logCallback)
+      callbacks.push_back(m_logCallback);
+    for(const auto& observer : m_logObservers)
+      callbacks.push_back(observer.second);
+
+    for(const LogCallback& callback : callbacks)
+    {
+      try
+      {
+        callback(level, message);
+      }
+      catch(const std::exception& e)
+      {
+        std::cerr << "Caught exception from log callback: " << e.what() << '\n';
+      }
+      catch(...)
+      {
+        std::cerr << "Caught unknown exception from log callback\n";
+      }
+    }
+  }
+  catch(const std::exception& e)
+  {
+    std::cerr << "Could not snapshot log callbacks: " << e.what() << '\n';
+  }
+  catch(...)
+  {
+    std::cerr << "Could not snapshot log callbacks\n";
   }
 }
 

@@ -26,6 +26,23 @@
 
 namespace nvutils {
 
+#if defined(NVPRO2_TRACK_PARAMETER_REGISTRIES)
+namespace {
+
+std::vector<const ParameterBase*>& activeParameters()
+{
+  static std::vector<const ParameterBase*> parameters;
+  return parameters;
+}
+
+}  // namespace
+
+std::span<const ParameterBase* const> getActiveParameterRegistryParameters()
+{
+  return activeParameters();
+}
+#endif
+
 ParameterBase* ParameterRegistry::addNewBase(const ParameterBase::Info& info, ParameterBase::Type type, uint32_t argCount, void* destination)
 {
   ParameterBase* parameter = new ParameterBase;
@@ -44,6 +61,9 @@ ParameterBase* ParameterRegistry::addNewBase(const ParameterBase::Info& info, Pa
   parameter->destination.raw = destination;
   memset(&parameter->minMaxValues, 0, sizeof(ParameterBase::MinMaxData) * 2);
 
+#if defined(NVPRO2_TRACK_PARAMETER_REGISTRIES)
+  activeParameters().push_back(parameter);
+#endif
   return parameter;
 }
 
@@ -251,6 +271,21 @@ const ParameterBase* ParameterRegistry::addCustom(const ParameterBase::Info&    
 
 ParameterRegistry::~ParameterRegistry()
 {
+#if defined(NVPRO2_TRACK_PARAMETER_REGISTRIES)
+  std::vector<const ParameterBase*>& parameters = activeParameters();
+  for(size_t parameterIndex = 0; parameterIndex < m_parameters.size(); parameterIndex++)
+  {
+    for(size_t activeIndex = 0; activeIndex < parameters.size(); activeIndex++)
+    {
+      if(parameters[activeIndex] == m_parameters[parameterIndex])
+      {
+        parameters.erase(parameters.begin() + activeIndex);
+        break;
+      }
+    }
+  }
+#endif
+
   for(auto& it : m_parameters)
   {
     delete it;

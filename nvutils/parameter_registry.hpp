@@ -158,4 +158,10 @@ protected:
   std::vector<const ParameterBase*> m_parameters;
 };
 
+#if defined(NVPRO2_TRACK_PARAMETER_REGISTRIES)
+// Returns the parameters owned by all currently live registries. Tracking is
+// available only in builds that explicitly enable registry discovery.
+std::span<const ParameterBase* const> getActiveParameterRegistryParameters();
+#endif
+
 }  // namespace nvutils

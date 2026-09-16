@@ -57,6 +57,11 @@ struct ExtensionInfo
 // alloc                : Allocation callbacks
 // enableAllFeatures    : If true, pull all capability of `features` from the physical device
 // forceGPU             : If != -1, use GPU index, useful to select a specific GPU
+// internallySynchronizedQueues: If true, queues won't require external synchronization because the
+//                               driver will handle locking instead. Requires
+//                               VK_KHR_internally_synchronized_queues.
+//                               Note that this will currently disable the OBS Vulkan graphics hook
+//                               due to a bug in OBS, so OBS will capture the window using other means.
 struct ContextInitInfo
 {
   std::vector<const char*>         instanceExtensions    = {};
@@ -75,6 +80,7 @@ struct ContextInitInfo
   bool enableValidationLayers = true;  // Enable validation layers
   bool verbose                = true;
 #endif
+  bool internallySynchronizedQueues = false;
   // [optional] Callback called during physical device selection process.
   // Return true to allow this physical device to be selected, false to reject it.
   std::optional<std::function<bool(VkInstance, VkPhysicalDevice)>> preSelectPhysicalDeviceCallback;

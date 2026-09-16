@@ -290,8 +290,10 @@ StagingUploader::StagingUploader(StagingUploader&& other) noexcept
     std::swap(m_resourceAllocator, other.m_resourceAllocator);
     std::swap(m_stagingResources, other.m_stagingResources);
     std::swap(m_batchStagingCount, other.m_batchStagingCount);
+    std::swap(m_batchIndex, other.m_batchIndex);
     std::swap(m_batchRequiresFlush, other.m_batchRequiresFlush);
     std::swap(m_forceCoherentMapping, other.m_forceCoherentMapping);
+    std::swap(m_semaphoreState, other.m_semaphoreState);
   }
 }
 
@@ -306,8 +308,10 @@ nvvk::StagingUploader& StagingUploader::operator=(StagingUploader&& other) noexc
     std::swap(m_resourceAllocator, other.m_resourceAllocator);
     std::swap(m_stagingResources, other.m_stagingResources);
     std::swap(m_batchStagingCount, other.m_batchStagingCount);
+    std::swap(m_batchIndex, other.m_batchIndex);
     std::swap(m_batchRequiresFlush, other.m_batchRequiresFlush);
     std::swap(m_forceCoherentMapping, other.m_forceCoherentMapping);
+    std::swap(m_semaphoreState, other.m_semaphoreState);
   }
   return *this;
 }
@@ -827,6 +831,192 @@ void StagingUploader::resetStaging(bool isCancel)
   }
   m_batchStagingCount  = 0;
   m_batchRequiresFlush = false;
+  m_batchIndex++;
+}
+
+//////////////////////////////////////////////////////////////////////////
+// UploaderInterface / CmdUploaderInterface
+
+VkResult StagingUploader::acquireMapping(size_t dataSize, nvvk::BufferRange& mappingSpace, MappingHandle& mappingHandle)
+{
+  mappingHandle = {};
+
+  if(dataSize == 0)
+  {
+    mappingSpace = {};
+    return VK_SUCCESS;
+  }
+
+  NVVK_FAIL_RETURN(acquireStagingSpace(mappingSpace, dataSize, nullptr, m_semaphoreState));
+
+  MappingHandleDetail detail{};
+  detail.valid        = 1;
+  detail.batchIndex   = m_batchIndex;
+  mappingHandle.value = detail.handle;
+
+  return VK_SUCCESS;
+}
+
+void StagingUploader::commitMapping(MappingHandle& mappingHandle)
+{
+  // a zero-size `acquireMapping` legitimately yields an invalid handle
+  if(!mappingHandle)
+  {
+    return;
+  }
+
+  // Intentionally does not free the staging buffer. All staging of a batch is retired
+  // together in `cmdUploadAppended` / `cancelAppended`.
+  MappingHandleDetail detail{};
+  detail.handle = mappingHandle.value;
+  assert(detail.valid != 0);
+  assert(detail.batchIndex == m_batchIndex);
+
+  // the handle must not be used again
+  mappingHandle = {};
+}
+
+void StagingUploader::releaseMapping(MappingHandle& mappingHandle)
+{
+  // a zero-size `acquireMapping` legitimately yields an invalid handle
+  if(!mappingHandle)
+  {
+    return;
+  }
+
+  // Intentionally does not free the staging buffer, see `commitMapping`.
+  MappingHandleDetail detail{};
+  detail.handle = mappingHandle.value;
+  assert(detail.valid != 0 && !detail.used);
+  assert(detail.batchIndex == m_batchIndex);
+
+  // the handle must not be used again
+  mappingHandle = {};
+}
+
+VkResult StagingUploader::appendBufferRange(const nvvk::BufferRange& bufferRange, const void* data, nvvk::SemaphoreState* outSemaphoreState)
+{
+  NVVK_FAIL_RETURN(appendBufferRange(bufferRange, data, m_semaphoreState));
+
+  getOutSemaphoreState(outSemaphoreState);
+  return VK_SUCCESS;
+}
+
+VkResult StagingUploader::appendBufferRangeMappings(size_t                    rangeCount,
+                                                    const MappedBufferRanges* ranges,
+                                                    MappingHandle&            mappingHandle,
+                                                    bool                      commitMapping_,
+                                                    nvvk::SemaphoreState*     outSemaphoreState)
+{
+  assert(mappingHandle);
+  if(!mappingHandle)
+  {
+    return VK_ERROR_UNKNOWN;
+  }
+
+  MappingHandleDetail detail{};
+  detail.handle = mappingHandle.value;
+  assert(detail.valid != 0);
+  assert(detail.batchIndex == m_batchIndex);
+
+  // the staging buffer itself is always retired per batch, not per mapping (see commitMapping()),
+  // the commit only invalidates the handle
+  if(commitMapping_)
+  {
+    mappingHandle = {};
+  }
+  else
+  {
+    // tag as used, the mapping is now referenced by the batch and must not be released
+    detail.used         = 1;
+    mappingHandle.value = detail.handle;
+  }
+
+  for(size_t i = 0; i < rangeCount; i++)
+  {
+    const MappedBufferRanges& range = ranges[i];
+    if(range.bufferRange.range == 0)
+      continue;
+
+    assert(range.bufferRange.buffer);
+    assert(range.mappingRange.range == range.bufferRange.range);
+
+    m_batch.addBufferCopy(range.mappingRange.buffer, range.mappingRange.offset, range.bufferRange.buffer,
+                          range.bufferRange.offset, range.bufferRange.range);
+  }
+
+  getOutSemaphoreState(outSemaphoreState);
+  return VK_SUCCESS;
+}
+
+VkResult StagingUploader::appendImageSub(nvvk::Image&                    image,
+                                         const VkOffset3D&               offset,
+                                         const VkExtent3D&               extent,
+                                         const VkImageSubresourceLayers& subresource,
+                                         size_t                          dataSize,
+                                         const void*                     data,
+                                         VkImageLayout                   newLayout,
+                                         nvvk::SemaphoreState*           outSemaphoreState)
+{
+  NVVK_FAIL_RETURN(appendImageSub(image, offset, extent, subresource, dataSize, data, newLayout, m_semaphoreState));
+
+  getOutSemaphoreState(outSemaphoreState);
+  return VK_SUCCESS;
+}
+
+VkResult StagingUploader::appendImageSubMappings(nvvk::Image&           image,
+                                                 size_t                 imageSubCount,
+                                                 const MappedImageSubs* imageSubs,
+                                                 MappingHandle&         mappingHandle,
+                                                 bool                   commitMapping_,
+                                                 VkImageLayout          newLayout,
+                                                 nvvk::SemaphoreState*  outSemaphoreState)
+{
+  assert(image.image);
+  assert(mappingHandle);
+  if(!mappingHandle)
+  {
+    return VK_ERROR_UNKNOWN;
+  }
+
+  MappingHandleDetail detail{};
+  detail.handle = mappingHandle.value;
+  assert(detail.valid != 0);
+  assert(detail.batchIndex == m_batchIndex);
+
+  // the staging buffer itself is always retired per batch, not per mapping (see commitMapping()),
+  // the commit only invalidates the handle
+  if(commitMapping_)
+  {
+    mappingHandle = {};
+  }
+  else
+  {
+    // tag as used, the mapping is now referenced by the batch and must not be released
+    detail.used         = 1;
+    mappingHandle.value = detail.handle;
+  }
+
+  const VkImageLayout imageLayout = image.descriptor.imageLayout;
+
+  for(size_t i = 0; i < imageSubCount; i++)
+  {
+    const MappedImageSubs& sub = imageSubs[i];
+    if(sub.mappingSpace.range == 0)
+      continue;
+
+    // reset with each sub image to original
+    image.descriptor.imageLayout = imageLayout;
+
+    const VkImageSubresourceRange subresourceRange{sub.subresource.aspectMask, sub.subresource.mipLevel, 1,
+                                                   sub.subresource.baseArrayLayer, sub.subresource.layerCount};
+
+    m_batch.addImageCopy(sub.mappingSpace.buffer, sub.mappingSpace.offset, image.image, image.descriptor.imageLayout,
+                         newLayout, sub.mappingSpace.range, sub.subresource, sub.offset, sub.extent, &subresourceRange);
+  }
+
+  getOutSemaphoreState(outSemaphoreState);
+  return VK_SUCCESS;
 }
 
 }  // namespace nvvk
@@ -1038,5 +1228,48 @@ void StagingUploader::resetStaging(bool isCancel)
     // must ensure the following conditions:
     // - the queue submit of `transferCmd` signals `transferSemaphoreState`
     // - the submit of `graphicsCmd` waits for `transferSemaphoreState`
+  }
+
+  //////////////////////////////////////////////////////////////////////////
+  // used through `nvvk::CmdUploaderInterface`, which allows swapping the
+  // implementation for `nvvk::FrameUploader` without touching the upload code
+  {
+    VkCommandBuffer      cmd{};
+    nvvk::Buffer         deviceBuffer{};          // EX. create GPU buffer to upload into
+    nvvk::SemaphoreState submitSemaphoreState{};  // EX. state of the submit that `cmd` ends up in
+
+    // the interface reports the SemaphoreState rather than taking it per call,
+    // so the uploader is told once which submit its uploads belong to
+    stagingUploader.setSemaphoreState(submitSemaphoreState);
+
+    nvvk::CmdUploaderInterface& uploader = stagingUploader;
+
+    uint8_t uploadData[256]{};
+    size_t  uploadSize = sizeof(uploadData);
+
+    nvvk::SemaphoreState uploadSem{};
+    uploader.appendBuffer(deviceBuffer, 0, uploadSize, uploadData, &uploadSem);
+
+    // mapping upload: acquire staging, fill on CPU, then append
+    nvvk::BufferRange                      mappingSpace{};
+    nvvk::UploaderInterface::MappingHandle mappingHandle{};
+    if(uploader.acquireMapping(uploadSize, mappingSpace, mappingHandle) == VK_SUCCESS)
+    {
+      memcpy(mappingSpace.mapping, uploadData, uploadSize);
+
+      nvvk::UploaderInterface::MappedBufferRanges mappedRange{};
+      mappedRange.bufferRange.buffer = deviceBuffer.buffer;
+      mappedRange.bufferRange.offset = 0;
+      mappedRange.bufferRange.range  = uploadSize;
+      mappedRange.mappingRange       = mappingSpace;
+
+      uploader.appendBufferRangeMappings(1, &mappedRange, mappingHandle, true, &uploadSem);
+    }
+
+    uploader.cmdUploadAppended(cmd);
+
+    // submit `cmd` so that it signals `submitSemaphoreState`, afterwards
+    // `releaseStaging` can recycle the staging buffers on its own
+    stagingUploader.releaseStaging();
   }
 }

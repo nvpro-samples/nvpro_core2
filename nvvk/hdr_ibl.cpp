@@ -44,7 +44,6 @@
 #include "descriptors.hpp"
 #include "hdr_ibl.hpp"
 #include "mipmaps.hpp"
-#include "staging.hpp"
 
 
 namespace nvvk {
@@ -84,7 +83,7 @@ void HdrIbl::deinit()
 //
 // Note: enableMipmaps will create a mipmap chain for the environment texture, but does not generate the
 //       mipmaps
-void HdrIbl::loadEnvironment(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const std::filesystem::path& hdrImage, bool enableMipmaps)
+void HdrIbl::loadEnvironment(VkCommandBuffer cmd, nvvk::CmdUploaderInterface& staging, const std::filesystem::path& hdrImage, bool enableMipmaps)
 {
   nvutils::ScopedTimer st(__FUNCTION__);
 

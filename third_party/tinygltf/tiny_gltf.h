@@ -2119,9 +2119,9 @@ void JsonParse(JsonDocument &doc, const char *str, size_t length,
                bool throwExc = false) {
 #ifdef TINYGLTF_USE_RAPIDJSON
   (void)throwExc;
-  doc.Parse(str, length);
+  doc.Parse<rapidjson::kParseCommentsFlag | rapidjson::kParseTrailingCommasFlag>(str, length);
 #else
-  doc = detail::json::parse(str, str + length, nullptr, throwExc);
+  doc = detail::json::parse(str, str + length, nullptr, throwExc, true, true);
 #endif
 }
 #endif  // !TINYGLTF_USE_CUSTOM_JSON

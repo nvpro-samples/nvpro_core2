@@ -1,14 +1,19 @@
 # This calls find_package(Vulkan), and finds some additional components that
 # CMake doesn't yet provide. Also prints out diagnostic information.
 find_package(Vulkan COMPONENTS glslangValidator)
-set(_Vulkan_BIN_DIR ${Vulkan_INCLUDE_DIRS}/../bin)
+set(_Vulkan_BIN_DIR ${Vulkan_INCLUDE_DIR}/../bin)
 get_filename_component(_Vulkan_LIB_DIR_HINTS ${Vulkan_LIBRARY} DIRECTORY)
 if(NOT ("$ENV{VULKAN_SDK}" STREQUAL ""))
   list(PREPEND _Vulkan_LIB_DIR_HINTS "$ENV{VULKAN_SDK}/lib")
 endif()
 # Vulkan - Volk
 if(NOT Vulkan_VOLK_DIR)
-  find_path(Vulkan_VOLK_DIR volk.h HINTS ${Vulkan_INCLUDE_DIRS}/volk)
+  foreach(_PATH ${Vulkan_INCLUDE_DIR} ${Vulkan_INCLUDE_DIR}/volk)
+    if((EXISTS ${_PATH}/volk.c) AND (EXISTS ${_PATH}/volk.h))
+      set(Vulkan_VOLK_DIR ${_PATH} CACHE PATH "Path containing volk.c and volk.h")
+	  break()
+    endif()
+  endforeach()
 endif()
 
 # Finds a library named NAME and sets Vulkan_NAME_LIBRARY and

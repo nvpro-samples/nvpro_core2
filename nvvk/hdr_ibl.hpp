@@ -32,7 +32,7 @@
 #include "descriptors.hpp"
 #include "resource_allocator.hpp"
 #include "sampler_pool.hpp"
-#include "staging.hpp"
+#include "uploader_interface.hpp"
 
 
 namespace nvvk {
@@ -56,7 +56,7 @@ public:
   void init(nvvk::ResourceAllocator* allocator, nvvk::SamplerPool* samplerPool);
   void deinit();
 
-  void loadEnvironment(VkCommandBuffer cmd, nvvk::StagingUploader& staging, const std::filesystem::path& hdrImage, bool enableMipmaps = false);
+  void loadEnvironment(VkCommandBuffer cmd, nvvk::CmdUploaderInterface& staging, const std::filesystem::path& hdrImage, bool enableMipmaps = false);
   void destroyEnvironment();
 
   float              getIntegral() const { return m_integral; }

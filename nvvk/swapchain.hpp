@@ -20,6 +20,7 @@
 #pragma once
 
 #include <cassert>
+#include <cstdint>
 #include <vector>
 
 #include "resources.hpp"
@@ -126,6 +127,12 @@ public:
    * The command buffer is reset, ready for new rendering commands.
   -*/
   VkResult acquireNextImage(VkDevice device);
+
+  /*--
+   * Acquire with a caller-defined timeout when an application must service
+   * external work even if presentation stops releasing images.
+  -*/
+  VkResult acquireNextImage(VkDevice device, uint64_t timeout);
 
   /*--
    * Presents the rendered image to the screen.

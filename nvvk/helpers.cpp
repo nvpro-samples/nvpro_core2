@@ -34,6 +34,7 @@
 
 #include "barriers.hpp"
 #include "check_error.hpp"
+#include "commands.hpp"
 #include "helpers.hpp"
 
 
@@ -111,6 +112,40 @@ VkResult nvvk::imageToLinear(VkCommandBuffer  cmd,
   return VK_SUCCESS;
 }
 
+namespace {
+
+// One-shot readback waits for all prior device work before changing the source
+// layout. This preserves the established saveImageToFile synchronization contract.
+VkResult imageToLinearBlocking(VkDevice         device,
+                               VkPhysicalDevice physicalDevice,
+                               VkCommandPool    cmdPool,
+                               VkQueue          queue,
+                               VkImage          srcImage,
+                               VkExtent2D       size,
+                               VkFormat         dstFormat,
+                               VkImageLayout    srcLayout,
+                               VkImage&         dstImage,
+                               VkDeviceMemory&  dstImageMemory)
+{
+  NVVK_FAIL_RETURN(vkDeviceWaitIdle(device));
+
+  VkCommandBuffer cmd{};
+  NVVK_FAIL_RETURN(nvvk::beginSingleTimeCommands(cmd, device, cmdPool));
+  VkResult result = nvvk::imageToLinear(cmd, device, physicalDevice, srcImage, size, dstImage, dstImageMemory, dstFormat, srcLayout);
+  const VkResult submitResult = nvvk::endSingleTimeCommands(cmd, device, cmdPool, queue);
+  return result == VK_SUCCESS ? submitResult : result;
+}
+
+void destroyLinearImage(VkDevice device, VkImage image, VkDeviceMemory memory)
+{
+  if(image)
+    vkDestroyImage(device, image, nullptr);
+  if(memory)
+    vkFreeMemory(device, memory, nullptr);
+}
+
+}  // namespace
+
 // Save an image to a file
 VkResult nvvk::saveImageToFile(VkDevice                     device,
                                VkImage                      dstImage,
@@ -141,29 +176,30 @@ VkResult nvvk::saveImageToFile(VkDevice                     device,
   };
 
   // Check the extension and perform actions accordingly
+  int writeResult = 0;
   if(nvutils::extensionMatches(filename, ".png"))
   {
     std::vector<uint8_t> pixels8(size.width * size.height * 4);
     copyImageData(pixels8, 4 * sizeof(uint8_t));
-    stbi_write_png(filenameUtf8.c_str(), size.width, size.height, 4, pixels8.data(), size.width * 4);
+    writeResult = stbi_write_png(filenameUtf8.c_str(), size.width, size.height, 4, pixels8.data(), size.width * 4);
   }
   else if(nvutils::extensionMatches(filename, ".jpg") || nvutils::extensionMatches(filename, ".jpeg"))
   {
     std::vector<uint8_t> pixels8(size.width * size.height * 4);
     copyImageData(pixels8, 4 * sizeof(uint8_t));
-    stbi_write_jpg(filenameUtf8.c_str(), size.width, size.height, 4, pixels8.data(), quality);
+    writeResult = stbi_write_jpg(filenameUtf8.c_str(), size.width, size.height, 4, pixels8.data(), quality);
   }
   else if(nvutils::extensionMatches(filename, ".bmp"))
   {
     std::vector<uint8_t> pixels8(size.width * size.height * 4);
     copyImageData(pixels8, 4 * sizeof(uint8_t));
-    stbi_write_bmp(filenameUtf8.c_str(), size.width, size.height, 4, pixels8.data());
+    writeResult = stbi_write_bmp(filenameUtf8.c_str(), size.width, size.height, 4, pixels8.data());
   }
   else if(nvutils::extensionMatches(filename, ".hdr"))
   {
     std::vector<float> pixels(size.width * size.height * 4);
     copyImageData(pixels, 4 * sizeof(float));
-    stbi_write_hdr(filenameUtf8.c_str(), size.width, size.height, 4, pixels.data());
+    writeResult = stbi_write_hdr(filenameUtf8.c_str(), size.width, size.height, 4, pixels.data());
   }
   else
   {
@@ -173,11 +209,110 @@ VkResult nvvk::saveImageToFile(VkDevice                     device,
     filenameUtf8 = nvutils::utf8FromPath(path);
     std::vector<uint8_t> pixels8(size.width * size.height * 4);
     copyImageData(pixels8, 4 * sizeof(uint8_t));
-    stbi_write_png(filenameUtf8.c_str(), size.width, size.height, 4, pixels8.data(), size.width * 4);
+    writeResult = stbi_write_png(filenameUtf8.c_str(), size.width, size.height, 4, pixels8.data(), size.width * 4);
   }
 
   vkUnmapMemory(device, dstImageMemory);
 
+  if(writeResult == 0)
+  {
+    LOGE("Failed to save image to %s\n", filenameUtf8.c_str());
+    return VK_ERROR_UNKNOWN;
+  }
   LOGI("Image saved to %s\n", filenameUtf8.c_str());
   return VK_SUCCESS;
+}
+
+VkResult nvvk::encodeImageToPng(VkDevice device, VkImage dstImage, VkDeviceMemory dstImageMemory, VkExtent2D size, std::vector<uint8_t>& pngData)
+{
+  pngData.clear();
+  VkImageSubresource  subResource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0};
+  VkSubresourceLayout subResourceLayout;
+  vkGetImageSubresourceLayout(device, dstImage, &subResource, &subResourceLayout);
+
+  const char* data = nullptr;
+  NVVK_FAIL_RETURN(vkMapMemory(device, dstImageMemory, 0, VK_WHOLE_SIZE, 0, (void**)&data));
+  data += subResourceLayout.offset;
+
+  struct WriteContext
+  {
+    std::vector<uint8_t>* bytes;
+    bool                  failed{false};
+  } context{&pngData};
+
+  // stb writes encoded chunks through a C callback. Keep allocation failures
+  // inside that boundary so an exception never unwinds through stb internals.
+  auto write = [](void* user, void* chunk, int size) {
+    WriteContext& writeContext = *static_cast<WriteContext*>(user);
+    if(writeContext.failed)
+      return;
+    try
+    {
+      const uint8_t* first = static_cast<const uint8_t*>(chunk);
+      writeContext.bytes->insert(writeContext.bytes->end(), first, first + size);
+    }
+    catch(...)
+    {
+      writeContext.failed = true;
+    }
+  };
+
+  const int written =
+      stbi_write_png_to_func(write, &context, size.width, size.height, 4, data, static_cast<int>(subResourceLayout.rowPitch));
+  vkUnmapMemory(device, dstImageMemory);
+
+  if(context.failed)
+  {
+    pngData.clear();
+    return VK_ERROR_OUT_OF_HOST_MEMORY;
+  }
+  if(written == 0)
+  {
+    pngData.clear();
+    return VK_ERROR_UNKNOWN;
+  }
+  return VK_SUCCESS;
+}
+
+VkResult nvvk::saveImageToFile(VkDevice                     device,
+                               VkPhysicalDevice             physicalDevice,
+                               VkCommandPool                cmdPool,
+                               VkQueue                      queue,
+                               VkImage                      srcImage,
+                               VkExtent2D                   size,
+                               const std::filesystem::path& filename,
+                               int                          quality,
+                               VkImageLayout                srcLayout)
+{
+  const VkFormat dstFormat = nvutils::extensionMatches(filename, ".hdr") ? VK_FORMAT_R32G32B32A32_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
+  VkImage        dstImage{};
+  VkDeviceMemory dstImageMemory{};
+  VkResult result = imageToLinearBlocking(device, physicalDevice, cmdPool, queue, srcImage, size, dstFormat, srcLayout,
+                                          dstImage, dstImageMemory);
+  if(result == VK_SUCCESS)
+    result = saveImageToFile(device, dstImage, dstImageMemory, size, filename, quality);
+
+  destroyLinearImage(device, dstImage, dstImageMemory);
+  return result;
+}
+
+VkResult nvvk::encodeImageToPng(VkDevice              device,
+                                VkPhysicalDevice      physicalDevice,
+                                VkCommandPool         cmdPool,
+                                VkQueue               queue,
+                                VkImage               srcImage,
+                                VkExtent2D            size,
+                                std::vector<uint8_t>& pngData,
+                                VkImageLayout         srcLayout)
+{
+  pngData.clear();
+  VkImage        dstImage{};
+  VkDeviceMemory dstImageMemory{};
+  VkResult       result = imageToLinearBlocking(device, physicalDevice, cmdPool, queue, srcImage, size,
+                                                VK_FORMAT_R8G8B8A8_UNORM, srcLayout, dstImage, dstImageMemory);
+  if(result == VK_SUCCESS)
+    result = encodeImageToPng(device, dstImage, dstImageMemory, size, pngData);
+
+  destroyLinearImage(device, dstImage, dstImageMemory);
+  return result;
 }

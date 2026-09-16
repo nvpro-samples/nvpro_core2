@@ -5,6 +5,31 @@ project(third_party LANGUAGES C CXX)
 # We want static libraries for all packages defined here.
 set(BUILD_SHARED_LIBS OFF)
 
+# cpp-mcp is only built when a sample explicitly enables nvpro2::nvmcp.
+if(NVPRO2_ENABLE_nvmcp AND NOT TARGET mcp)
+  include(FetchContent)
+  find_package(Threads REQUIRED)
+  set(MCP_MAX_SESSIONS 10 CACHE STRING "Maximum concurrent MCP sessions")
+  set(MCP_SESSION_TIMEOUT 30 CACHE STRING "Inactive MCP session timeout in seconds")
+  # Prevent multiple applications from sharing one control endpoint and make a
+  # bind failure observable before cpp-mcp starts its worker threads.
+  FetchContent_Declare(
+    cpp_mcp
+    GIT_REPOSITORY "https://github.com/hkr04/cpp-mcp.git"
+    GIT_TAG f1117d5286efe6477ddd14322703f034615b6c0e
+    GIT_SUBMODULES ""
+    PATCH_COMMAND ${CMAKE_COMMAND} -E chdir <SOURCE_DIR> git apply --unidiff-zero --whitespace=nowarn
+                  "${CMAKE_CURRENT_LIST_DIR}/cpp_mcp-exclusive-bind.patch"
+    SOURCE_SUBDIR src
+  )
+  FetchContent_MakeAvailable(cpp_mcp)
+  target_include_directories(mcp PUBLIC
+    ${cpp_mcp_SOURCE_DIR}/include
+    ${cpp_mcp_SOURCE_DIR}/common
+  )
+  set_property(TARGET mcp PROPERTY FOLDER "ThirdParty")
+endif()
+
 # Speed up CMake configuration by setting some properties if we recognize the toolchain.
 include(SetKnownToolchainProperties.cmake)
 

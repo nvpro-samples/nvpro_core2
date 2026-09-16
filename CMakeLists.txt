@@ -70,6 +70,16 @@ project(
   LANGUAGES CXX
 )
 
+# MCP is intentionally opt-in: nvpro_core2 is used by many samples, and samples
+# that do not expose an MCP endpoint should not build or link the HTTP server.
+option(NVPRO2_ENABLE_nvmcp "Enable the generic MCP application-control library" OFF)
+option(NVPRO2_ENABLE_MCP_AUTO_PARAMETER_REGISTRY
+       "Expose all supported parameters from active registries through nvmcp" OFF)
+
+if(NVPRO2_ENABLE_MCP_AUTO_PARAMETER_REGISTRY AND NOT NVPRO2_ENABLE_nvmcp)
+  message(FATAL_ERROR "NVPRO2_ENABLE_MCP_AUTO_PARAMETER_REGISTRY requires NVPRO2_ENABLE_nvmcp")
+endif()
+
 # For this and subdirectories, make find_package find scripts in the `cmake/` directory:
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 
@@ -131,7 +141,7 @@ endif()
 
 # Then set up targets for all nvpro_core libraries.
 # These are in a specific order because of interdependencies.
-foreach(_LIBRARY IN ITEMS nvimageformats nvutils nvapp nvgui nvgpu_monitor nvvk nvgl nvshaders_host nvaftermath nvslang nvvkglsl nvvkgltf nvnsight)
+foreach(_LIBRARY IN ITEMS nvimageformats nvutils nvapp nvgui nvgpu_monitor nvvk nvgl nvshaders_host nvaftermath nvslang nvvkglsl nvvkgltf nvnsight nvmcp)
   option(NVPRO2_ENABLE_${_LIBRARY} "Enable ${_LIBRARY}" ${NVPRO2_ENABLE_DEFAULT})
   
   if(NVPRO2_ENABLE_${_LIBRARY})

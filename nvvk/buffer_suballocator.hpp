@@ -142,6 +142,8 @@ protected:
   VkResult createNewBuffer(nvvk::Buffer& buffer, VkDeviceSize size, uint32_t alignment, uint32_t blockIndex);
 
   uint32_t acquireBlockIndex();
+  // returns a block that has no buffer / allocations back to the free list
+  void releaseBlockIndex(uint32_t blockIndex);
 
   struct Block
   {

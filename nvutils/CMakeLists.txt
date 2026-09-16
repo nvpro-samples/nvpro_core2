@@ -11,6 +11,10 @@ add_library(${LIB_NAME} STATIC ${LIB_SOURCES})
 cmake_path(GET CMAKE_CURRENT_LIST_DIR PARENT_PATH PARENT_DIR)
 target_include_directories(${LIB_NAME} PUBLIC ${PARENT_DIR})
 
+if(NVPRO2_ENABLE_MCP_AUTO_PARAMETER_REGISTRY)
+  target_compile_definitions(${LIB_NAME} PRIVATE NVPRO2_TRACK_PARAMETER_REGISTRIES)
+endif()
+
 # Check if TBB is present and add it (for parallel_batches)
 if(UNIX)
   find_package(TBB)

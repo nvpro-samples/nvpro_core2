@@ -178,6 +178,22 @@ std::filesystem::path nvgui::windowOpenFileDialog(struct GLFWwindow* glfwin, con
   return result;
 }
 
+std::filesystem::path nvgui::windowOpenFileDialog(struct GLFWwindow*           glfwin,
+                                                  const char*                  title,
+                                                  const char*                  exts,
+                                                  std::filesystem::path&       initialDir,
+                                                  const std::filesystem::path& initialFilename)
+{
+  std::filesystem::path result =
+      unifiedDialog(glfwin, nvutils::pathFromUtf8(title).native(), nvutils::pathFromUtf8(exts).native(),
+                    DialogMode::OpenFile, initialDir, initialFilename);
+  if(!result.empty())
+  {
+    initialDir = result.parent_path();
+  }
+  return result;
+}
+
 std::filesystem::path nvgui::windowSaveFileDialog(struct GLFWwindow*           glfwin,
                                                   const char*                  title,
                                                   const char*                  exts,

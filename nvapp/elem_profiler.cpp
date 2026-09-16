@@ -322,7 +322,7 @@ void ElementProfiler::renderTable(View& view)
         ImGui::Spacing();  // add a small vertical gap between tables, for better legibility
     }
 
-    if(!m_frameNodes[i].child.empty() || m_singleNodes[i].child.empty())
+    if(!m_frameNodes[i].child.empty() || !m_singleNodes[i].child.empty())
     {
       int colCount = view.state->table.detailed ? 9 : 3;
 
