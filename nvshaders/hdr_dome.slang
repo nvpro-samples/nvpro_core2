@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -41,9 +41,8 @@ void main(uint3 threadIdx: SV_DispatchThreadID)
 
   const float2 in_uv     = pixel_center / float2(image_size);
   const float2 d         = in_uv * 2.0F - 1.0F;
+  // mvp already carries the environment's rotation: this is a direction in the HDR's own frame.
   float3       direction = float3(mul(float4(d.x, d.y, 1.0F, 1.0F), pc.mvp).xyz);
-
-  direction = rotate(direction, float3(0.0F, 1.0F, 0.0F), -pc.rotation);
 
   const float2 uv = getSphericalUv(normalize(direction.xyz));
   float3       color;

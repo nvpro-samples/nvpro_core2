@@ -173,9 +173,6 @@ and `truncated` reports when requested entries have already been evicted. The
 logger's configured minimum level still applies, so messages filtered before
 output cannot be recovered through MCP.
 
-The unauthenticated first implementation accepts loopback hosts only. Its
-default endpoint is `http://127.0.0.1:7671/mcp`.
-
 Each running application requires its own port. A busy or unavailable port is
 reported during application startup instead of allowing clients to reach an
 arbitrary process. Samples can expose `ElementCreateInfo::port` through their
@@ -185,6 +182,12 @@ existing command-line parameter registry; for example, `vk_gltf_renderer` uses
 For an MCP-controlled headless session, set `headlessFrameCount` to zero. The
 application then renders until the common `nvpro_shutdown` tool or another
 caller requests `Application::close()`.
+
+## Security disclaimer
+
+`nvmcp` is for local development on trusted machines. It uses unauthenticated
+and unencrypted HTTP. SSL is disabled by default. The default endpoint is
+`http://127.0.0.1:7671/mcp`. Any local process can invoke exposed tools.
 
 ## Connecting an agent
 

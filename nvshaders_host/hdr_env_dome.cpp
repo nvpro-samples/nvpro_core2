@@ -92,11 +92,11 @@ void HdrEnvDome::create(VkDescriptorSet                  dstSet,
 
   createDrawPipeline(spirvDrawDome);
   integrateBrdf(512, m_textures.lutBrdf, spirvIntegrateBrdf);
-  prefilterHdr(128, m_textures.diffuse, spirvPrefilterDiffuse, false);
+  prefilterHdr(128, m_textures.diffuse, m_diffuseCtx, spirvPrefilterDiffuse, false);
   // GGX cube: cap the chain at lowestMipLevel=4 so the smallest baked mip is 16x16 (rather
   // than 1x1, which is degenerate for the prefilter integral). Matches the Khronos
   // ibl_filtering pipeline convention.
-  prefilterHdr(512, m_textures.glossy, spirvPrefilterGlossy, true, 4);
+  prefilterHdr(512, m_textures.glossy, m_glossyCtx, spirvPrefilterGlossy, true, 4);
   createDescriptorSetLayout();
 
   NVVK_DBG_NAME(m_textures.lutBrdf.image);
@@ -175,15 +175,26 @@ void HdrEnvDome::draw(const VkCommandBuffer& cmd,
                       float                  rotation /*= 0.F*/,
                       float                  blur /*= 0.F*/)
 {
+  draw(cmd, view, proj, size, color, glm::angleAxis(rotation, glm::vec3(0.0F, 1.0F, 0.0F)), blur);
+}
+
+void HdrEnvDome::draw(const VkCommandBuffer& cmd,
+                      const glm::mat4&       view,
+                      const glm::mat4&       proj,
+                      const VkExtent2D&      size,
+                      const glm::vec4&       color,  // color multiplier (intensity)
+                      const glm::quat&       rotation,
+                      float                  blur /*= 0.F*/)
+{
   NVVK_DBG_SCOPE(cmd);
 
   // Information to the compute shader
   shaderio::HdrDomePushConstant pushConst{};
   glm::mat4                     noTranslate = view;
   noTranslate[3]                            = glm::vec4(0, 0, 0, 1);  // Remove translation
-  pushConst.mvp = glm::inverse(noTranslate) * glm::inverse(proj);  // This will be to have a world direction vector pointing to the pixel
+  // Pixel -> world direction -> the HDR's own frame, so the shader samples without rotating.
+  pushConst.mvp = glm::mat4_cast(glm::inverse(glm::normalize(rotation))) * glm::inverse(noTranslate) * glm::inverse(proj);
   pushConst.multColor = color;
-  pushConst.rotation  = rotation;
   pushConst.blur      = blur;
 
   // Execution
@@ -208,6 +219,20 @@ void HdrEnvDome::destroy()
   m_alloc->destroyImage(m_textures.diffuse);
   m_alloc->destroyImage(m_textures.lutBrdf);
   m_alloc->destroyImage(m_textures.glossy);
+
+  // Persistent per-target state kept for updateEnvironment() -- released here on shutdown.
+  // Vulkan destroys and nvvk helpers are no-ops on VK_NULL_HANDLE, so we don't guard the calls
+  // (matches the pattern above for m_domePipeline / m_textures).
+  auto releaseCtx = [&](PrefilterCtx& ctx) {
+    m_samplerPool->releaseSampler(ctx.scratch.descriptor.sampler);
+    m_alloc->destroyImage(ctx.scratch);
+    vkDestroyPipeline(m_device, ctx.pipeline, nullptr);
+    vkDestroyPipelineLayout(m_device, ctx.pipelineLayout, nullptr);
+    ctx.descPack.deinit();
+    ctx = PrefilterCtx{};
+  };
+  releaseCtx(m_diffuseCtx);
+  releaseCtx(m_glossyCtx);
 
   vkDestroyPipeline(m_device, m_domePipeline, nullptr);
   vkDestroyPipelineLayout(m_device, m_domePipelineLayout, nullptr);
@@ -324,18 +349,25 @@ void HdrEnvDome::integrateBrdf(uint32_t dimension, nvvk::Image& target, const st
 
 
 //--------------------------------------------------------------------------------------------------
+// Allocate the persistent resources for a prefilter target: the target cube, the scratch
+// image, the compute pipeline, and the descriptor pack. Everything here survives until
+// destroy() -- prefilterHdrRun reuses it every time updateEnvironment() is called.
 //
-//
-void HdrEnvDome::prefilterHdr(uint32_t dim, nvvk::Image& target, const std::span<const uint32_t>& spirvData, bool doMipmap, uint32_t lowestMipLevel)
+void HdrEnvDome::prefilterHdrAllocate(uint32_t                         dim,
+                                      nvvk::Image&                     target,
+                                      PrefilterCtx&                    ctx,
+                                      const std::span<const uint32_t>& spirvCode,
+                                      bool                             doMipmap,
+                                      uint32_t                         lowestMipLevel)
 {
-  const VkExtent2D size{dim, dim};
-  VkFormat         format = VK_FORMAT_R16G16B16A16_SFLOAT;
+  VkFormat format = VK_FORMAT_R16G16B16A16_SFLOAT;
   // Full chain = floor(log2(dim)) + 1. With lowestMipLevel > 0 we trim that many levels off
   // the high-roughness end, matching Khronos glTF-Sample-Renderer (lowestMipLevel = 4).
   const uint32_t fullChain  = static_cast<uint32_t>(floor(::log2(dim))) + 1;
   const uint32_t numMipmaps = doMipmap ? std::max(1u, fullChain - std::min(lowestMipLevel, fullChain - 1)) : 1;
 
-  nvutils::ScopedTimer st("%s: %u", __FUNCTION__, numMipmaps);
+  ctx.dim        = dim;
+  ctx.numMipmaps = numMipmaps;
 
   VkSamplerCreateInfo samplerCreateInfo = DEFAULT_VkSamplerCreateInfo;
   samplerCreateInfo.maxLod              = static_cast<float>(numMipmaps);
@@ -363,46 +395,39 @@ void HdrEnvDome::prefilterHdr(uint32_t dim, nvvk::Image& target, const std::span
     m_samplerPool->acquireSampler(target.descriptor.sampler, samplerCreateInfo);
   }
 
-  nvvk::Image scratchTexture;
   {  // Scratch texture
     VkImageCreateInfo imageInfo = DEFAULT_VkImageCreateInfo;
     imageInfo.extent            = {dim, dim, 1};
     imageInfo.format            = format;
     imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
-    NVVK_CHECK(m_alloc->createImage(scratchTexture, imageInfo, DEFAULT_VkImageViewCreateInfo));
-    NVVK_DBG_NAME(scratchTexture.image);
-    NVVK_DBG_NAME(scratchTexture.descriptor.imageView);
-    scratchTexture.descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-    m_samplerPool->acquireSampler(scratchTexture.descriptor.sampler, samplerCreateInfo);
+    NVVK_CHECK(m_alloc->createImage(ctx.scratch, imageInfo, DEFAULT_VkImageViewCreateInfo));
+    NVVK_DBG_NAME(ctx.scratch.image);
+    NVVK_DBG_NAME(ctx.scratch.descriptor.imageView);
+    ctx.scratch.descriptor.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    m_samplerPool->acquireSampler(ctx.scratch.descriptor.sampler, samplerCreateInfo);
   }
 
-
-  // Compute shader
-  VkPipeline       pipeline{VK_NULL_HANDLE};
-  VkPipelineLayout pipelineLayout{VK_NULL_HANDLE};
-
   // Descriptors
-  nvvk::DescriptorPack     descPack;
   nvvk::DescriptorBindings bindings;
   bindings.addBinding(shaderio::EnvDomeDraw::eHdrImage, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT);
-  NVVK_CHECK(descPack.init(bindings, m_device, 1));
-  NVVK_DBG_NAME(descPack.getLayout());
-  NVVK_DBG_NAME(descPack.getPool());
-  NVVK_DBG_NAME(descPack.getSet(0));
+  NVVK_CHECK(ctx.descPack.init(bindings, m_device, 1));
+  NVVK_DBG_NAME(ctx.descPack.getLayout());
+  NVVK_DBG_NAME(ctx.descPack.getPool());
+  NVVK_DBG_NAME(ctx.descPack.getSet(0));
 
   nvvk::WriteSetContainer writeContainer;
-  writeContainer.append(descPack.makeWrite(shaderio::EnvDomeDraw::eHdrImage), scratchTexture);
+  writeContainer.append(ctx.descPack.makeWrite(shaderio::EnvDomeDraw::eHdrImage), ctx.scratch);
   vkUpdateDescriptorSets(m_device, static_cast<uint32_t>(writeContainer.size()), writeContainer.data(), 0, nullptr);
 
-  // Creating the pipeline
+  // Compute pipeline
   const VkPushConstantRange pushConstantRange{.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT, .offset = 0, .size = sizeof(shaderio::HdrPushBlock)};
-  NVVK_CHECK(nvvk::createPipelineLayout(m_device, &pipelineLayout, {descPack.getLayout(), m_hdrEnvLayout}, {pushConstantRange}));
+  NVVK_CHECK(nvvk::createPipelineLayout(m_device, &ctx.pipelineLayout, {ctx.descPack.getLayout(), m_hdrEnvLayout}, {pushConstantRange}));
 
   VkShaderModuleCreateInfo moduleInfo = {
       .sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-      .codeSize = spirvData.size_bytes(),
-      .pCode    = spirvData.data(),
+      .codeSize = spirvCode.size_bytes(),
+      .pCode    = spirvCode.data(),
   };
 
   VkPipelineShaderStageCreateInfo stageInfo{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
@@ -411,37 +436,72 @@ void HdrEnvDome::prefilterHdr(uint32_t dim, nvvk::Image& target, const std::span
   stageInfo.pName = "main";
 
   VkComputePipelineCreateInfo comp_info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
-  comp_info.layout = pipelineLayout;
+  comp_info.layout = ctx.pipelineLayout;
   comp_info.stage  = stageInfo;
 
-  vkCreateComputePipelines(m_device, {}, 1, &comp_info, nullptr, &pipeline);
+  vkCreateComputePipelines(m_device, {}, 1, &comp_info, nullptr, &ctx.pipeline);
+}
 
-  {
-    VkCommandBuffer cmd{};
-    NVVK_CHECK(nvvk::beginSingleTimeCommands(cmd, m_device, m_transientCmdPool));
 
-    // Change scratch to general
-    nvvk::cmdImageMemoryBarrier(cmd, {scratchTexture.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL});
-    // Change target to destination
-    VkImageSubresourceRange subresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, numMipmaps, 0, 6};
-    nvvk::cmdImageMemoryBarrier(cmd, {target.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, subresourceRange});
+//--------------------------------------------------------------------------------------------------
+// Run the prefilter dispatches against a caller-owned command buffer. Uses the persistent
+// scratch / pipeline / descriptor pack allocated by prefilterHdrAllocate. Called both from the
+// one-shot prefilterHdr wrapper (during create()) and from updateEnvironment() on every commit.
+//
+void HdrEnvDome::prefilterHdrRun(VkCommandBuffer cmd, nvvk::Image& target, PrefilterCtx& ctx)
+{
+  NVVK_DBG_SCOPE(cmd);
 
-    std::array<VkDescriptorSet, 2> dstSets{descPack.getSet(0), m_hdrEnvSet};
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0,
-                            static_cast<uint32_t>(dstSets.size()), dstSets.data(), 0, nullptr);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+  // Bring scratch into the layout renderToCube expects; renderToCube transitions target itself.
+  // Using UNDEFINED as the old layout is legal per the Vulkan spec when the previous contents
+  // don't need to be preserved, which is true here (we're about to overwrite every texel).
+  nvvk::cmdImageMemoryBarrier(cmd, {ctx.scratch.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL});
 
-    renderToCube(cmd, target, scratchTexture, pipelineLayout, dim, numMipmaps);
+  std::array<VkDescriptorSet, 2> dstSets{ctx.descPack.getSet(0), m_hdrEnvSet};
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, ctx.pipelineLayout, 0,
+                          static_cast<uint32_t>(dstSets.size()), dstSets.data(), 0, nullptr);
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, ctx.pipeline);
 
-    nvvk::endSingleTimeCommands(cmd, m_device, m_transientCmdPool, m_queueInfo.queue);
-  }
+  renderToCube(cmd, target, ctx.scratch, ctx.pipelineLayout, ctx.dim, ctx.numMipmaps);
+}
 
-  // Clean up
-  vkDestroyPipeline(m_device, pipeline, nullptr);
-  vkDestroyPipelineLayout(m_device, pipelineLayout, nullptr);
-  descPack.deinit();
 
-  m_alloc->destroyImage(scratchTexture);
+//--------------------------------------------------------------------------------------------------
+// One-shot allocate + dispatch used by create(). Preserves the original per-target-submit
+// behaviour so existing callers see zero change; updateEnvironment() prefers a batched submit
+// on a caller-owned command buffer instead.
+//
+void HdrEnvDome::prefilterHdr(uint32_t dim, nvvk::Image& target, PrefilterCtx& ctx, const std::span<const uint32_t>& spirvCode, bool doMipmap, uint32_t lowestMipLevel)
+{
+  prefilterHdrAllocate(dim, target, ctx, spirvCode, doMipmap, lowestMipLevel);
+
+  nvutils::ScopedTimer st("%s: %u", __FUNCTION__, ctx.numMipmaps);
+
+  VkCommandBuffer cmd{};
+  NVVK_CHECK(nvvk::beginSingleTimeCommands(cmd, m_device, m_transientCmdPool));
+  prefilterHdrRun(cmd, target, ctx);
+  nvvk::endSingleTimeCommands(cmd, m_device, m_transientCmdPool, m_queueInfo.queue);
+}
+
+
+//--------------------------------------------------------------------------------------------------
+// Re-run only the diffuse + glossy prefilter dispatches against the existing cubes. Used by the
+// producer (nvvk::HdrIbl or an equivalent) on every environment commit after the HDR content
+// backing `hdrEnvSet` has been updated. See the header comment on the declaration for the caller
+// contract.
+//
+void HdrEnvDome::updateEnvironment(VkCommandBuffer cmd, VkDescriptorSet hdrEnvSet, PrefilterSet which)
+{
+  NVVK_DBG_SCOPE(cmd);
+
+  // Producer may have allocated a fresh descriptor set (e.g., HdrIbl::updateFromGpuImage
+  // arriving with new bindings) or reused the original set with rewritten contents; either way
+  // we rebind on each call so we don't cache a stale handle.
+  m_hdrEnvSet = hdrEnvSet;
+
+  prefilterHdrRun(cmd, m_textures.diffuse, m_diffuseCtx);
+  if(which == PrefilterSet::eAll)
+    prefilterHdrRun(cmd, m_textures.glossy, m_glossyCtx);
 }
 
 

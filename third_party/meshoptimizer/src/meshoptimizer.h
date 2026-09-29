@@ -1,5 +1,5 @@
 /**
- * meshoptimizer - version 1.2
+ * meshoptimizer - version 1.3
  *
  * Copyright (C) 2016-2026, by Arseny Kapoulkine (arseny.kapoulkine@gmail.com)
  * Report bugs and download new versions at https://github.com/zeux/meshoptimizer
@@ -12,7 +12,7 @@
 #include <stddef.h>
 
 /* Version macro; major * 1000 + minor * 10 + patch */
-#define MESHOPTIMIZER_VERSION 1020 /* 1.2 */
+#define MESHOPTIMIZER_VERSION 1030 /* 1.3 */
 
 /* If no API is defined, assume default */
 #ifndef MESHOPTIMIZER_API
@@ -974,12 +974,10 @@ MESHOPTIMIZER_EXPERIMENTAL void meshopt_generateNormals(float* result, const uns
  */
 enum
 {
-	/* Thicken thin geometry sheets, producing unique vertex positions for each side of thin geometry. Currently non-functional. */
-	meshopt_RemeshThicken = 1 << 0,
 	/* Produce a two-sided shell that wraps around surfaces of the original mesh, instead of a solid mesh. */
-	meshopt_RemeshShell = 1 << 1,
+	meshopt_RemeshShell = 1 << 0,
 	/* Compute optimal output positions that approximate the original surface as closely as possible. */
-	meshopt_RemeshSolve = 1 << 2,
+	meshopt_RemeshSolve = 1 << 1,
 };
 
 /**

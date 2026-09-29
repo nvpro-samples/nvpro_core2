@@ -28,8 +28,10 @@ shaders in `hdr_prefilter_diffuse.slang`, `hdr_prefilter_glossy.slang`, and
 tracers should use the per-lobe BSDF integrators in `bsdf_functions.h.slang` instead).
 
 All evaluators take their textures/samplers as explicit parameters so this header has no
-descriptor-set assumptions. World-space directions go in; the env rotation around +Y is applied
-internally so callers stay in their native frame.
+descriptor-set assumptions. World-space directions go in; the environment's rotation is applied
+internally so callers stay in their native frame. `envRotation` is a unit quaternion (x, y, z, w)
+taking the cubemaps' frame to world; every evaluator also has an overload taking a single angle
+about +Y, in radians, as they did before.
 -------------------------------------------------------------------------------------------------*/
 
 #include "bsdf_functions.h.slang"      // applyVolumeAttenuation
@@ -45,10 +47,16 @@ internally so callers stay in their native frame.
 # Function `getIBLDiffuse`
 > Lambertian-prefiltered cubemap lookup along a world-space direction.
 -------------------------------------------------------------------------------------------------*/
+float3 getIBLDiffuse(SamplerCube diffuseEnv, float3 n, float4 envRotation, float envIntensity)
+{
+  float3 dir = quatRotateInverse(envRotation, n);
+  return diffuseEnv.SampleLevel(dir, 0.0F).rgb * envIntensity;
+}
+// `envRotation` as an angle about +Y, in radians. Kept explicit: a float would otherwise convert to
+// a float4 silently and be read as a quaternion.
 float3 getIBLDiffuse(SamplerCube diffuseEnv, float3 n, float envRotation, float envIntensity)
 {
-  float3 dir = rotate(n, float3(0, 1, 0), -envRotation);
-  return diffuseEnv.SampleLevel(dir, 0.0F).rgb * envIntensity;
+  return getIBLDiffuse(diffuseEnv, n, quatFromYaw(envRotation), envIntensity);
 }
 
 /*-------------------------------------------------------------------------------------------------
@@ -58,15 +66,19 @@ float3 getIBLDiffuse(SamplerCube diffuseEnv, float3 n, float envRotation, float 
 `perceptualRoughness` is the artist-facing roughness in [0,1] (sqrt of GGX alpha). The GGX
 prefilter is mip-mapped: roughness scales linearly to `[0, mipCount-1]`.
 -------------------------------------------------------------------------------------------------*/
-float3 getIBLRadianceGGX(SamplerCube glossyEnv, float3 n, float3 v, float perceptualRoughness, float envRotation, float envIntensity)
+float3 getIBLRadianceGGX(SamplerCube glossyEnv, float3 n, float3 v, float perceptualRoughness, float4 envRotation, float envIntensity)
 {
   uint2 size;
   uint  mipCount;
   glossyEnv.GetDimensions(0, size.x, size.y, mipCount);
   float  lod        = perceptualRoughness * float(mipCount - 1);
   float3 reflection = normalize(reflect(-v, n));
-  float3 dir        = rotate(reflection, float3(0, 1, 0), -envRotation);
+  float3 dir        = quatRotateInverse(envRotation, reflection);
   return glossyEnv.SampleLevel(dir, lod).rgb * envIntensity;
+}
+float3 getIBLRadianceGGX(SamplerCube glossyEnv, float3 n, float3 v, float perceptualRoughness, float envRotation, float envIntensity)
+{
+  return getIBLRadianceGGX(glossyEnv, n, v, perceptualRoughness, quatFromYaw(envRotation), envIntensity);
 }
 
 /*-------------------------------------------------------------------------------------------------
@@ -83,7 +95,7 @@ float3 getIBLAnisotropy(SamplerCube glossyEnv,
                        float       perceptualRoughness,
                        float       anisotropyStrength,
                        float3      anisotropyDirection,
-                       float       envRotation,
+                       float4      envRotation,
                        float       envIntensity)
 {
   float3 anisotropicTangent = cross(anisotropyDirection, v);
@@ -97,8 +109,20 @@ float3 getIBLAnisotropy(SamplerCube glossyEnv,
   glossyEnv.GetDimensions(0, size.x, size.y, mipCount);
   float  lod        = perceptualRoughness * float(mipCount - 1);
   float3 reflection = normalize(reflect(-v, bentNormal));
-  float3 dir        = rotate(reflection, float3(0, 1, 0), -envRotation);
+  float3 dir        = quatRotateInverse(envRotation, reflection);
   return glossyEnv.SampleLevel(dir, lod).rgb * envIntensity;
+}
+float3 getIBLAnisotropy(SamplerCube glossyEnv,
+                        float3      n,
+                        float3      v,
+                        float       perceptualRoughness,
+                        float       anisotropyStrength,
+                        float3      anisotropyDirection,
+                        float       envRotation,
+                        float       envIntensity)
+{
+  return getIBLAnisotropy(glossyEnv, n, v, perceptualRoughness, anisotropyStrength, anisotropyDirection,
+                          quatFromYaw(envRotation), envIntensity);
 }
 
 /*-------------------------------------------------------------------------------------------------
@@ -145,16 +169,27 @@ float3 getIBLCharlie(SamplerCube diffuseEnv,
                     float3      v,
                     float       sheenRoughness,
                     float3      sheenColor,
-                    float       envRotation,
+                    float4      envRotation,
                     float       envIntensity)
 {
   float  NdotV      = clampedDot(n, v);
   float3 reflection = normalize(reflect(-v, n));
-  float3 dir        = rotate(reflection, float3(0, 1, 0), -envRotation);
+  float3 dir        = quatRotateInverse(envRotation, reflection);
   float3 sheenLight = diffuseEnv.SampleLevel(dir, 0.0F).rgb * envIntensity;
   float2 lutUv      = clamp(float2(NdotV, sheenRoughness), float2(0.0F), float2(1.0F));
   float  brdf       = sheenLut.SampleLevel(lutUv, 0.0F).r;
   return sheenLight * sheenColor * brdf;
+}
+float3 getIBLCharlie(SamplerCube diffuseEnv,
+                     Sampler2D   sheenLut,
+                     float3      n,
+                     float3      v,
+                     float       sheenRoughness,
+                     float3      sheenColor,
+                     float       envRotation,
+                     float       envIntensity)
+{
+  return getIBLCharlie(diffuseEnv, sheenLut, n, v, sheenRoughness, sheenColor, quatFromYaw(envRotation), envIntensity);
 }
 
 
@@ -269,7 +304,9 @@ NOT included here (intentionally separate, matching `pbr.frag:352-356` + `pbr.fr
 - `ggxLut`:                       split-sum BRDF LUT (baked by `hdr_integrate_brdf.slang`, V-axis
                                   inverted convention).
 - `sheenLut`:                     Charlie directional-albedo LUT (runtime-baked).
-- `envRotation`, `envIntensity`:  world-space rotation around +Y and scalar intensity.
+- `envRotation`, `envIntensity`:  the environment's rotation -- a unit quaternion (x, y, z, w) from
+                                  the cubemaps' frame to world, or an angle about +Y -- and scalar
+                                  intensity.
 - `diffuseTransmissionThickness`: world-space thickness for KHR_materials_diffuse_transmission
                                   volume attenuation (typically `mat.thickness * model_scale_avg`).
                                   Pass `0.0` to disable.
@@ -283,7 +320,7 @@ void _evalKhronosIBLFillCommon(PbrMaterial mat,
                                SamplerCube diffuseEnv,
                                SamplerCube glossyEnv,
                                Sampler2D   ggxLut,
-                               float       envRotation,
+                               float4      envRotation,
                                float       envIntensity,
                                float       diffuseTransmissionThickness,
                                float3      transmissionRadiance,
@@ -348,7 +385,7 @@ float3 evalKhronosIBL(PbrMaterial mat,
                       SamplerCube glossyEnv,
                       Sampler2D   ggxLut,
                       Sampler2D   sheenLut,
-                      float       envRotation,
+                      float4      envRotation,
                       float       envIntensity,
                       float       diffuseTransmissionThickness,
                       float3      transmissionRadiance,
@@ -361,6 +398,23 @@ float3 evalKhronosIBL(PbrMaterial mat,
                       ? getIBLCharlie(diffuseEnv, sheenLut, mat.N, V, mat.sheenRoughness, mat.sheenColor, envRotation, envIntensity)
                       : float3(0.0F);
   return composeIBLAnalyticKhronos(mat, lobes, V, sheenLut);
+}
+
+// `envRotation` as an angle about +Y, in radians.
+float3 evalKhronosIBL(PbrMaterial mat,
+                      float3      V,
+                      SamplerCube diffuseEnv,
+                      SamplerCube glossyEnv,
+                      Sampler2D   ggxLut,
+                      Sampler2D   sheenLut,
+                      float       envRotation,
+                      float       envIntensity,
+                      float       diffuseTransmissionThickness,
+                      float3      transmissionRadiance,
+                      bool        haveTransmissionSample)
+{
+  return evalKhronosIBL(mat, V, diffuseEnv, glossyEnv, ggxLut, sheenLut, quatFromYaw(envRotation), envIntensity,
+                        diffuseTransmissionThickness, transmissionRadiance, haveTransmissionSample);
 }
 
 /*-------------------------------------------------------------------------------------------------
@@ -377,7 +431,7 @@ float3 evalKhronosIBL(PbrMaterial mat,
                       SamplerCube diffuseEnv,
                       SamplerCube glossyEnv,
                       Sampler2D   ggxLut,
-                      float       envRotation,
+                      float4      envRotation,
                       float       envIntensity,
                       float       diffuseTransmissionThickness,
                       float3      transmissionRadiance,
@@ -388,6 +442,22 @@ float3 evalKhronosIBL(PbrMaterial mat,
                             diffuseTransmissionThickness, transmissionRadiance, haveTransmissionSample, lobes);
   lobes.f_sheen = float3(0.0F);
   return composeIBLAnalyticKhronos(mat, lobes, V);
+}
+
+// `envRotation` as an angle about +Y, in radians.
+float3 evalKhronosIBL(PbrMaterial mat,
+                      float3      V,
+                      SamplerCube diffuseEnv,
+                      SamplerCube glossyEnv,
+                      Sampler2D   ggxLut,
+                      float       envRotation,
+                      float       envIntensity,
+                      float       diffuseTransmissionThickness,
+                      float3      transmissionRadiance,
+                      bool        haveTransmissionSample)
+{
+  return evalKhronosIBL(mat, V, diffuseEnv, glossyEnv, ggxLut, quatFromYaw(envRotation), envIntensity,
+                        diffuseTransmissionThickness, transmissionRadiance, haveTransmissionSample);
 }
 
 #endif  // PBR_IBL_EVAL_H

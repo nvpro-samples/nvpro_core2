@@ -98,6 +98,12 @@ void nvvk::RayPicker::run(VkCommandBuffer cmd, const PickInfo& pickInfo)
 nvvk::RayPicker::PickResult nvvk::RayPicker::getResult() const
 {
   PickResult pr{};
+  // The Vulkan spec requires an invalidate on non-coherent host-visible memory before the
+  // host reads GPU-written data; queue-submit ordering alone does not flush the CPU cache.
+  // VMA's memory-type choice for AUTO + HOST_ACCESS_SEQUENTIAL_WRITE is a hint, not a
+  // guarantee -- coherent on desktop with ReBAR, potentially non-coherent elsewhere.
+  // autoInvalidateBuffer is a no-op on coherent memory, so this costs nothing in practice.
+  m_alloc->autoInvalidateBuffer(m_pickResult);
   memcpy(&pr, m_pickResult.mapping, sizeof(PickResult));
   return pr;
 }

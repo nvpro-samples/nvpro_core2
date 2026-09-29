@@ -113,6 +113,26 @@ inline float3 rotate(float3 v, float3 k, float theta)
   return (v * cos_theta) + (cross(k, v) * sin_theta) + (k * dot(k, v)) * (1.0F - cos_theta);
 }
 
+// Rotate `v` by the unit quaternion `q`, stored (x, y, z, w) like glTF and glm::quat.
+inline float3 quatRotate(float4 q, float3 v)
+{
+  const float3 u = float3(q.x, q.y, q.z);
+  const float3 t = 2.0F * cross(u, v);
+  return v + q.w * t + cross(u, t);
+}
+
+// Rotate `v` by the inverse of the unit quaternion `q`.
+inline float3 quatRotateInverse(float4 q, float3 v)
+{
+  return quatRotate(float4(-q.x, -q.y, -q.z, q.w), v);
+}
+
+// The unit quaternion turning by `angle` radians about +Y.
+inline float4 quatFromYaw(float angle)
+{
+  return float4(0.0F, sin(0.5F * angle), 0.0F, cos(0.5F * angle));
+}
+
 
 //-----------------------------------------------------------------------
 // Return the UV in a lat-long HDR map
@@ -124,6 +144,41 @@ inline float2 getSphericalUv(float3 v)
 
   float2 uv = float2(theta * M_1_OVER_PI * 0.5F, gamma * M_1_OVER_PI) + 0.5F;
   return uv;
+}
+
+//-----------------------------------------------------------------------
+// The inverse: (u,v) in [0..1] -> unit direction. It lives next to getSphericalUv because the two
+// must stay exact inverses -- anything that *writes* a lat-long image uses this, anything that
+// reads one back uses that, and `environmentSampleCoords` in hdr_env_sampling.h.slang (the
+// next-event direction generator) agrees with both. The body below is that function's `toLight`,
+// written out.
+//
+// An azimuth convention that disagrees is close to undetectable: a source symmetric about the up
+// axis -- which most analytic skies are, and which any bake that excludes the sun becomes --
+// produces an identical image under a mirrored azimuth. The first one with a sun in it puts the
+// light on the wrong side.
+//-----------------------------------------------------------------------
+inline float3 latlongToDir(float2 uv)
+{
+  const float phi   = M_TWO_PI * uv.x - M_PI;  // azimuth, = atan2(dir.z, dir.x)
+  const float theta = M_PI * uv.y;             // polar, 0 at the zenith
+  const float sinT  = sin(theta);
+  return float3(cos(phi) * sinT, cos(theta), sin(phi) * sinT);
+}
+
+//-----------------------------------------------------------------------
+// Solid angle subtended by a single lat-long texel in row `y` of an H-row image. Uses the exact
+// integral cos(theta_top) - cos(theta_bot), the same formula the CPU path uses when it builds an
+// environment's alias table (nvvk/hdr_ibl.cpp -> createEnvironmentAccel), so an image produced on
+// the GPU and one loaded from a file weight their texels identically. Independent of column x.
+//-----------------------------------------------------------------------
+inline float texelSolidAngle(uint y, uint width, uint height)
+{
+  float stepPhi   = M_TWO_PI / float(width);
+  float stepTheta = M_PI / float(height);
+  float thetaTop  = float(y) * stepTheta;
+  float thetaBot  = float(y + 1) * stepTheta;
+  return (cos(thetaTop) - cos(thetaBot)) * stepPhi;
 }
 
 //-----------------------------------------------------------------------

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -49,7 +49,6 @@ struct HdrDomePushConstant
 {
   float4x4 mvp;
   float4   multColor;
-  float    rotation;
   float    blur;
 };
 
@@ -69,6 +68,29 @@ enum EnvDomeBindings
 enum EnvDomeDraw
 {
   eHdrImage = 0
+};
+
+// The GPU-image path samples from a *grid* that may be coarser than the image: each grid cell
+// covers a block of image texels, and the alias table has one entry per cell. A smooth source (a
+// sky with its sun sampled separately) loses nothing to a coarse grid, and the alias build costs
+// what the grid costs rather than what the image costs. The grid must divide the image exactly, so
+// every texel belongs to one cell; a grid equal to the image is the per-texel case. The producer
+// supplies the per-cell importance -- see nvvk::HdrIbl::updateFromGpuImage.
+
+// env_write_pdf.slang: writes into the lat-long image's alpha the PDF of the grid cell each texel
+// falls in. With a grid equal to the image this is the per-texel formula of `createEnvironmentAccel`
+// (nvvk/hdr_ibl.cpp), so the file-load and GPU-image paths agree for the sampling shader.
+enum EnvWritePdfBindings
+{
+  eEnvWritePdfImage = 0,
+  eEnvWritePdfCells = 1,  // StructuredBuffer<float>, the per-cell importance, read
+};
+
+struct EnvWritePdfPushConstant
+{
+  uint2 imageSize;    // width, height of the lat-long image
+  uint2 gridSize;     // width, height of the sampling grid; divides imageSize
+  float invIntegral;  // 1 / integral of the emitted radiance (energy normalization)
 };
 
 NAMESPACE_SHADERIO_END()

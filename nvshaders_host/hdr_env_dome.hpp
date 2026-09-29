@@ -25,6 +25,7 @@
 #include <vector>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include "vulkan/vulkan_core.h"
 #include "nvvk/descriptors.hpp"
 #include "nvvk/resource_allocator.hpp"
@@ -64,7 +65,40 @@ public:
               const std::span<const uint32_t>& spirvIntegrateBrdf,
               const std::span<const uint32_t>& spirvDrawDome);
 
+  // Re-run only the diffuse + glossy prefilter dispatches against the existing cubes.
+  // Intended for environment-image producers (nvvk::HdrIbl or an equivalent) that have just
+  // updated the HDR content that `hdrEnvSet` samples from; the caller owns `cmd` and is
+  // responsible for the surrounding begin / end / submit. Skips re-creating the cube images
+  // and the BRDF LUT (both allocated once by create()), avoiding the multi-hundred-millisecond
+  // teardown-and-realloc that a full create() would incur.
+  //
+  // `hdrEnvSet` may be the same descriptor set passed to create() (contents rewritten by the
+  // producer) or a new one; either way it must be bound-compatible with the layout passed to
+  // create().
+  // Which prefiltered cubes updateEnvironment() re-dispatches.
+  //
+  // The two are not the same price: the glossy cube is 512x512x6 with a mip chain and costs
+  // roughly twice the 128x128x6 diffuse one. A caller that is refreshing the environment every
+  // frame -- while a slider is being dragged -- can take the diffuse cube alone and let specular
+  // reflections lag by the length of the drag, which is far less noticeable than the frame rate
+  // that refreshing both costs.
+  enum class PrefilterSet
+  {
+    eAll,          // Diffuse + glossy. Correct result; the price of a parameter commit.
+    eDiffuseOnly,  // Diffuse only. For per-frame refreshes during an interaction.
+  };
+
+  void updateEnvironment(VkCommandBuffer cmd, VkDescriptorSet hdrEnvSet, PrefilterSet which = PrefilterSet::eAll);
+
   void setOutImage(const VkDescriptorImageInfo& outimage);
+  // `rotation` takes the HDR's frame to world: any unit quaternion, or an angle about +Y in radians.
+  void draw(const VkCommandBuffer& cmd,
+            const glm::mat4&       view,
+            const glm::mat4&       proj,
+            const VkExtent2D&      size,
+            const glm::vec4&       color,  // color multiplier (intensity)
+            const glm::quat&       rotation,
+            float                  blur = 0.F);
   void draw(const VkCommandBuffer& cmd,
             const glm::mat4&       view,
             const glm::mat4&       proj,
@@ -109,6 +143,20 @@ private:
     nvvk::Image lutBrdf;
   } m_textures;
 
+  // Persistent per-target state for the diffuse / glossy prefilter passes. Held between
+  // create() and destroy() so updateEnvironment() can re-dispatch against the same scratch
+  // image, pipeline, and descriptor pack without reallocating -- the expensive part of a
+  // create() is the image allocation, not the compute dispatches themselves.
+  struct PrefilterCtx
+  {
+    nvvk::Image          scratch;
+    VkPipeline           pipeline{VK_NULL_HANDLE};
+    VkPipelineLayout     pipelineLayout{VK_NULL_HANDLE};
+    nvvk::DescriptorPack descPack;
+    uint32_t             dim{0};
+    uint32_t             numMipmaps{0};
+  } m_diffuseCtx, m_glossyCtx;
+
   void createDescriptorSetLayout();
   void createDrawPipeline(const std::span<const uint32_t>& spirvDrawDome);
   void integrateBrdf(uint32_t dimension, nvvk::Image& target, const std::span<const uint32_t>& spirvIntegrateBrdf);
@@ -116,7 +164,26 @@ private:
   // `floor(log2(dim)) + 1 - lowestMipLevel`, mirroring the Khronos glTF-Sample-Renderer
   // convention -- the smallest baked mip is `dim >> (mipCount - 1)`. 0 = no cap (full chain).
   // 4 matches Khronos for 256-pix cubes (= 5 mips, smallest = 16x16).
-  void prefilterHdr(uint32_t dim, nvvk::Image& target, const std::span<const uint32_t>& spirvCode, bool doMipmap, uint32_t lowestMipLevel = 0);
+  //
+  // prefilterHdrAllocate creates the target cube, the scratch image, the pipeline, and the
+  // descriptor pack; prefilterHdrRun binds and dispatches against a caller-owned command buffer.
+  // Splitting them lets create() do a one-shot init (via the prefilterHdr wrapper) while
+  // updateEnvironment() re-runs just the dispatch half using an externally supplied cmd.
+  void prefilterHdrAllocate(uint32_t                         dim,
+                            nvvk::Image&                     target,
+                            PrefilterCtx&                    ctx,
+                            const std::span<const uint32_t>& spirvCode,
+                            bool                             doMipmap,
+                            uint32_t                         lowestMipLevel = 0);
+  void prefilterHdrRun(VkCommandBuffer cmd, nvvk::Image& target, PrefilterCtx& ctx);
+  // Thin allocate + one-shot dispatch wrapper used only by create() -- preserves the original
+  // one-submit-per-target behaviour so existing callers see zero change.
+  void prefilterHdr(uint32_t                         dim,
+                    nvvk::Image&                     target,
+                    PrefilterCtx&                    ctx,
+                    const std::span<const uint32_t>& spirvCode,
+                    bool                             doMipmap,
+                    uint32_t                         lowestMipLevel = 0);
   void renderToCube(const VkCommandBuffer& cmd, nvvk::Image& target, nvvk::Image& scratch, VkPipelineLayout pipelineLayout, uint32_t dim, uint32_t numMips);
 };
 

@@ -33,6 +33,7 @@
 
 #include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
+#include <glm/vec4.hpp>
 
 namespace nvgui {
 
@@ -91,6 +92,19 @@ void nvgui::SettingsHandler::setSetting(const std::string& key, T* value)
     };
     entry.toString = [value]() {
       return std::to_string(value->x) + "," + std::to_string(value->y) + "," + std::to_string(value->z);
+    };
+  }
+  // value=1.0,0.0,0.0,1.0
+  else if constexpr(std::is_same_v<T, glm::ivec4> || std::is_same_v<T, glm::uvec4> || std::is_same_v<T, glm::vec4>)
+  {
+    entry.fromString = [value](const std::string& str) {
+      std::stringstream ss(str);
+      char              comma;
+      ss >> value->x >> comma >> value->y >> comma >> value->z >> comma >> value->w;
+    };
+    entry.toString = [value]() {
+      return std::to_string(value->x) + "," + std::to_string(value->y) + "," + std::to_string(value->z) + ","
+             + std::to_string(value->w);
     };
   }
   // value=true or value=false

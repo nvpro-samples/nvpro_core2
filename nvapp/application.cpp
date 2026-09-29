@@ -308,7 +308,13 @@ void nvapp::Application::deinit()
   }
 
   // This avoids ImGui to access destroyed elements (Handler for example)
-  if(!m_headless)
+  //
+  // `IniFilename == nullptr` is ImGui's own way of saying "do not persist this session", and an
+  // application that sets it means it: a scripted or benchmark run arranges the window for its own
+  // purposes, and saving that arrangement leaves the user's next interactive session with a layout
+  // nobody chose. Saving here unconditionally overrode that request, because this call names the
+  // file directly rather than going through io.IniFilename.
+  if(!m_headless && ImGui::GetIO().IniFilename != nullptr)
   {
     ImGui::SaveIniSettingsToDisk(m_iniFilename.c_str());
   }
