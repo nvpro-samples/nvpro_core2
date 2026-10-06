@@ -144,6 +144,7 @@ VkResult nvapp::Application::init(ApplicationCreateInfo& info)
   m_useMenubar         = info.useMenu;
   m_dockSetup          = info.dockSetup;
   m_headless           = info.headless;
+  m_persistSettings    = info.persistSettings && !info.headless;  // headless has no window or layout to keep
   m_headlessFrameCount = info.headlessFrameCount;
   m_viewportSize       = {};  // Will be set by the first viewport size
   m_maxTexturePool     = info.texturePoolSize;
@@ -309,12 +310,12 @@ void nvapp::Application::deinit()
 
   // This avoids ImGui to access destroyed elements (Handler for example)
   //
-  // `IniFilename == nullptr` is ImGui's own way of saying "do not persist this session", and an
-  // application that sets it means it: a scripted or benchmark run arranges the window for its own
-  // purposes, and saving that arrangement leaves the user's next interactive session with a layout
-  // nobody chose. Saving here unconditionally overrode that request, because this call names the
-  // file directly rather than going through io.IniFilename.
-  if(!m_headless && ImGui::GetIO().IniFilename != nullptr)
+  // A session that doesn't persist (ApplicationCreateInfo::persistSettings off, or headless) must not
+  // save: a scripted or benchmark run arranges the window for its own purposes, and saving that
+  // arrangement leaves the user's next interactive session with a layout nobody chose. An
+  // application may also clear io.IniFilename temporarily to skip a save; honor that too, since
+  // this call names the file directly rather than going through io.IniFilename.
+  if(m_persistSettings && ImGui::GetIO().IniFilename != nullptr)
   {
     ImGui::SaveIniSettingsToDisk(m_iniFilename.c_str());
   }
@@ -443,7 +444,13 @@ void nvapp::Application::run()
   }
 
   // Re-load ImGui settings from disk, as there might be application elements with settings to restore.
-  ImGui::LoadIniSettingsFromDisk(m_iniFilename.c_str());
+  // A session that doesn't persist doesn't restore either: its result would otherwise depend on
+  // whatever the last interactive session saved. An application that wants specific settings can
+  // call ImGui::LoadIniSettingsFromDisk() itself.
+  if(m_persistSettings)
+  {
+    ImGui::LoadIniSettingsFromDisk(m_iniFilename.c_str());
+  }
 
   // Handle headless mode
   if(m_headless)
@@ -1083,13 +1090,18 @@ void nvapp::Application::initializeImGuiContextAndSettings()
   m_settingsHandler.setSetting("Pos", &m_winPos);
   m_settingsHandler.addImGuiHandler();
 
-  // Load the settings from the ini file
-  ImGui::LoadIniSettingsFromDisk(m_iniFilename.c_str());
+  // Load the window size/pos and layout from the ini file, only for sessions that persist them.
+  // A headless, scripted or benchmark result must not depend on how the last session was left
+  // (a restored window size changes the viewport, and with it the image and the timings).
+  if(m_persistSettings)
+  {
+    ImGui::LoadIniSettingsFromDisk(m_iniFilename.c_str());
+  }
 
-  ImGuiIO& io = ImGui::GetIO();
-  // Set the ini file name, but only for windowed runs: headless has no real window/docking
-  // layout, so letting ImGui auto-save would overwrite the layout of windowed sessions.
-  io.IniFilename = m_headless ? nullptr : m_iniFilename.c_str();
+  // Let ImGui auto-save only sessions that persist: otherwise an automated run would overwrite the
+  // layout of interactive sessions.
+  ImGuiIO& io    = ImGui::GetIO();
+  io.IniFilename = m_persistSettings ? m_iniFilename.c_str() : nullptr;
 
   // Initialize fonts
   nvgui::addDefaultFont();

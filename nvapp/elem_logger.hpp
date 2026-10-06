@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.  All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -78,6 +78,9 @@ public:
 
   void setLevelFilter(uint32_t levelFilter);
   void addLog(uint32_t level, const char* fmt, ...);
+
+  bool isShowLog() const { return m_showLog; }      // Return true if the Log window is visible
+  void setShowLog(bool show) { m_showLog = show; }  // Show/hide the Log window
 
 private:
   nvgui::SettingsHandler m_settingsHandler;

@@ -165,6 +165,8 @@ struct ApplicationCreateInfo
   bool                         hasUndockableViewport{false};  // Allow floating windows
   std::function<void(ImGuiID)> dockSetup;                     // Dock layout setup
   ImGuiConfigFlags imguiConfigFlags{ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad | ImGuiConfigFlags_DockingEnable};
+  bool persistSettings{true};  // Restore and save <exe>.ini (window, layout, element settings). Turn off for
+                               // scripted/benchmark runs so they don't depend on the last session. Always off headless.
 
   // Headless
   bool     headless{false};        // Run without a window
@@ -205,8 +207,11 @@ public:
   bool     isVsync() const { return m_vsyncWanted; }                        // Return true if V-Sync is on
   void     setVsync(bool v);                                                // Set V-Sync on or off
   bool     isHeadless() const { return m_headless; }                        // Return true if headless
+  bool     getPersistSettings() const { return m_persistSettings; }  // Return true if <exe>.ini is restored/saved
   void     setRenderWhileMinimized(bool v) { m_renderWhileMinimized = v; }  // Continue rendering when minimized
   uint32_t getHeadlessFrameCount() const { return m_headlessFrameCount; }   // Number of frames to render in headless
+  bool     getUseMenubar() const { return m_useMenubar; }                   // Return true if the main menubar is drawn
+  void     setUseMenubar(bool v) { m_useMenubar = v; }                      // Show/hide the menubar (skips onUIMenu)
 
   // Sets how long frame preparation waits for a presentable image. The default
   // is nanoseconds::max(), which maps to Vulkan's infinite acquire timeout.
@@ -375,6 +380,7 @@ protected:
   FrameMarkerCallback     m_presentEndCallback;
 
   bool     m_headless{false};
+  bool     m_persistSettings{true};  // ApplicationCreateInfo::persistSettings, forced off in headless
   bool     m_headlessClose{false};
   uint32_t m_headlessFrameCount{1};
   bool     m_renderWhileMinimized{false};  // Continue rendering when window minimized (for external presenters)
