@@ -22,6 +22,7 @@
 #include <sstream>
 #include <fmt/format.h>
 
+#include <glm/ext/vector_relational.hpp>
 #include <imgui/imgui.h>
 #include <tinygltf/json.hpp>
 #include <nvutils/camera_manipulator.hpp>
@@ -113,13 +114,31 @@ struct CameraPresetManager
     m_cameras[0] = camera;
   }
 
+  // Same viewpoint up to round-off. Presets come back from the JSON file and from the application
+  // (e.g. glTF cameras), which may have been through float or a different decimal round-trip; an
+  // exact compare would keep each such copy as a new preset and the list would grow every reload.
+  static bool isSameCamera(const nvutils::CameraManipulator::Camera& a, const nvutils::CameraManipulator::Camera& b)
+  {
+    return a.projectionType == b.projectionType && isClose(a.eye, b.eye) && isClose(a.ctr, b.ctr) && isClose(a.up, b.up)
+           && isClose(glm::dvec1(a.fov), glm::dvec1(b.fov)) && isClose(a.nearFar, b.nearFar) && isClose(a.orthMag, b.orthMag);
+  }
+
+  // glm::equal with a per-component epsilon, scaled by magnitude so it is relative (eye/center
+  // can be thousands of units away from the origin).
+  template <glm::length_t L>
+  static bool isClose(const glm::vec<L, double>& x, const glm::vec<L, double>& y)
+  {
+    const glm::vec<L, double> epsilon = 1e-5 * glm::max(glm::vec<L, double>(1.0), glm::max(glm::abs(x), glm::abs(y)));
+    return glm::all(glm::equal(x, y, epsilon));
+  }
+
   // Adding a camera only if it different from all the saved ones
   void addCamera(const nvutils::CameraManipulator::Camera& camera)
   {
     bool unique = true;
     for(const nvutils::CameraManipulator::Camera& c : m_cameras)
     {
-      if(c == camera)
+      if(isSameCamera(c, camera))
       {
         unique = false;
         break;
