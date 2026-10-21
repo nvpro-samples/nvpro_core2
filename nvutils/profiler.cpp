@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2014-2025, NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2014-2026, NVIDIA CORPORATION.  All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,10 +13,11 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 *
-* SPDX-FileCopyrightText: Copyright (c) 2014-2024, NVIDIA CORPORATION.
+* SPDX-FileCopyrightText: Copyright (c) 2014-2026, NVIDIA CORPORATION.  All rights reserved.
 * SPDX-License-Identifier: Apache-2.0
 */
 
+#include <algorithm>
 #include <cassert>
 
 #include <fmt/format.h>
@@ -126,6 +127,9 @@ void ProfilerTimeline::frameBegin()
   m_frame.hasSplitter    = false;
   m_frame.level          = 1;
   m_frame.sectionsCount  = 0;
+  // update sections keep their slots, only the nesting restarts
+  m_update.level         = 1;
+  m_update.openParent    = ~0u;
   m_frame.cpuCurrentTime = -m_profiler->getMicroseconds();
   m_inFrame              = true;
 }
@@ -217,6 +221,10 @@ void ProfilerTimeline::frameEnd()
   }
 
   frameInternalSnapshot();
+
+  // update sections use the same frameDelay as frame sections
+  updateResolvePending();
+  updateInternalSnapshot();
 
   m_frame.count++;
   m_inFrame = false;
@@ -390,6 +398,7 @@ void ProfilerTimeline::asyncEndSection(ProfilerTimeline::AsyncSectionID sectionI
       SectionData& section = m_async.sections[sectionID.id];
       section.cpuTimes[0] += endTime;
       section.numTimes = 1;
+      section.emitCount++;
     }
   }
 }
@@ -402,6 +411,17 @@ void ProfilerTimeline::asyncResetCpuBegin(AsyncSectionID sectionID)
     SectionData& section = m_async.sections[sectionID.id];
     section.cpuTimes[0]  = -m_profiler->getMicroseconds();
   }
+}
+
+void ProfilerTimeline::asyncClearSections()
+{
+  std::lock_guard lock(m_asyncMutex);
+
+  for(uint32_t i = 0; i < m_async.sectionsCount; i++)
+  {
+    m_async.sections[i] = SectionData{};
+  }
+  m_async.sectionsCount = 0;
 }
 
 void ProfilerTimeline::asyncRemoveTimer(const std::string& name)
@@ -516,6 +536,7 @@ bool ProfilerTimeline::asyncGetTimerInfo(uint32_t i, TimerInfo& info) const
     info.async       = true;
     info.numAveraged = 1;
     info.level       = 0;
+    info.emitCount   = section.emitCount;
 
     info.cpu.absMaxValue = cpuTime;
     info.cpu.absMaxValue = cpuTime;
@@ -531,6 +552,356 @@ bool ProfilerTimeline::asyncGetTimerInfo(uint32_t i, TimerInfo& info) const
   }
 
   return false;
+}
+
+//////////////////////////////////////////////////////////////////////////
+// update sections
+
+static inline uint64_t updateMakeKey(const std::string& name, uint32_t level, uint32_t parentId)
+{
+  const uint64_t nameHash = std::hash<std::string>{}(name);
+  // the same name under two parents makes two rows
+  return nameHash ^ (uint64_t(level) * 0x9E3779B97F4A7C15ull) ^ (uint64_t(parentId + 1) * 0xC2B2AE3D27D4EB4Full);
+}
+
+uint32_t ProfilerTimeline::updateFindOrCreateSlot(const std::string& name, uint32_t level, uint32_t parentId)
+{
+  const uint64_t key = updateMakeKey(name, level, parentId);
+
+  auto it = m_update.slotByKey.find(key);
+  if(it != m_update.slotByKey.end())
+  {
+    return it->second;
+  }
+
+  const uint32_t slot = m_update.sectionsCount++;
+  if(slot >= m_update.sections.size())
+  {
+    grow(m_update.sections, m_update.sections.size() * 2, 0);
+  }
+
+  SectionData& section = m_update.sections[slot];
+  section              = SectionData{};
+  section.name         = name;
+  section.level        = level;
+  section.parentId     = parentId;
+
+  m_update.slotByKey[key] = slot;
+
+  // roots in creation order, a child at the end of its parent's subtree
+  if(parentId == ~0u)
+  {
+    m_update.order.push_back(slot);
+  }
+  else
+  {
+    const uint32_t parentLevel = m_update.sections[parentId].level;
+
+    size_t pos = 0;
+    while(pos < m_update.order.size() && m_update.order[pos] != parentId)
+      pos++;
+    pos++;
+    while(pos < m_update.order.size() && m_update.sections[m_update.order[pos]].level > parentLevel)
+      pos++;
+    m_update.order.insert(m_update.order.begin() + pos, slot);
+  }
+
+  return slot;
+}
+
+uint32_t ProfilerTimeline::updateFindOrCreateEntrySlot(uint32_t slot, uint32_t entry)
+{
+  if(entry == 0)
+  {
+    return slot;
+  }
+
+  while(m_update.sections[slot].entrySlots.size() < entry)
+  {
+    const uint32_t entrySlot = m_update.sectionsCount++;
+    if(entrySlot >= m_update.sections.size())
+    {
+      grow(m_update.sections, m_update.sections.size() * 2, 0);
+    }
+
+    SectionData& section = m_update.sections[entrySlot];
+    section              = SectionData{};
+    section.level        = m_update.sections[slot].level;
+    section.ownerId      = slot;
+
+    m_update.sections[slot].entrySlots.push_back(entrySlot);
+  }
+
+  return m_update.sections[slot].entrySlots[entry - 1];
+}
+
+ProfilerTimeline::UpdateSectionID ProfilerTimeline::updateBeginSection(const std::string& name, GpuTimeProvider* gpuTimeProvider)
+{
+  assert(m_inFrame);
+
+  const uint32_t level    = m_update.level++;
+  const uint32_t slot     = updateFindOrCreateSlot(name, level, m_update.openParent);
+  const uint32_t subFrame = m_frame.count % m_info.frameDelay;
+
+  // a section entered again in the same frame is measured in an extra slot, with its own GPU
+  // queries. updateResolvePending() sums the entries
+  uint32_t entry;
+  {
+    SectionData& section          = m_update.sections[slot];
+    const bool   reentered        = (section.lastEnterFrame == m_frame.count);
+    section.lastEnterFrame        = m_frame.count;
+    section.gpuTimeProvider       = gpuTimeProvider;
+    section.subFrame              = subFrame;
+    section.recordFrame[subFrame] = m_frame.count;
+    section.entryCounts[subFrame] = reentered ? section.entryCounts[subFrame] + 1 : 1;
+    entry                         = section.entryCounts[subFrame] - 1;
+  }
+
+  const uint32_t measuredSlot = updateFindOrCreateEntrySlot(slot, entry);
+
+  SectionData& measured       = m_update.sections[measuredSlot];
+  measured.gpuTimeProvider    = gpuTimeProvider;
+  measured.cpuTimes[subFrame] = -m_profiler->getMicroseconds();
+  measured.gpuTimes[subFrame] = 0;
+
+  // children are keyed under the section's own slot
+  m_update.openParent = slot;
+
+  UpdateSectionID sectionID{};
+  sectionID.id       = measuredSlot;
+  sectionID.subFrame = subFrame;
+  return sectionID;
+}
+
+void ProfilerTimeline::updateEndSection(UpdateSectionID sectionID)
+{
+  SectionData& measured = m_update.sections[sectionID.id];
+  measured.cpuTimes[sectionID.subFrame] += m_profiler->getMicroseconds();
+
+  // the section's own slot
+  const uint32_t slot    = (measured.ownerId != ~0u) ? measured.ownerId : sectionID.id;
+  SectionData&   section = m_update.sections[slot];
+
+  section.pending[sectionID.subFrame] = true;
+
+  m_update.level--;
+  m_update.openParent = section.parentId;
+}
+
+void ProfilerTimeline::updateResetCpuBegin(UpdateSectionID sectionID)
+{
+  SectionData& section                 = m_update.sections[sectionID.id];
+  section.cpuTimes[sectionID.subFrame] = -m_profiler->getMicroseconds();
+}
+
+void ProfilerTimeline::updateResolvePending()
+{
+  const uint32_t queryFrame = (m_frame.count + 1) % m_info.frameDelay;
+
+  for(uint32_t slot : m_update.order)
+  {
+    SectionData& section = m_update.sections[slot];
+
+    // a section that did not run keeps its last value
+    if(!section.pending[queryFrame])
+      continue;
+
+    // sum the frame's entries
+    double cpuTime   = 0;
+    double gpuTime   = 0;
+    bool   available = true;
+    for(uint32_t entry = 0; available && entry < section.entryCounts[queryFrame]; entry++)
+    {
+      UpdateSectionID sec{};
+      sec.id       = entry ? section.entrySlots[entry - 1] : slot;
+      sec.subFrame = queryFrame;
+
+      const SectionData& measured     = m_update.sections[sec.id];
+      double             entryGpuTime = 0;
+      // a provider without updateFunction gives no GPU time
+      if(measured.gpuTimeProvider && measured.gpuTimeProvider->updateFunction)
+      {
+        available = measured.gpuTimeProvider->updateFunction(sec, entryGpuTime);
+      }
+      cpuTime += measured.cpuTimes[queryFrame];
+      gpuTime += entryGpuTime;
+    }
+    if(!available)
+    {
+      // timestamps not available yet, keep it pending
+      continue;
+    }
+
+    section.gpuTimes[queryFrame] = gpuTime;
+    section.valueFrame           = section.recordFrame[queryFrame];
+    section.cpuTime.add(cpuTime);
+    section.gpuTime.add(gpuTime);
+    section.numTimes++;
+    section.emitCount++;
+    section.lastEmitFrame       = m_frame.count;
+    section.pending[queryFrame] = false;
+  }
+}
+
+bool ProfilerTimeline::updateGetTimerInfo(uint32_t slot, TimerInfo& info, bool zeroed) const
+{
+  const SectionData& section = m_update.sections[slot];
+
+  info             = TimerInfo{};
+  info.accumulated = false;
+  info.async       = false;
+  info.level       = section.level;
+  // 0 means no measurement yet
+  info.numAveraged = section.emitCount ? 1 : 0;
+  info.emitCount   = section.emitCount;
+
+  // last value, not an average; min/max cover all measurements
+  const double cpuValue = zeroed ? 0.0 : section.cpuTime.valueLast;
+  const double gpuValue = zeroed ? 0.0 : section.gpuTime.valueLast;
+
+  info.cpu.last        = cpuValue;
+  info.cpu.average     = cpuValue;
+  info.cpu.absMinValue = section.cpuTime.absMinValue;
+  info.cpu.absMaxValue = section.cpuTime.absMaxValue;
+  info.cpu.times       = section.cpuTime.times;
+  info.cpu.index       = section.cpuTime.cycleIndex;
+
+  info.gpu.last        = gpuValue;
+  info.gpu.average     = gpuValue;
+  info.gpu.absMinValue = section.gpuTime.absMinValue;
+  info.gpu.absMaxValue = section.gpuTime.absMaxValue;
+  info.gpu.times       = section.gpuTime.times;
+  info.gpu.index       = section.gpuTime.cycleIndex;
+
+  return true;
+}
+
+void ProfilerTimeline::updateInternalSnapshot()
+{
+  std::lock_guard lock(m_updateSnapshotMutex);
+
+  m_updateSnapshot.timerInfos.clear();
+  m_updateSnapshot.timerNames.clear();
+  m_updateSnapshot.timerApiNames.clear();
+  m_updateSnapshot.name = m_info.name;
+  m_updateSnapshot.id   = (size_t)this;
+
+  if(m_update.order.empty())
+    return;
+
+  // artificial parent, like the "Async" one
+  m_updateSnapshot.timerInfos.push_back({});
+  m_updateSnapshot.timerNames.push_back("Updates");
+  m_updateSnapshot.timerApiNames.push_back("GPU");
+
+  // rows reporting 0:
+  // - with updateResetWhenIdle, those that did not run this frame, have nothing in flight and
+  //   had no measurement resolve this frame
+  // - otherwise, those not measured in the latest frame where a root ran, so the tree shows one
+  //   pass and a parent is never smaller than its children
+  uint32_t referenceFrame = 0;
+  bool     haveReference  = false;
+  if(!m_info.updateResetWhenIdle)
+  {
+    for(uint32_t slot : m_update.order)
+    {
+      const SectionData& section = m_update.sections[slot];
+      if(section.parentId != ~0u || section.emitCount == 0)
+        continue;
+      if(!haveReference || section.valueFrame > referenceFrame)
+      {
+        referenceFrame = section.valueFrame;
+        haveReference  = true;
+      }
+    }
+  }
+
+  for(uint32_t slot : m_update.order)
+  {
+    const SectionData& section = m_update.sections[slot];
+
+    bool zeroed;
+    if(m_info.updateResetWhenIdle)
+    {
+      bool pendingAny = false;
+      for(uint32_t i = 0; i < m_info.frameDelay; i++)
+        pendingAny = pendingAny || section.pending[i];
+
+      zeroed = (section.lastEnterFrame != m_frame.count) && !pendingAny && (section.lastEmitFrame != m_frame.count);
+    }
+    else
+    {
+      zeroed = (section.emitCount == 0) || !haveReference || (section.valueFrame != referenceFrame);
+    }
+
+    TimerInfo timerInfo;
+    updateGetTimerInfo(slot, timerInfo, zeroed);
+
+    m_updateSnapshot.timerInfos.push_back(timerInfo);
+    m_updateSnapshot.timerNames.push_back(section.name);
+    m_updateSnapshot.timerApiNames.push_back(section.gpuTimeProvider ? section.gpuTimeProvider->apiName : "");
+  }
+}
+
+void ProfilerTimeline::updateClearSections()
+{
+  m_update.sections.clear();
+  m_update.slotByKey.clear();
+  m_update.order.clear();
+  m_update.sectionsCount = 0;
+  m_update.level         = 1;
+  m_update.openParent    = ~0u;
+
+  grow(m_update.sections, m_info.defaultTimers, 0);
+
+  std::lock_guard lock(m_updateSnapshotMutex);
+  m_updateSnapshot.timerInfos.clear();
+  m_updateSnapshot.timerNames.clear();
+  m_updateSnapshot.timerApiNames.clear();
+}
+
+void ProfilerTimeline::getUpdateSnapshot(Snapshot& snapShot) const
+{
+  std::lock_guard lock(m_updateSnapshotMutex);
+
+  snapShot = m_updateSnapshot;
+}
+
+void ProfilerTimeline::updateRemoveSlotRecursive(uint32_t slot)
+{
+  // children first, so an erase never invalidates a parent lookup
+  for(uint32_t i = 0; i < m_update.sectionsCount; i++)
+  {
+    if(!m_update.sections[i].name.empty() && m_update.sections[i].parentId == slot)
+    {
+      updateRemoveSlotRecursive(i);
+    }
+  }
+
+  SectionData& section = m_update.sections[slot];
+
+  // and its extra entry slots
+  for(uint32_t entrySlot : section.entrySlots)
+  {
+    m_update.sections[entrySlot] = SectionData{};
+  }
+
+  m_update.slotByKey.erase(updateMakeKey(section.name, section.level, section.parentId));
+  m_update.order.erase(std::remove(m_update.order.begin(), m_update.order.end(), slot), m_update.order.end());
+
+  // emptied but not reused, live UpdateSectionIDs may still refer to it
+  section = SectionData{};
+}
+
+void ProfilerTimeline::updateRemoveTimer(const std::string& name)
+{
+  for(uint32_t i = 0; i < m_update.sectionsCount; i++)
+  {
+    if(m_update.sections[i].name == name)
+    {
+      updateRemoveSlotRecursive(i);
+    }
+  }
 }
 
 void ProfilerTimeline::getAsyncSnapshot(Snapshot& snapShot) const
@@ -684,6 +1055,25 @@ void ProfilerManager::appendPrint(std::string& statsFrames, std::string& statsAs
   }
 }
 
+void ProfilerManager::setUpdateResetWhenIdle(bool state)
+{
+  std::lock_guard lock(m_mutex);
+  for(auto& it : m_timelines)
+  {
+    it->setUpdateResetWhenIdle(state);
+  }
+}
+
+bool ProfilerManager::getUpdateResetWhenIdle() const
+{
+  std::lock_guard lock(m_mutex);
+  for(auto& it : m_timelines)
+  {
+    return it->getUpdateResetWhenIdle();
+  }
+  return true;
+}
+
 void ProfilerManager::getSnapshots(std::vector<ProfilerTimeline::Snapshot>& frameSnapshots,
                                    std::vector<ProfilerTimeline::Snapshot>& asyncSnapshots) const
 {
@@ -695,6 +1085,24 @@ void ProfilerManager::getSnapshots(std::vector<ProfilerTimeline::Snapshot>& fram
   {
     it->getFrameSnapshot(frameSnapshots[i]);
     it->getAsyncSnapshot(asyncSnapshots[i]);
+    i++;
+  }
+}
+
+void ProfilerManager::getSnapshots(std::vector<ProfilerTimeline::Snapshot>& frameSnapshots,
+                                   std::vector<ProfilerTimeline::Snapshot>& asyncSnapshots,
+                                   std::vector<ProfilerTimeline::Snapshot>& updateSnapshots) const
+{
+  std::lock_guard lock(m_mutex);
+  frameSnapshots.resize(m_timelines.size());
+  asyncSnapshots.resize(m_timelines.size());
+  updateSnapshots.resize(m_timelines.size());
+  size_t i = 0;
+  for(auto& it : m_timelines)
+  {
+    it->getFrameSnapshot(frameSnapshots[i]);
+    it->getAsyncSnapshot(asyncSnapshots[i]);
+    it->getUpdateSnapshot(updateSnapshots[i]);
     i++;
   }
 }

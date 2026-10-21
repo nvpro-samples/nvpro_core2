@@ -49,8 +49,10 @@ bool CameraWidget(std::shared_ptr<nvutils::CameraManipulator> cameraManip,
                   bool                                        embed        = false,
                   CameraWidgetSections                        openSections = CameraSection_Default);
 
-// Sets the name (without .json) of the setting file. It will load and replace all cameras and settings
-void SetCameraJsonFile(const std::filesystem::path& filename);
+// Sets the name (without .json) of the setting file, which replaces all cameras and settings (mode,
+// speed, animation duration). Given cameraManip, it is loaded into it now; otherwise the next time
+// CameraWidget() is drawn, which may be never while the widget sits in a hidden tab.
+void SetCameraJsonFile(const std::filesystem::path& filename, std::shared_ptr<nvutils::CameraManipulator> cameraManip = nullptr);
 // Sets the home camera - replacing the one on load
 void SetHomeCamera(const nvutils::CameraManipulator::Camera& camera);
 // Adds a camera to the list of cameras

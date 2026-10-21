@@ -5259,8 +5259,10 @@ static bool ParseAccessor(Accessor *accessor, std::string *err,
   accessor->byteOffset = byteOffset;
   accessor->normalized = normalized;
   {
-    if (componentType >= TINYGLTF_COMPONENT_TYPE_BYTE &&
-        componentType <= TINYGLTF_COMPONENT_TYPE_DOUBLE) {
+    // Any component type with a defined size: the glTF 2.0 ones, plus float64 and the glTF 2.1
+    // additions (float16, int64, uint64). Where a type may be used is up to the caller.
+    if (componentType <= 0xFFFFFFFFu &&
+        GetComponentSizeInBytes(static_cast<uint32_t>(componentType)) > 0) {
       // OK
       accessor->componentType = int(componentType);
     } else {
@@ -8245,6 +8247,10 @@ static void SerializeGltfAsset(const Asset &asset, detail::json &o) {
   // TODO(syoyo): Do we need to check if `version` is greater or equal to 2.0?
   SerializeStringProperty("version", version, o);
 
+  if (!asset.minVersion.empty()) {
+    SerializeStringProperty("minVersion", asset.minVersion, o);
+  }
+
   if (asset.thumbnail != -1) {
     SerializeNumberProperty<int>("thumbnail", asset.thumbnail, o);
   }
@@ -9228,9 +9234,9 @@ static void SerializeGltfModel(const Model *model, detail::json &o) {
     detail::json externalAssets;
     detail::JsonReserveArray(externalAssets, model->externalAssets.size());
     for (unsigned int i = 0; i < model->externalAssets.size(); ++i) {
-      detail::json asset;
-      SerializeGltfExternalAsset(model->externalAssets[i], asset);
-      detail::JsonPushBack(externalAssets, std::move(asset));
+      detail::json externalAsset;
+      SerializeGltfExternalAsset(model->externalAssets[i], externalAsset);
+      detail::JsonPushBack(externalAssets, std::move(externalAsset));
     }
     detail::JsonAddMember(o, "externalAssets", std::move(externalAssets));
   }

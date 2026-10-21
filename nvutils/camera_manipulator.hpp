@@ -50,6 +50,16 @@ constexpr double DEFAULT_ANIMATION_DURATION = 0.5;  // seconds
 
 // Aspect ratio safety
 constexpr double MIN_ASPECT_RATIO = EPSILON;
+
+// Closest the view direction may come to the up axis, in radians. Both orbit paths stop
+// short of it: the camera frame is undefined exactly on the axis, and crossing it would
+// mirror the frame.
+//
+// It also has to stay clear of the angle at which effectiveUp() gives up on 'up' and
+// substitutes a world axis, because that substitution rolls the view. That happens below
+// sin(angle)^2 == EPSILON, so this needs to be comfortably above sqrt(EPSILON) == 1e-3;
+// at 1e-2 the test value is 1e-4, two orders of magnitude clear.
+constexpr double MIN_POLE_ANGLE = 1e-2;
 }  // namespace CameraConstants
 
 /*-------------------------------------------------------------------------------------------------
@@ -67,8 +77,9 @@ constexpr double MIN_ASPECT_RATIO = EPSILON;
 
   To use the camera manipulator, you need to do the following:
   - Call setWindowSize() at creation of the application and when the window size change
+  - Call setRenderSize() when the image is rendered at a size whose shape is not the window's
   - Call setLookat() at creation to initialize the camera look position
-  - Call setMousePosition() on application mouse down
+  - Call beginInteraction() on application mouse down
   - Call mouseMove() on application mouse move
 
   Retrieve the camera matrix by calling getMatrix().
@@ -90,6 +101,7 @@ class CameraManipulator
 {
 public:
   CameraManipulator();
+  virtual ~CameraManipulator() = default;
 
   enum Modes
   {
@@ -151,11 +163,17 @@ public:
 
 public:
   // === Interaction ===
+  // Called at the start of a mouse interaction (mouse button down).
+  // The default implementation records the mouse position and clears the anchor, so an
+  // interaction pivots on the center of interest unless an anchor is set for it.
+  // Subclasses can override to pick an anchor, and must call the base implementation first.
+  virtual void beginInteraction(const glm::dvec2& pos, const Inputs& inputs);
+
   // Handle mouse movement with current input state.
   // screenDisplacement: current cursor position in screen space.
   // inputs: mouse button and modifier state.
   // returns: the action that was applied, if any.
-  Actions mouseMove(glm::dvec2 screenDisplacement, const Inputs& inputs);
+  virtual Actions mouseMove(glm::dvec2 screenDisplacement, const Inputs& inputs);
 
   // === Camera State ===
   // Set the camera to look at the interest point.
@@ -187,6 +205,22 @@ public:
   // === Configuration ===
   // To call when the size of the window change. This allows to do nicer movement according to the window size.
   void setWindowSize(glm::uvec2 winSize);
+  // To call when the image is rendered at a size whose shape is not the window's, as with a
+  // render target at a fixed resolution: a 1920x1080 image shown in a window of another shape,
+  // a capture at a set size. The projection, fit() framing and orthographic magnification then
+  // use the aspect ratio of that size, or the image would come out stretched, while mouse and
+  // wheel movement stays relative to the window size. Scaling the render target by a factor
+  // (render scaling, upscaling) keeps the window's shape and does not need it.
+  //
+  // The render size stays in use through later setWindowSize() calls, until setRenderSize({0, 0})
+  // goes back to the window size. An orthographic camera's magnification follows at once.
+  void setRenderSize(glm::uvec2 renderSize)
+  {
+    m_renderSize = renderSize;
+    adjustOrthographicAspect();
+  }
+  // The size given to setRenderSize(), {0, 0} when the window size is used.
+  glm::uvec2 getRenderSize() const { return m_renderSize; }
 
   const Camera& getCamera() const { return m_current; }
   // Set the new camera as a goal
@@ -256,13 +290,20 @@ public:
   // Handle mouse wheel input (dolly or zoom).
   // value: wheel delta.
   // inputs: modifier state (shift changes zoom/FOV).
-  void wheel(double value, const Inputs& inputs);
+  // Virtual so a subclass can dolly toward an anchor, as it can for a drag through mouseMove().
+  virtual void wheel(double value, const Inputs& inputs);
 
   // Retrieve the screen dimension
   glm::uvec2 getWindowSize() const { return m_windowSize; }
-  double getAspectRatio() const { return static_cast<double>(m_windowSize.x) / static_cast<double>(m_windowSize.y); }
+  // Aspect ratio of the image being produced: that of the render size when one is set (see
+  // setRenderSize()), that of the window otherwise.
+  double getAspectRatio() const
+  {
+    const glm::uvec2 size = (m_renderSize.x > 0 && m_renderSize.y > 0) ? m_renderSize : m_windowSize;
+    return static_cast<double>(size.x) / static_cast<double>(size.y);
+  }
 
-  // Adjust the orthographic camera's aspect ratio to match the current viewport.
+  // Adjust the orthographic camera's aspect ratio to match getAspectRatio().
   // More specifically, sets the orthographic width (xmag) to be
   // the height (ymag) multiplied by the aspect ratio.
   void adjustOrthographicAspect();
@@ -312,6 +353,17 @@ public:
   }
   void setUp(const glm::dvec3& up, bool instantSet = true) { setLookat(m_current.eye, m_current.ctr, up, instantSet); }
 
+  // Anchor point for camera interactions. While set, orbit pivots around it, and pan and
+  // dolly scale their movement by the distance to it instead of to the center of interest.
+  // Cleared at the start of every interaction by beginInteraction(), and by ElementCamera
+  // whenever no mouse button is held, so for wheel input set it from a wheel() override.
+  // Setting it also slides the center of interest along the view direction to the anchor's
+  // depth and stops any animation; an anchor at or behind the eye is ignored. See the definition.
+  void                             setAnchor(const glm::dvec3& anchor);
+  void                             clearAnchor() { m_anchor.reset(); }
+  bool                             hasAnchor() const { return m_anchor.has_value(); }
+  const std::optional<glm::dvec3>& getAnchor() const { return m_anchor; }
+
   // Returns an increasing time value in milliseconds.
   double getTimeMs() const;
 
@@ -339,7 +391,16 @@ private:
   // User input cancels animation; optionally refresh the view matrix.
   void applyUserChange(bool updateMatrix = true);
 
+  // Reduce a pitch rotation about the camera right axis so the resulting view direction
+  // keeps at least MIN_POLE_ANGLE away from the up axis.
+  // forward: current view direction, already yawed.
+  // pitch: requested rotation in radians, positive tilting the view toward the up axis.
+  double clampPitchToPole(const glm::dvec3& forward, double pitch) const;
+
   // Helpers
+  // Visible extent of the view plane passing through the given world-space point.
+  ViewDimensions getViewDimensionsAt(const glm::dvec3& point) const;
+  // Same, for the plane through the center of interest.
   ViewDimensions getViewDimensions() const;
   CameraFrame    computeCameraFrame() const;
   glm::dvec3     projectToGroundPlane(const glm::dvec3& vec) const;
@@ -352,6 +413,9 @@ private:
   // then the camera stays in place and interest orbits around the camera position.
   // displacement: normalized screen displacement [0,1]
   void orbit(glm::dvec2 displacement, bool invert = false);
+  // Orbit around an arbitrary pivot, keeping it under the same pixel. Used for the anchor.
+  // displacement: normalized screen displacement scaled to radians
+  void orbitAbout(const glm::dvec3& pivot, glm::dvec2 displacement);
   // Do dolly: movement toward the interest. In orthographic mode, this zooms the view volume.
   // displacement: normalized screen displacement [0,1]
   void dolly(glm::dvec2 displacement, bool keepCenterFixed = false);
@@ -382,12 +446,17 @@ protected:
 
   // Window size
   glm::uvec2 m_windowSize = glm::uvec2(1, 1);
+  // Size of the image rendered, {0, 0} to use m_windowSize; see setRenderSize().
+  glm::uvec2 m_renderSize = glm::uvec2(0, 0);
 
   // Other
   double     m_speed = 3.0;
   glm::dvec2 m_mouse = glm::dvec2(0.0, 0.0);
 
   Modes m_mode = Modes::Examine;
+
+  // Optional pivot for the current interaction; see setAnchor().
+  std::optional<glm::dvec3> m_anchor = std::nullopt;
 };
 
 // Plugin interface for the camera system.

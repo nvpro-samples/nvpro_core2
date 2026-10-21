@@ -111,6 +111,9 @@ private:
     nvutils::ProfilerTimeline::TimerInfo timerInfo;
 
     size_t timerIndex = 0;
+
+    // false when no GPU timer measures the section
+    bool hasGpu = false;
   };
 
   // TODOC
@@ -152,9 +155,11 @@ private:
   nvutils::ProfilerManager* m_profiler = nullptr;
   std::vector<View>         m_views;
   std::vector<EntryNode>    m_frameNodes;
+  std::vector<EntryNode>    m_updateNodes;
   std::vector<EntryNode>    m_singleNodes;
 
   std::vector<nvutils::ProfilerTimeline::Snapshot> m_frameSnapshots;
+  std::vector<nvutils::ProfilerTimeline::Snapshot> m_updateSnapshots;
   std::vector<nvutils::ProfilerTimeline::Snapshot> m_singleSnapshots;
 };
 

@@ -437,7 +437,7 @@ void brdf_diffuse_sample(NVSHADERS_INOUT_TYPE(BsdfSampleData) data, PbrMaterial 
 
 // Evaluates the diffuse-transmission lobe (Lambertian BTDF).
 // Per KHR_materials_diffuse_transmission, the BTDF color is `tint` (the caller passes
-// `mat.diffuseTransmissionColor`). Independent of the surface's `baseColor` -- baseColor
+// `mat.diffuseTransmissionColorFactor`). Independent of the surface's `baseColor` -- baseColor
 // only affects the diffuse REFLECTION lobe. Symmetric with `brdf_diffuse_eval`.
 void brdf_diffuse_transmission_eval(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data, PbrMaterial mat, float3 tint)
 {
@@ -457,7 +457,7 @@ void brdf_diffuse_transmission_eval(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data,
 
 // Samples the diffuse-transmission lobe.
 // Per KHR_materials_diffuse_transmission, the BTDF color is `tint` (the caller passes
-// `mat.diffuseTransmissionColor`). Independent of the surface's `baseColor`. Symmetric with
+// `mat.diffuseTransmissionColorFactor`). Independent of the surface's `baseColor`. Symmetric with
 // `brdf_diffuse_sample`.
 void brdf_diffuse_transmission_sample(NVSHADERS_INOUT_TYPE(BsdfSampleData) data, PbrMaterial mat, float3 tint)
 {
@@ -469,7 +469,7 @@ void brdf_diffuse_transmission_sample(NVSHADERS_INOUT_TYPE(BsdfSampleData) data,
   // Compute the PDF for this direction.
   data.pdf = dot(data.k2, -mat.N) * M_1_PI;
 
-  // Lambertian BTDF / cosine-PDF; cancels to just `tint` (= diffuseTransmissionColor).
+  // Lambertian BTDF / cosine-PDF; cancels to just `tint` (= diffuseTransmissionColorFactor).
   data.bsdf_over_pdf = tint;
   data.event_type    = BSDF_EVENT_DIFFUSE_TRANSMISSION;
 }
@@ -1049,10 +1049,10 @@ int bsdfEvaluateCore(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data, PbrMaterial ma
   }
   else if(lobe == LOBE_DIFFUSE_TRANSMISSION)
   {
-    // Per KHR_materials_diffuse_transmission, the BTDF color is `diffuseTransmissionColor`,
+    // Per KHR_materials_diffuse_transmission, the BTDF color is `diffuseTransmissionColorFactor`,
     // independent of `baseColor`. Pass it directly (bypassing the iridescence-modified `tint`,
     // which only applies to the dielectric base / specular layers).
-    brdf_diffuse_transmission_eval(data, mat, mat.diffuseTransmissionColor);
+    brdf_diffuse_transmission_eval(data, mat, mat.diffuseTransmissionColorFactor);
   }
   else if(lobe == LOBE_SPECULAR_REFLECTION)
   {
@@ -1149,9 +1149,9 @@ void bsdfSampleLobe(NVSHADERS_INOUT_TYPE(BsdfSampleData) data, PbrMaterial mat, 
   }
   else if(lobe == LOBE_DIFFUSE_TRANSMISSION)
   {
-    // Per KHR_materials_diffuse_transmission, the BTDF color is `diffuseTransmissionColor`,
+    // Per KHR_materials_diffuse_transmission, the BTDF color is `diffuseTransmissionColorFactor`,
     // independent of `baseColor`. Pass it directly; see brdf_diffuse_transmission_eval dispatch.
-    brdf_diffuse_transmission_sample(data, mat, mat.diffuseTransmissionColor);
+    brdf_diffuse_transmission_sample(data, mat, mat.diffuseTransmissionColorFactor);
   }
   else if(lobe == LOBE_SPECULAR_REFLECTION)
   {

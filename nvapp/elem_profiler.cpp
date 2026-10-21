@@ -141,10 +141,11 @@ void ElementProfiler::updateData()
 {
 
   // retrieve statistics, thread safe
-  m_profiler->getSnapshots(m_frameSnapshots, m_singleSnapshots);
+  m_profiler->getSnapshots(m_frameSnapshots, m_singleSnapshots, m_updateSnapshots);
 
   // reset tree storage
   m_frameNodes.clear();
+  m_updateNodes.clear();
   m_singleNodes.clear();
 
   // fill tree
@@ -154,6 +155,13 @@ void ElementProfiler::updateData()
     entryNode.name = snapshot.name;
     m_frameNodes.emplace_back(entryNode);
     addEntries(snapshot, m_frameNodes.back().child, 0, (uint32_t)snapshot.timerInfos.size());
+  }
+  for(const auto& snapshot : m_updateSnapshots)
+  {
+    EntryNode entryNode;
+    entryNode.name = snapshot.name;
+    m_updateNodes.emplace_back(entryNode);
+    addEntries(snapshot, m_updateNodes.back().child, 0, (uint32_t)snapshot.timerInfos.size());
   }
   for(const auto& snapshot : m_singleSnapshots)
   {
@@ -183,7 +191,10 @@ uint32_t ElementProfiler::addEntries(const nvutils::ProfilerTimeline::Snapshot& 
     const auto& level     = timerInfo.level;
 
     if(level < currentLevel)
-      return curIndex;
+    {
+      // the caller's loop increments the index: return the previous one so this entry is not skipped
+      return curIndex - 1;
+    }
 
     const auto& name = snapshot.timerNames[curIndex];
 
@@ -192,6 +203,7 @@ uint32_t ElementProfiler::addEntries(const nvutils::ProfilerTimeline::Snapshot& 
     entryNode.gpuTime   = static_cast<float>(timerInfo.gpu.average / 1000.);
     entryNode.cpuTime   = static_cast<float>(timerInfo.cpu.average / 1000.);
     entryNode.timerInfo = timerInfo;
+    entryNode.hasGpu    = !snapshot.timerApiNames[curIndex].empty();
 
     if(timerInfo.async)
     {
@@ -223,36 +235,38 @@ void ElementProfiler::displayTableNode(const EntryNode& node, bool detailed, uin
   bool        open     = ImGui::TreeNodeEx(node.name.c_str(), flags);
   const auto& info     = node.timerInfo;
 
-  // convert to microseconds and draw otherwise display '--' if invalid
-  auto drawValue = [](double value) {
-    if(value <= 0)
+  // convert to microseconds and draw, otherwise display '--' if there is no measurement
+  auto drawValue = [](bool hasData, double value) {
+    if(!hasData || value < 0)
       ImGui::TextDisabled("--");
     else
       ImGui::Text("%3.3f", value / 1000.0f);
   };
+  const bool hasCpu = info.numAveraged != 0;
+  const bool hasGpu = hasCpu && node.hasGpu;
 
   ImGui::PushFont(nvgui::getMonospaceFont());
   ImGui::TableNextColumn();
-  drawValue(info.gpu.average);
+  drawValue(hasGpu, info.gpu.average);
   if(detailed)
   {
     ImGui::TableNextColumn();
-    drawValue(info.gpu.last);
+    drawValue(hasGpu, info.gpu.last);
     ImGui::TableNextColumn();
-    drawValue(info.gpu.absMinValue);
+    drawValue(hasGpu, info.gpu.absMinValue);
     ImGui::TableNextColumn();
-    drawValue(info.gpu.absMaxValue);
+    drawValue(hasGpu, info.gpu.absMaxValue);
   }
   ImGui::TableNextColumn();
-  drawValue(info.cpu.average);
+  drawValue(hasCpu, info.cpu.average);
   if(detailed)
   {
     ImGui::TableNextColumn();
-    drawValue(info.cpu.last);
+    drawValue(hasCpu, info.cpu.last);
     ImGui::TableNextColumn();
-    drawValue(info.cpu.absMinValue);
+    drawValue(hasCpu, info.cpu.absMinValue);
     ImGui::TableNextColumn();
-    drawValue(info.cpu.absMaxValue);
+    drawValue(hasCpu, info.cpu.absMaxValue);
   }
   ImGui::PopFont();
 
@@ -295,6 +309,15 @@ void ElementProfiler::renderTable(View& view)
   ImGui::SameLine();
   ImGui::Checkbox("detailed", &view.state->table.detailed);
 
+  ImGui::SameLine();
+  bool zeroIdle = m_profiler->getUpdateResetWhenIdle();
+  if(ImGui::Checkbox("zero idle updates", &zeroIdle))
+  {
+    m_profiler->setUpdateResetWhenIdle(zeroIdle);
+  }
+  if(ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+    ImGui::SetTooltip("Update rows show 0 on frames they did not run, instead of their last measurement");
+
   // Copy content
   ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - 38);
   if(ImGui::Button(ICON_MS_CONTENT_COPY))
@@ -322,7 +345,7 @@ void ElementProfiler::renderTable(View& view)
         ImGui::Spacing();  // add a small vertical gap between tables, for better legibility
     }
 
-    if(!m_frameNodes[i].child.empty() || !m_singleNodes[i].child.empty())
+    if(!m_frameNodes[i].child.empty() || !m_updateNodes[i].child.empty() || !m_singleNodes[i].child.empty())
     {
       int colCount = view.state->table.detailed ? 9 : 3;
 
@@ -347,6 +370,11 @@ void ElementProfiler::renderTable(View& view)
         ImGui::TableHeadersRow();
 
         for(const auto& node : m_frameNodes[i].child)
+        {
+          displayTableNode(node, view.state->table.detailed, view.state->table.levels, 0);
+        }
+
+        for(const auto& node : m_updateNodes[i].child)
         {
           displayTableNode(node, view.state->table.detailed, view.state->table.levels, 0);
         }

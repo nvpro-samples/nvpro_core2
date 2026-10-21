@@ -60,7 +60,7 @@ section. This header only defines per-lobe BRDFs that compose those primitives i
 direct-lighting-specific ways, plus the per-light evaluator that ties them together.
 -------------------------------------------------------------------------------------------------*/
 
-#include "bsdf_functions.h.slang"      // applyIorToRoughness, applyVolumeAttenuation
+#include "bsdf_functions.h.slang"  // applyIorToRoughness, applyVolumeAttenuation
 #include "constants.h.slang"
 #include "functions.h.slang"
 #include "pbr_ggx_microfacet.h.slang"  // Khronos analytic helpers (D_GGX, V_GGX, ...) + MC primitives
@@ -211,7 +211,7 @@ float3 _bsdfEvaluatePunctualKhronosCore(PbrMaterial mat,
   {
     // Back-hemisphere Lambertian.
     float  diffuseNdotL   = clampedDot(-N, L);
-    float3 l_diffuse_btdf = lightIntensity * diffuseNdotL * BRDF_lambertian(mat.diffuseTransmissionColor);
+    float3 l_diffuse_btdf = lightIntensity * diffuseNdotL * BRDF_lambertian(mat.diffuseTransmissionColorFactor);
 
     // Recompute dielectric Fresnel at the mirror-bounced light's half vector. This represents
     // the energy that does NOT pass through the front surface to reach the diffuse-trans path.
@@ -222,8 +222,8 @@ float3 _bsdfEvaluatePunctualKhronosCore(PbrMaterial mat,
 
     if(diffuseTransmissionThickness > 0.0F && mat.attenuationDistance > 0.0F)
     {
-      l_diffuse_btdf = applyVolumeAttenuation(l_diffuse_btdf, diffuseTransmissionThickness,
-                                              mat.attenuationColor, mat.attenuationDistance);
+      l_diffuse_btdf =
+          applyVolumeAttenuation(l_diffuse_btdf, diffuseTransmissionThickness, mat.attenuationColor, mat.attenuationDistance);
     }
     l_diffuse += l_diffuse_btdf * mat.diffuseTransmissionFactor;
   }
@@ -234,22 +234,24 @@ float3 _bsdfEvaluatePunctualKhronosCore(PbrMaterial mat,
   // that fixes its mis-attenuation of close point lights against thick transmissive surfaces.
   if(mat.transmission > 0.0F)
   {
-    float3 btdfL            = normalize(pointToLight - transmissionRay);
+    float3 btdfL = normalize(pointToLight - transmissionRay);
     // `transmissionTint` is float3(1) for plain glTF materials; see PbrMaterial.
     float3 transmittedLight =
         lightIntensity * getPunctualRadianceTransmission(N, V, btdfL, alphaRoughness, mat.baseColor * mat.transmissionTint, ior);
 
     if(mat.thickness > 0.0F && mat.attenuationDistance > 0.0F && length(transmissionRay) > 0.0F)
     {
-      transmittedLight = applyVolumeAttenuation(transmittedLight, length(transmissionRay), mat.attenuationColor, mat.attenuationDistance);
+      transmittedLight =
+          applyVolumeAttenuation(transmittedLight, length(transmissionRay), mat.attenuationColor, mat.attenuationDistance);
     }
     l_diffuse = lerp(l_diffuse, transmittedLight, mat.transmission);
   }
 
   // ----- Specular reflection (metal + dielectric, isotropic or anisotropic) -----
-  float3 l_specular = isAnisotropic
-                          ? lightIntensity * NdotL * BRDF_specularGGXAnisotropy(mat.roughness.x, mat.roughness.y, N, V, L, H, mat.T, mat.B)
-                          : lightIntensity * NdotL * BRDF_specularGGX(alphaRoughness, NdotL, NdotV, NdotH);
+  float3 l_specular =
+      isAnisotropic ?
+          lightIntensity * NdotL * BRDF_specularGGXAnisotropy(mat.roughness.x, mat.roughness.y, N, V, L, H, mat.T, mat.B) :
+          lightIntensity * NdotL * BRDF_specularGGX(alphaRoughness, NdotL, NdotV, NdotH);
 
   float3 l_metal_brdf      = metal_fresnel * l_specular;
   float3 l_dielectric_brdf = lerp(l_diffuse, l_specular, dielectric_fresnel);
@@ -263,13 +265,13 @@ float3 _bsdfEvaluatePunctualKhronosCore(PbrMaterial mat,
   }
 
   // ----- Clearcoat reflection -----
-  float3 l_clearcoat_brdf = (mat.clearcoat > 0.0F)
-                                ? lightIntensity * getPunctualRadianceClearCoat(mat.Nc, V, L, H, mat.clearcoatRoughness)
-                                : float3(0.0F);
+  float3 l_clearcoat_brdf = (mat.clearcoat > 0.0F) ?
+                                lightIntensity * getPunctualRadianceClearCoat(mat.Nc, V, L, H, mat.clearcoatRoughness) :
+                                float3(0.0F);
 
   // ----- Layered composite (matches `pbr.frag:345-348`) -----
-  return layeredCompositeKhronos(l_dielectric_brdf, l_metal_brdf, mat.metallic, l_sheen, sheenScale,
-                                 l_clearcoat_brdf, mat.clearcoat, clearcoatFresnel);
+  return layeredCompositeKhronos(l_dielectric_brdf, l_metal_brdf, mat.metallic, l_sheen, sheenScale, l_clearcoat_brdf,
+                                 mat.clearcoat, clearcoatFresnel);
 }
 
 /*-------------------------------------------------------------------------------------------------
@@ -309,8 +311,8 @@ float3 bsdfEvaluatePunctualKhronos(PbrMaterial mat,
   // Sheen (KHR_materials_sheen): per-light Charlie radiance + bidirectional energy-compensation
   // scaling via the directional-albedo LUT (`min(LUT(NdotV), LUT(NdotL))`). The compiler is
   // expected to CSE NdotV/NdotL/H/NdotH with the matching computations inside `_core`.
-  float3 l_sheen     = float3(0.0F);
-  float  sheenScale  = 1.0F;
+  float3 l_sheen    = float3(0.0F);
+  float  sheenScale = 1.0F;
   if(max3(mat.sheenColor) > 0.0F)
   {
     float3 N     = mat.N;
@@ -339,16 +341,11 @@ Use when the scene guarantees no material carries `KHR_materials_sheen`. Avoids 
 bake/bind the Charlie sheen LUT. If called on a material that DOES have sheen set, the sheen
 contribution is silently dropped -- by design; the caller is asserting the scene has no sheen.
 -------------------------------------------------------------------------------------------------*/
-float3 bsdfEvaluatePunctualKhronos(PbrMaterial mat,
-                                   float3      V,
-                                   float3      pointToLight,
-                                   float3      lightIntensity,
-                                   float3      transmissionRay,
-                                   float       diffuseTransmissionThickness)
+float3 bsdfEvaluatePunctualKhronos(PbrMaterial mat, float3 V, float3 pointToLight, float3 lightIntensity, float3 transmissionRay, float diffuseTransmissionThickness)
 {
   return _bsdfEvaluatePunctualKhronosCore(mat, V, pointToLight, lightIntensity, transmissionRay,
-                                          diffuseTransmissionThickness, /*sheenScale=*/ 1.0F,
-                                          /*l_sheen=*/ float3(0.0F));
+                                          diffuseTransmissionThickness, /*sheenScale=*/1.0F,
+                                          /*l_sheen=*/float3(0.0F));
 }
 
 #endif  // PBR_DIRECT_EVAL_H

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2014-2025, NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2014-2026, NVIDIA CORPORATION.  All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 *
-* SPDX-FileCopyrightText: Copyright (c) 2014-2025, NVIDIA CORPORATION.
+* SPDX-FileCopyrightText: Copyright (c) 2014-2026, NVIDIA CORPORATION.  All rights reserved.
 * SPDX-License-Identifier: Apache-2.0
 */
 
@@ -29,6 +29,7 @@
 #include <mutex>
 #include <list>
 #include <array>
+#include <unordered_map>
 
 #include "timers.hpp"
 
@@ -39,9 +40,11 @@ class ProfilerManager;
 
 // The ProfilerTimeline allows to measure timed sections
 // along a single timeline.
-// There are two kinds of timed section operations:
+// There are three kinds of timed section operations:
 // - per-frame operations start with the "frame" prefix.
 //   Any frame section must be triggered within a `frameBegin`/`frameEnd` pairing.
+// - update operations start with the "update" prefix, for work that does not run every frame.
+//   Also within `frameBegin`/`frameEnd`. They nest, report their last value and are never reset.
 // - single shot operations start with the "async" prefix.
 //   They are thread-safe and can be called at any time.
 //   Timer results using the same timer name are then overwritten.
@@ -76,6 +79,9 @@ public:
     // 0 means we average infinitely
     // N <= MAX_LAST_FRAMES means we average the last N frames
     uint32_t frameAveragingCount = MAX_LAST_FRAMES;
+
+    // update sections that did not run report 0 (true) or their last measurement (false)
+    bool updateResetWhenIdle = true;
   };
 
   struct FrameSectionID
@@ -89,19 +95,28 @@ public:
     uint32_t id;
   };
 
+  struct UpdateSectionID
+  {
+    uint32_t id : 28;
+    uint32_t subFrame : 4;
+  };
+
   // GPU times for a FrameSections are queried at "frameEnd" with the use of this function.
   // It returns true if the queried result was available, and writes the microseconds into gpuTime.
   typedef std::function<bool(FrameSectionID, double& gpuTime)> gpuFrameTimeProvider_fn;
   // GPU times for AsyncSectionID are queried at "
   typedef std::function<bool(AsyncSectionID, double& gpuTime)> gpuAsyncTimeProvider_fn;
+  // GPU times for UpdateSectionID are queried at "frameEnd", like the frame ones.
+  typedef std::function<bool(UpdateSectionID, double& gpuTime)> gpuUpdateTimeProvider_fn;
 
   // This class can hold timer sections from different APIs (Vk, GL, CUDA...). We use the
   // below struct to serve as API agnostic interface.
   struct GpuTimeProvider
   {
-    std::string             apiName;
-    gpuFrameTimeProvider_fn frameFunction;
-    gpuAsyncTimeProvider_fn asyncFunction;
+    std::string              apiName;
+    gpuFrameTimeProvider_fn  frameFunction;
+    gpuAsyncTimeProvider_fn  asyncFunction;
+    gpuUpdateTimeProvider_fn updateFunction;
 
     // Utility functions that help converting the FrameSectionID or AsyncSectionID to a linear array index.
     // Useful for GPU timer classes to manage resources as big arrays, or pools of arrays.
@@ -115,6 +130,12 @@ public:
 
     // always 2 consecutive indices per timer, one for begin, one for end
     static inline uint32_t getTimerBaseIdx(AsyncSectionID slot) { return (slot.id * 2); }
+
+    // update timers use up to MAX_FRAME_DELAY queries in-flight, like frame timers
+    static inline uint32_t getTimerBaseIdx(UpdateSectionID slot)
+    {
+      return ((slot.id * MAX_FRAME_DELAY) + slot.subFrame) * 2;
+    }
   };
 
   //////////////////////////////////////////////////////////////////////////
@@ -174,6 +195,30 @@ public:
   void frameAccumulationSplit();
 
   //////////////////////////////////////////////////////////////////////////
+  // update timer operations
+  // NOT thread-safe
+  //
+  // For work that does not run every frame (uploads, acceleration structure builds).
+  // A section is keyed by (name, level, parent) rather than by call order, so skipping it does
+  // not reset the other timers. It reports its last measurement, keeps its row until removed,
+  // and reports the sum of its entries when entered several times in one frame.
+
+  // begin a timed update section
+  // must be called within begin/endFrame
+  UpdateSectionID updateBeginSection(const std::string& name, GpuTimeProvider* gpuTimeProvider = nullptr);
+  // end a timed update section
+  void updateEndSection(UpdateSectionID sec);
+
+  // GPU timer implementations may want to use this function to reset the cpu time to exclude internal setup overhead
+  void updateResetCpuBegin(UpdateSectionID sec);
+
+  // removes the named section and its children
+  void updateRemoveTimer(const std::string& name);
+
+  // removes all update sections, when loading a new scene for instance
+  void updateClearSections();
+
+  //////////////////////////////////////////////////////////////////////////
   // async timer operations
   // thread-safe
 
@@ -187,6 +232,9 @@ public:
   void asyncResetCpuBegin(AsyncSectionID sec);
   // can release timer names you never want to use again
   void asyncRemoveTimer(const std::string& name);
+
+  // removes all async sections
+  void asyncClearSections();
 
   //////////////////////////////////////////////////////////////////////////
   // getters
@@ -217,6 +265,10 @@ public:
 
     // nesting level for frame sections
     uint32_t level = 0;
+
+    // measurements taken by update and async sections, which keep their last value while idle.
+    // 0 for frame sections
+    uint32_t emitCount = 0;
 
     TimerStats cpu;
     TimerStats gpu;
@@ -258,6 +310,8 @@ public:
   void getFrameSnapshot(Snapshot& snapShot) const;
   bool getFrameTimerInfo(const std::string& name, TimerInfo& info, std::string& apiName) const;
 
+  void getUpdateSnapshot(Snapshot& snapShot) const;
+
   //////////////////////////////////////////////////////////////////////////
   // configuration changes
   // thread-safe
@@ -277,6 +331,10 @@ public:
   // 0 means we average all values
   // otherwise num <= MAX_LAST_FRAMES to average in a cyclic window
   void setFrameAveragingCount(uint32_t num);
+
+  // see CreateInfo::updateResetWhenIdle
+  void setUpdateResetWhenIdle(bool state) { m_info.updateResetWhenIdle = state; }
+  bool getUpdateResetWhenIdle() const { return m_info.updateResetWhenIdle; }
 
   //////////////////////////////////////////////////////////////////////////
 
@@ -315,6 +373,27 @@ public:
   // thread-safe
   AsyncSection asyncSection(const std::string& name) { return AsyncSection(*this, asyncBeginSection(name, nullptr)); }
 
+  // utility class to call begin/end within local scope
+  class UpdateSection
+  {
+  public:
+    UpdateSection(ProfilerTimeline& ProfilerTimeline, UpdateSectionID id)
+        : m_ProfilerTimeline(ProfilerTimeline)
+        , m_id(id) {};
+    ~UpdateSection() { m_ProfilerTimeline.updateEndSection(m_id); }
+
+  private:
+    ProfilerTimeline& m_ProfilerTimeline;
+    UpdateSectionID   m_id;
+  };
+
+  // must be called within frameBegin/frameEnd
+  // not thread-safe
+  UpdateSection updateSection(const std::string& name)
+  {
+    return UpdateSection(*this, updateBeginSection(name, nullptr));
+  }
+
   //////////////////////////////////////////////////////////////////////////
   // internals
   ProfilerTimeline() = default;
@@ -334,6 +413,7 @@ protected:
 
     grow(m_frame.sections, createInfo.defaultTimers, createInfo.frameAveragingCount);
     grow(m_async.sections, createInfo.defaultTimers, 0);
+    grow(m_update.sections, createInfo.defaultTimers, 0);
 
     frameBegin();
   }
@@ -349,6 +429,16 @@ protected:
   void frameInternalSnapshot();
 
   bool asyncGetTimerInfo(uint32_t i, TimerInfo& info) const;
+
+  UpdateSectionID updateGetSectionID(uint32_t slot);
+  uint32_t        updateFindOrCreateSlot(const std::string& name, uint32_t level, uint32_t parentId);
+  // slot measuring the n-th entry of a section in a frame, entry 0 being the section's own slot
+  uint32_t updateFindOrCreateEntrySlot(uint32_t slot, uint32_t entry);
+  bool     updateGetTimerInfo(uint32_t i, TimerInfo& info, bool zeroed) const;
+  // resolves the update sections recorded frameDelay frames ago
+  void updateResolvePending();
+  void updateInternalSnapshot();
+  void updateRemoveSlotRecursive(uint32_t slot);
 
   static constexpr uint32_t LEVEL_SINGLESHOT = ~0;
 
@@ -451,6 +541,44 @@ protected:
     // we accumulate the timing values of all of them
 
     bool accumulated = false;
+
+    //////////////////////////////////////////////////////////////////////
+    // update sections only
+
+    // parent slot, ~0 for a root
+    uint32_t parentId = ~0u;
+    // measurements taken, 0 until the first one resolves
+    uint32_t emitCount = 0;
+    // frame of the last measurement
+    uint32_t lastEmitFrame = 0;
+    // per subFrame, a measurement recorded and not resolved yet
+    std::array<bool, MAX_FRAME_DELAY> pending = {};
+    // per subFrame, the frame it was recorded in; and the frame of the value reported
+    std::array<uint32_t, MAX_FRAME_DELAY> recordFrame = {};
+    uint32_t                              valueFrame  = 0;
+    // frame of the last entry, ~0 if never entered
+    uint32_t lastEnterFrame = ~0u;
+    // extra slots measuring the repeated entries of a frame, and per subFrame the entry count.
+    // ownerId is the section's slot, set on the extra slots only
+    std::vector<uint32_t>                 entrySlots;
+    std::array<uint32_t, MAX_FRAME_DELAY> entryCounts = {};
+    uint32_t                              ownerId     = ~0u;
+  };
+
+  struct UpdateData
+  {
+    // slots ever created, never shrinks
+    uint32_t sectionsCount = 0;
+    // nesting depth while recording, 1-based like FrameData::level
+    uint32_t level = 1;
+    // slot id of the section currently open, ~0 at root
+    uint32_t openParent = ~0u;
+
+    std::vector<SectionData> sections;
+    // (name, level, parent) -> slot
+    std::unordered_map<uint64_t, uint32_t> slotByKey;
+    // slots in display order
+    std::vector<uint32_t> order;
   };
 
   struct FrameData
@@ -499,6 +627,10 @@ protected:
 
   AsyncData          m_async;
   mutable std::mutex m_asyncMutex;
+
+  UpdateData         m_update;
+  Snapshot           m_updateSnapshot;
+  mutable std::mutex m_updateSnapshotMutex;
 };
 
 class ProfilerManager
@@ -522,6 +654,10 @@ public:
   // calls Profiler::Timeline::resetFrameSections for all timelines
   void resetFrameSections(uint32_t delayInFrames);
 
+  // calls Profiler::Timeline::setUpdateResetWhenIdle for all timelines, the getter returns the first one's
+  void setUpdateResetWhenIdle(bool state);
+  bool getUpdateResetWhenIdle() const;
+
   // pretty print current timers
   // If `full == true` appends all properties of a `ProfilerTimeline::TimerInfo`,
   // otherwise only the `level` and `averages` for GPU and CPU are added.
@@ -530,6 +666,11 @@ public:
   // sets vectors to contain all snapshots
   void getSnapshots(std::vector<ProfilerTimeline::Snapshot>& frameSnapshots,
                     std::vector<ProfilerTimeline::Snapshot>& asyncSnapshots) const;
+
+  // as above, plus the update snapshots
+  void getSnapshots(std::vector<ProfilerTimeline::Snapshot>& frameSnapshots,
+                    std::vector<ProfilerTimeline::Snapshot>& asyncSnapshots,
+                    std::vector<ProfilerTimeline::Snapshot>& updateSnapshots) const;
 
 protected:
   std::list<std::unique_ptr<ProfilerTimeline>> m_timelines;

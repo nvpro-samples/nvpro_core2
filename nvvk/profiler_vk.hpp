@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2014-2025, NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2014-2026, NVIDIA CORPORATION.  All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 *
-* SPDX-FileCopyrightText: Copyright (c) 2014-2024, NVIDIA CORPORATION.
+* SPDX-FileCopyrightText: Copyright (c) 2014-2026, NVIDIA CORPORATION.  All rights reserved.
 * SPDX-License-Identifier: Apache-2.0
 */
 
@@ -45,6 +45,10 @@ public:
   // thread-safe
   nvutils::ProfilerTimeline::AsyncSectionID cmdAsyncBeginSection(VkCommandBuffer cmd, const std::string& name);
   void cmdAsyncEndSection(VkCommandBuffer cmd, nvutils::ProfilerTimeline::AsyncSectionID slot);
+
+  // not thread-safe
+  nvutils::ProfilerTimeline::UpdateSectionID cmdUpdateBeginSection(VkCommandBuffer cmd, const std::string& name);
+  void cmdUpdateEndSection(VkCommandBuffer cmd, nvutils::ProfilerTimeline::UpdateSectionID slot);
 
   //////////////////////////////////////////////////////////////////////////
 
@@ -93,6 +97,29 @@ public:
     return AsyncSection(*this, cmdAsyncBeginSection(cmd, name), cmd);
   }
 
+  // utility class to call begin/end within local scope
+  class UpdateSection
+  {
+  public:
+    UpdateSection(ProfilerGpuTimer& profilerGpuTimer, nvutils::ProfilerTimeline::UpdateSectionID id, VkCommandBuffer cmd)
+        : m_profilerGpuTimer(profilerGpuTimer)
+        , m_cmd(cmd)
+        , m_id(id) {};
+    ~UpdateSection() { m_profilerGpuTimer.cmdUpdateEndSection(m_cmd, m_id); }
+
+  private:
+    ProfilerGpuTimer&                          m_profilerGpuTimer;
+    VkCommandBuffer                            m_cmd;
+    nvutils::ProfilerTimeline::UpdateSectionID m_id;
+  };
+
+  // update section must be within beginFrame/endFrame
+  // not thread-safe
+  UpdateSection cmdUpdateSection(VkCommandBuffer cmd, const std::string& name)
+  {
+    return UpdateSection(*this, cmdUpdateBeginSection(cmd, name), cmd);
+  }
+
   //////////////////////////////////////////////////////////////////////////
 
 protected:
@@ -127,6 +154,7 @@ protected:
   PoolContainer      m_frame;
   PoolContainer      m_async;
   mutable std::mutex m_asyncMutex;
+  PoolContainer      m_update;
 };
 
 }  // namespace nvvk

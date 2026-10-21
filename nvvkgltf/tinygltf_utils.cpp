@@ -474,7 +474,7 @@ KHR_materials_diffuse_transmission tinygltf::utils::getDiffuseTransmission(const
         tinygltf::utils::getElementValue(tmat.extensions, KHR_MATERIALS_DIFFUSE_TRANSMISSION_EXTENSION_NAME);
     tinygltf::utils::getValue(ext, "diffuseTransmissionFactor", gmat.diffuseTransmissionFactor);
     tinygltf::utils::getValue(ext, "diffuseTransmissionTexture", gmat.diffuseTransmissionTexture);
-    tinygltf::utils::getArrayValue(ext, "diffuseTransmissionColor", gmat.diffuseTransmissionColor);
+    tinygltf::utils::getArrayValue(ext, "diffuseTransmissionColorFactor", gmat.diffuseTransmissionColorFactor);
     tinygltf::utils::getValue(ext, "diffuseTransmissionColorTexture", gmat.diffuseTransmissionColorTexture);
   }
   return gmat;
@@ -490,7 +490,8 @@ void tinygltf::utils::setDiffuseTransmission(tinygltf::Material& tmat, const KHR
   tinygltf::Value& ext = tmat.extensions[KHR_MATERIALS_DIFFUSE_TRANSMISSION_EXTENSION_NAME];
   tinygltf::utils::setValue(ext, "diffuseTransmissionFactor", diffuseTransmission.diffuseTransmissionFactor);
   tinygltf::utils::setValue(ext, "diffuseTransmissionTexture", diffuseTransmission.diffuseTransmissionTexture);
-  tinygltf::utils::setArrayValue(ext, "diffuseTransmissionColor", 3, glm::value_ptr(diffuseTransmission.diffuseTransmissionColor));
+  tinygltf::utils::setArrayValue(ext, "diffuseTransmissionColorFactor", 3,
+                                 glm::value_ptr(diffuseTransmission.diffuseTransmissionColorFactor));
   tinygltf::utils::setValue(ext, "diffuseTransmissionColorTexture", diffuseTransmission.diffuseTransmissionColorTexture);
 }
 

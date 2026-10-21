@@ -124,6 +124,9 @@ bool ParameterSequencer::prepareFrame()
       }
 
       m_currentArgument = m_currentArgument + stopOffset;
+
+      // a section counts its frames from its own start
+      m_frameCount = 0;
     }
   }
 

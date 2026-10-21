@@ -148,8 +148,8 @@ struct GltfShadeMaterial
   float3 pbrSpecularFactor;    // offset 176  - 12 bytes
   float  pbrGlossinessFactor;  // offset 188  - 4 bytes
 
-  float3 diffuseTransmissionColor;   // offset 192  - 12 bytes
-  float  diffuseTransmissionFactor;  // offset 204  - 4 bytes
+  float3 diffuseTransmissionColorFactor;  // offset 192  - 12 bytes
+  float  diffuseTransmissionFactor;       // offset 204  - 4 bytes
 
   float3 multiscatterColorFactor;  // offset 208  - 12 bytes  // KHR_materials_scatter
   float  scatterAnisotropy;        // offset 220  - 4 bytes   // KHR_materials_scatter
@@ -197,43 +197,43 @@ inline GltfTextureInfo defaultGltfTextureInfo()
 inline GltfShadeMaterial defaultGltfMaterial()
 {
   GltfShadeMaterial m;
-  m.pbrBaseColorFactor          = float4(1, 1, 1, 1);
-  m.emissiveFactor              = float3(0, 0, 0);
-  m.normalTextureScale          = 1;
-  m.pbrRoughnessFactor          = 1;
-  m.pbrMetallicFactor           = 1;
-  m.alphaMode                   = AlphaMode::eAlphaModeOpaque;
-  m.alphaCutoff                 = 0.5;
-  m.transmissionFactor          = 0;
-  m.ior                         = 1.5;
-  m.attenuationColor            = float3(1, 1, 1);
-  m.thicknessFactor             = 0;
-  m.attenuationDistance         = 0;
-  m.clearcoatFactor             = 0;
-  m.clearcoatRoughness          = 0;
-  m.specularFactor              = 0;
-  m.specularColorFactor         = float3(1, 1, 1);
-  m.unlit                       = 0;
-  m.iridescenceFactor           = 0;
-  m.iridescenceThicknessMaximum = 100;
-  m.iridescenceThicknessMinimum = 400;
-  m.iridescenceIor              = 1.3f;
-  m.anisotropyStrength          = 0;
-  m.anisotropyRotation          = float2(0, 0);
-  m.sheenRoughnessFactor        = 0;
-  m.sheenColorFactor            = float3(0, 0, 0);
-  m.occlusionStrength           = 1;
-  m.dispersion                  = 0;
-  m.usePbrSpecularGlossiness    = 0;
-  m.pbrDiffuseFactor            = float4(1);
-  m.pbrSpecularFactor           = float3(1);
-  m.pbrGlossinessFactor         = 1;
-  m.diffuseTransmissionColor    = float3(1, 1, 1);
-  m.diffuseTransmissionFactor   = 0;
-  m.multiscatterColorFactor     = float3(1, 1, 1);
-  m.scatterStrengthFactor       = 0;
-  m.scatterAnisotropy           = 0;
-  m.doubleSided                 = 0;
+  m.pbrBaseColorFactor             = float4(1, 1, 1, 1);
+  m.emissiveFactor                 = float3(0, 0, 0);
+  m.normalTextureScale             = 1;
+  m.pbrRoughnessFactor             = 1;
+  m.pbrMetallicFactor              = 1;
+  m.alphaMode                      = AlphaMode::eAlphaModeOpaque;
+  m.alphaCutoff                    = 0.5;
+  m.transmissionFactor             = 0;
+  m.ior                            = 1.5;
+  m.attenuationColor               = float3(1, 1, 1);
+  m.thicknessFactor                = 0;
+  m.attenuationDistance            = 0;
+  m.clearcoatFactor                = 0;
+  m.clearcoatRoughness             = 0;
+  m.specularFactor                 = 0;
+  m.specularColorFactor            = float3(1, 1, 1);
+  m.unlit                          = 0;
+  m.iridescenceFactor              = 0;
+  m.iridescenceThicknessMaximum    = 100;
+  m.iridescenceThicknessMinimum    = 400;
+  m.iridescenceIor                 = 1.3f;
+  m.anisotropyStrength             = 0;
+  m.anisotropyRotation             = float2(0, 0);
+  m.sheenRoughnessFactor           = 0;
+  m.sheenColorFactor               = float3(0, 0, 0);
+  m.occlusionStrength              = 1;
+  m.dispersion                     = 0;
+  m.usePbrSpecularGlossiness       = 0;
+  m.pbrDiffuseFactor               = float4(1);
+  m.pbrSpecularFactor              = float3(1);
+  m.pbrGlossinessFactor            = 1;
+  m.diffuseTransmissionColorFactor = float3(1, 1, 1);
+  m.diffuseTransmissionFactor      = 0;
+  m.multiscatterColorFactor        = float3(1, 1, 1);
+  m.scatterStrengthFactor          = 0;
+  m.scatterAnisotropy              = 0;
+  m.doubleSided                    = 0;
 
   m.pbrBaseColorTexture             = 0;
   m.normalTexture                   = 0;

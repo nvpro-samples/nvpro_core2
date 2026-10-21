@@ -30,6 +30,17 @@ void nvapp::ElementCamera::updateCamera(std::shared_ptr<nvutils::CameraManipulat
 
   m_cameraManip->updateAnim();  // This makes the camera to transition smoothly to the new position
 
+  // While no button is held, make sure no anchor is left over, whether or not the viewport is
+  // hovered. The press frame can be missed, since this function returns early when the viewport is
+  // not seen as hovered, and a stale anchor would otherwise silently become the pivot for a drag
+  // that starts outside and enters the viewport. Any such drag falls back to the center of
+  // interest, as it did before anchors existed.
+  if(!ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsMouseDown(ImGuiMouseButton_Middle)
+     && !ImGui::IsMouseDown(ImGuiMouseButton_Right))
+  {
+    m_cameraManip->clearAnchor();
+  }
+
   // Check if the mouse cursor is over the "Viewport", check for all inputs that can manipulate the camera.
   if(!nvgui::isWindowHovered(viewportWindow))
     return;
@@ -41,6 +52,14 @@ void nvapp::ElementCamera::updateCamera(std::shared_ptr<nvutils::CameraManipulat
   inputs.shift    = ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift);
   inputs.alt      = ImGui::IsKeyDown(ImGuiKey_LeftAlt) || ImGui::IsKeyDown(ImGuiKey_RightAlt);
   ImVec2 mousePos = ImGui::GetMousePos();
+
+  // Begin an interaction on mouse down, which is where a subclass gets to pick an anchor
+  // point. Read before the keyboard handling below, which clears the shift and ctrl flags.
+  if(ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Middle)
+     || ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+  {
+    m_cameraManip->beginInteraction({mousePos.x, mousePos.y}, inputs);
+  }
 
   // None of the modifiers should be pressed for the single key: WASD and arrows
   if(!inputs.alt)

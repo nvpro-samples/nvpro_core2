@@ -864,9 +864,12 @@ bool nvgui::CameraWidget(std::shared_ptr<nvutils::CameraManipulator> cameraManip
   return changed || instantChanged;
 }
 
-void nvgui::SetCameraJsonFile(const std::filesystem::path& filename)
+void nvgui::SetCameraJsonFile(const std::filesystem::path& filename, std::shared_ptr<nvutils::CameraManipulator> cameraManip)
 {
-  CameraPresetManager::getInstance().setCameraJsonFile(filename);
+  CameraPresetManager& manager = CameraPresetManager::getInstance();
+  manager.setCameraJsonFile(filename);
+  if(cameraManip)
+    manager.update(cameraManip);  // What CameraWidget() would do on its next draw: HOME, then the file
 }
 
 void nvgui::SetHomeCamera(const nvutils::CameraManipulator::Camera& camera)

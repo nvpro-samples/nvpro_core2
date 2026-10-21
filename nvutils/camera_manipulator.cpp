@@ -42,9 +42,23 @@ std::vector<std::shared_ptr<CameraPlugin>> s_cameraPlugins;
 
 // Returns 'up' if it is not parallel to the view direction, otherwise a world axis that is.
 // glm::lookAt and any cross(forward, up) basis construction would otherwise produce NaN.
+//
+// The test is made on the normalized view direction so that it measures an angle. Crossing
+// with the raw eye-to-center vector scaled the result by the distance to the center of
+// interest, so the same viewing angle counted as degenerate close up but not far away.
+// Substituting a different axis rolls the view, and near the pole that showed up as the
+// roll snapping back and forth as the distance changed.
 glm::dvec3 effectiveUp(const glm::dvec3& eye, const glm::dvec3& ctr, const glm::dvec3& up)
 {
-  const glm::dvec3 right = glm::cross(ctr - eye, up);
+  const glm::dvec3 viewDelta = ctr - eye;
+  const double     viewLen2  = glm::dot(viewDelta, viewDelta);
+  // Only a zero vector has no direction to test against. Any other length normalizes fine, and
+  // skipping the test for short ones would hand a parallel 'up' to a camera that is merely close.
+  if(viewLen2 == 0.0)
+    return up;
+
+  // With both arguments unit length this is sin^2 of the angle between them.
+  const glm::dvec3 right = glm::cross(viewDelta / std::sqrt(viewLen2), up);
   if(glm::dot(right, right) > CameraConstants::EPSILON)
     return up;
   return std::abs(up.y) < 0.9 ? glm::dvec3(0, 1, 0) : glm::dvec3(1, 0, 0);
@@ -158,18 +172,26 @@ void CameraManipulator::setAnimationDuration(double val)
   m_duration = val;
 }
 
-CameraManipulator::ViewDimensions CameraManipulator::getViewDimensions() const
+CameraManipulator::ViewDimensions CameraManipulator::getViewDimensionsAt(const glm::dvec3& point) const
 {
   if(m_current.projectionType == ProjectionType::Orthographic)
   {
     return {m_current.orthMag.x * 2.0, m_current.orthMag.y * 2.0};
   }
 
-  const double distance   = glm::length(m_current.eye - m_current.ctr);
+  // Depth along the view direction rather than the Euclidean distance to the eye, so that a
+  // point off the view axis still tracks the cursor exactly. The two agree for the center
+  // of interest, since forward is the normalized eye-to-center direction.
+  const double distance   = glm::dot(point - m_current.eye, computeCameraFrame().forward);
   const double halfHeight = distance * std::tan(getRadFov() * 0.5);
   const double viewHeight = 2.0 * halfHeight;
   const double viewWidth  = viewHeight * std::max(getAspectRatio(), CameraConstants::MIN_ASPECT_RATIO);
   return {viewWidth, viewHeight};
+}
+
+CameraManipulator::ViewDimensions CameraManipulator::getViewDimensions() const
+{
+  return getViewDimensionsAt(m_current.ctr);
 }
 
 CameraManipulator::CameraFrame CameraManipulator::computeCameraFrame() const
@@ -188,6 +210,24 @@ CameraManipulator::CameraFrame CameraManipulator::computeCameraFrame() const
   frame.right   = glm::normalize(glm::cross(frame.forward, effectiveUp(m_current.eye, m_current.ctr, m_current.up)));
   frame.up      = glm::cross(frame.right, frame.forward);
   return frame;
+}
+
+// Pitching about the camera right axis raises the view by the same angle, so the new
+// elevation is (elevation + pitch). Bounding that result gives the range for the pitch.
+// The elevation comes from atan2 rather than from the camera frame, which stays well
+// behaved right up to the axis where the frame itself becomes undefined.
+double CameraManipulator::clampPitchToPole(const glm::dvec3& forward, double pitch) const
+{
+  const double upLen2 = glm::dot(m_current.up, m_current.up);
+  if(upLen2 < CameraConstants::EPSILON)
+    return pitch;
+
+  const glm::dvec3 upAxis     = m_current.up / std::sqrt(upLen2);
+  const glm::dvec3 horizontal = forward - glm::dot(forward, upAxis) * upAxis;
+  const double     elevation  = std::atan2(glm::dot(forward, upAxis), glm::length(horizontal));
+  const double     limit      = glm::half_pi<double>() - CameraConstants::MIN_POLE_ANGLE;
+
+  return glm::clamp(pitch, -limit - elevation, limit - elevation);
 }
 
 glm::dvec3 CameraManipulator::projectToGroundPlane(const glm::dvec3& vec) const
@@ -256,13 +296,15 @@ void CameraManipulator::pan(glm::dvec2 displacement)
   if(displacement == glm::dvec2(0.0, 0.0))
     return;
 
-  if(m_mode == Modes::Fly)
+  // Fly mode pushes the world the opposite way, as if walking rather than dragging the
+  // scene. An anchored pan is always a direct drag, so the anchor stays under the cursor.
+  if(m_mode == Modes::Fly && !m_anchor.has_value())
   {
     displacement *= -1.0;
   }
 
   const CameraFrame    frame = computeCameraFrame();
-  const ViewDimensions view  = getViewDimensions();
+  const ViewDimensions view  = getViewDimensionsAt(m_anchor.value_or(m_current.ctr));
 
   glm::dvec3 panOffset = (-displacement.x * frame.right * view.width) + (displacement.y * frame.up * view.height);
   m_current.eye += panOffset;
@@ -276,6 +318,14 @@ void CameraManipulator::orbit(glm::dvec2 displacement, bool invert /*= false*/)
 
   // Full width will do a full turn
   displacement *= glm::two_pi<double>();
+
+  // An anchor replaces the center of interest as the pivot. Inverted orbit deliberately
+  // ignores it: it pivots on the eye, which is what look-around means.
+  if(m_anchor.has_value() && !invert)
+  {
+    orbitAbout(*m_anchor, displacement);
+    return;
+  }
 
   // Get the camera
   glm::dvec3 origin(invert ? m_current.eye : m_current.ctr);
@@ -291,7 +341,7 @@ void CameraManipulator::orbit(glm::dvec2 displacement, bool invert /*= false*/)
   // Decompose centerToEye into an elevation around 'up' and a horizontal direction:
   //   centerToEye = cos(elev) * up + sin(elev) * horizontal
   // Yaw rotates 'horizontal' around 'up', pitch changes 'elev'.
-  constexpr double kPolePad   = 1e-3;
+  constexpr double kPolePad   = CameraConstants::MIN_POLE_ANGLE;
   const double     cosElev    = glm::dot(centerToEye, m_current.up);
   glm::dvec3       horizontal = centerToEye - cosElev * m_current.up;
   const double     sinElev    = glm::length(horizontal);
@@ -331,6 +381,68 @@ void CameraManipulator::orbit(glm::dvec2 displacement, bool invert /*= false*/)
   }
 }
 
+// Orbit around an arbitrary pivot: yaw the camera frame around 'up', pitch it around its
+// own right axis, then place the eye so the pivot keeps the same position in that frame and
+// therefore stays under the same pixel for the whole drag.
+//
+// orbit() reaches this only for the anchor. Its own two pivots, the center of interest and
+// the eye, keep the spherical implementation above.
+//
+// The two differ in how they behave on reaching the pole, and the difference is visible.
+// This function rotates the existing frame by a reduced pitch, so the frame is carried
+// through the rotation and the orientation about the view direction stays continuous as the
+// limit is reached. orbit() instead discards the frame and rebuilds the view direction from
+// an elevation plus a horizontal direction taken around 'up'. That representation cannot
+// express any rotation about the view direction, so it is re-derived from 'up' on every
+// call, and arriving at the limit snaps it to whatever that derivation yields. Rebuilding
+// from an elevation is the more robust formulation, since it is well defined even pointing
+// straight along 'up', but the snap is the price.
+//
+// The two branches could fold into this one, since rotating the frame about a pivot already
+// describes them: with the center of interest as the pivot it stays fixed and only the eye
+// swings around it, and with the eye as the pivot the local offset is zero, so the eye stays
+// put and only the center of interest moves, which is what look-around means. orbit() would
+// then reduce to picking a pivot, one rotation path to reason about instead of two, and
+// look-around and center orbit would gain the continuous behavior described above.
+//
+// Two things need care before doing that. motion() passes a negated y displacement for
+// LookAround to cancel the sign convention of the inverted branch below; on a single shared
+// convention that negation has to go, or vertical look-around inverts. And this function
+// relies on the frame from computeCameraFrame(), which is undefined when the view points
+// exactly along 'up'; the clamp keeps a drag from arriving there, but a camera placed there
+// by other means would need the fallback that effectiveUp() already provides.
+void CameraManipulator::orbitAbout(const glm::dvec3& pivot, glm::dvec2 displacement)
+{
+  const double lookAtDist = glm::length(m_current.ctr - m_current.eye);
+  if(lookAtDist < CameraConstants::EPSILON)
+    return;
+
+  const CameraFrame frame = computeCameraFrame();
+
+  // Express the pivot direction in the camera's local frame
+  const glm::dvec3 pivotDir      = pivot - m_current.eye;
+  const glm::dvec3 pivotDirLocal = {glm::dot(pivotDir, frame.right), glm::dot(pivotDir, frame.up),
+                                    glm::dot(pivotDir, frame.forward)};
+
+  // Yaw: rotate all frame axes around the up vector
+  const glm::dmat3 yaw = glm::dmat3(glm::rotate(glm::dmat4(1), -displacement.x, m_current.up));
+  glm::dvec3       r   = yaw * frame.right;
+  glm::dvec3       u   = yaw * frame.up;
+  glm::dvec3       f   = yaw * frame.forward;
+
+  // Pitch: rotate the frame about its own right axis by an angle reduced to stop short of
+  // the up axis. Carrying the frame through the rotation is what keeps the orientation
+  // about the view direction continuous at the limit; see the note above.
+  const double     pitchAngle = clampPitchToPole(f, -displacement.y);
+  const glm::dmat3 pitch      = glm::dmat3(glm::rotate(glm::dmat4(1), pitchAngle, r));
+  f                           = glm::normalize(pitch * f);
+  u                           = glm::normalize(pitch * u);
+
+  // Reconstruct eye so the pivot is at the same local-frame position
+  m_current.eye = pivot - (pivotDirLocal.x * r + pivotDirLocal.y * u + pivotDirLocal.z * f);
+  m_current.ctr = m_current.eye + f * lookAtDist;
+}
+
 void CameraManipulator::dolly(glm::dvec2 displacement, bool keepCenterFixed /*= false*/)
 {
   // Use the larger movement.
@@ -341,6 +453,28 @@ void CameraManipulator::dolly(glm::dvec2 displacement, bool keepCenterFixed /*= 
   {
     double zoomFactor = 1.0 - largerDisplacement;
     zoomOrthographic(zoomFactor);
+    return;
+  }
+
+  // Keeping the center fixed means moving the eye alone, which with an anchor would turn the view
+  // away from it; that request keeps the plain dolly below.
+  if(m_anchor.has_value() && !keepCenterFixed)
+  {
+    // Scale the distance to the anchor by 10^-displacement, so a full-window drag changes it
+    // tenfold, in the same direction as the dolly below (positive moves closer). The eye
+    // approaches the anchor asymptotically and can never cross it, which is why this needs no
+    // equivalent of the MIN_DISTANCE guard below.
+    const double scale   = std::pow(10.0, -largerDisplacement);
+    glm::dvec3   moveVec = (1.0 - scale) * (*m_anchor - m_current.eye);
+
+    // Walk mode stays on the ground plane, approaching the anchor only horizontally.
+    if(m_mode == Modes::Walk)
+    {
+      moveVec = projectToGroundPlane(moveVec);
+    }
+
+    m_current.eye += moveVec;
+    m_current.ctr += moveVec;
     return;
   }
 
@@ -526,6 +660,37 @@ void CameraManipulator::keyMotion(glm::dvec2 delta, Actions action)
 
   // Resetting animation and update the camera
   applyUserChange();
+}
+
+// Anchored orbit and dolly carry the center of interest along at its old distance from the eye,
+// which can be far from the anchor: orbiting a nearby wall swings it off into empty space, and the
+// next orbit without an anchor then pivots there. Moving it to the anchor's depth first leaves the
+// view unchanged and keeps it where the user is working.
+//
+// An anchor at or behind the eye is rejected: pan sizes its movement by the anchor's depth, which
+// there would stall or reverse the drag. The interaction then pivots on the center of interest.
+//
+// Setting an anchor is user input, so it stops any running animation, which would otherwise
+// replace the center of interest on the next frame and leave it away from the anchor's depth.
+void CameraManipulator::setAnchor(const glm::dvec3& anchor)
+{
+  const CameraFrame frame = computeCameraFrame();
+  const double      depth = glm::dot(anchor - m_current.eye, frame.forward);
+  if(depth <= CameraConstants::MIN_DISTANCE)
+  {
+    clearAnchor();
+    return;
+  }
+
+  m_anchor      = anchor;
+  m_current.ctr = m_current.eye + frame.forward * depth;
+  applyUserChange();
+}
+
+void CameraManipulator::beginInteraction(const glm::dvec2& pos, const Inputs& /*inputs*/)
+{
+  clearAnchor();
+  setMousePosition(pos);
 }
 
 CameraManipulator::Actions CameraManipulator::mouseMove(glm::dvec2 screenDisplacement, const Inputs& inputs)

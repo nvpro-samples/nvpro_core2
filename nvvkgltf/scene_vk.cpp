@@ -441,7 +441,7 @@ static void populateShaderMaterial(shaderio::GltfShadeMaterial& dstMat, const ti
 
   KHR_materials_diffuse_transmission diffuseTransmission = tinygltf::utils::getDiffuseTransmission(srcMat);
   dstMat.diffuseTransmissionFactor                       = diffuseTransmission.diffuseTransmissionFactor;
-  dstMat.diffuseTransmissionColor                        = diffuseTransmission.diffuseTransmissionColor;
+  dstMat.diffuseTransmissionColorFactor                  = diffuseTransmission.diffuseTransmissionColorFactor;
   handleTexture(dstMat.diffuseTransmissionTexture, diffuseTransmission.diffuseTransmissionTexture);
   handleTexture(dstMat.diffuseTransmissionColorTexture, diffuseTransmission.diffuseTransmissionColorTexture);
 

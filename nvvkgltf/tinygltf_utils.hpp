@@ -221,7 +221,7 @@ struct KHR_materials_diffuse_transmission
 {
   float                 diffuseTransmissionFactor       = 0.0f;
   tinygltf::TextureInfo diffuseTransmissionTexture      = {};
-  glm::vec3             diffuseTransmissionColor        = {1.0f, 1.0f, 1.0f};
+  glm::vec3             diffuseTransmissionColorFactor  = {1.0f, 1.0f, 1.0f};
   tinygltf::TextureInfo diffuseTransmissionColorTexture = {};
 };
 

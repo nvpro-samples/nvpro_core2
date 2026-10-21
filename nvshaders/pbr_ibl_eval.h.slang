@@ -34,7 +34,7 @@ taking the cubemaps' frame to world; every evaluator also has an overload taking
 about +Y, in radians, as they did before.
 -------------------------------------------------------------------------------------------------*/
 
-#include "bsdf_functions.h.slang"      // applyVolumeAttenuation
+#include "bsdf_functions.h.slang"  // applyVolumeAttenuation
 #include "constants.h.slang"
 #include "functions.h.slang"
 #include "pbr_ggx_microfacet.h.slang"  // Khronos analytic helpers (khronosDielectricF0,
@@ -90,13 +90,13 @@ highlight extends) by an amount controlled by `anisotropyStrength` in [0,1]. Fal
 isotropic answer when `anisotropyStrength == 0`. Reference: `ibl.glsl:118-138`.
 -------------------------------------------------------------------------------------------------*/
 float3 getIBLAnisotropy(SamplerCube glossyEnv,
-                       float3      n,
-                       float3      v,
-                       float       perceptualRoughness,
-                       float       anisotropyStrength,
-                       float3      anisotropyDirection,
-                       float4      envRotation,
-                       float       envIntensity)
+                        float3      n,
+                        float3      v,
+                        float       perceptualRoughness,
+                        float       anisotropyStrength,
+                        float3      anisotropyDirection,
+                        float4      envRotation,
+                        float       envIntensity)
 {
   float3 anisotropicTangent = cross(anisotropyDirection, v);
   float3 anisotropicNormal  = cross(anisotropicTangent, anisotropyDirection);
@@ -163,14 +163,7 @@ sampling the diffuse-prefiltered cubemap -- known, documented limitation: at ver
 roughness the highlight is overly soft. Replacing this with a real Charlie cube would need a
 `hdr_prefilter_charlie.slang` plus a per-mip dispatch driver akin to the GGX prefilter.
 -------------------------------------------------------------------------------------------------*/
-float3 getIBLCharlie(SamplerCube diffuseEnv,
-                    Sampler2D   sheenLut,
-                    float3      n,
-                    float3      v,
-                    float       sheenRoughness,
-                    float3      sheenColor,
-                    float4      envRotation,
-                    float       envIntensity)
+float3 getIBLCharlie(SamplerCube diffuseEnv, Sampler2D sheenLut, float3 n, float3 v, float sheenRoughness, float3 sheenColor, float4 envRotation, float envIntensity)
 {
   float  NdotV      = clampedDot(n, v);
   float3 reflection = normalize(reflect(-v, n));
@@ -180,14 +173,7 @@ float3 getIBLCharlie(SamplerCube diffuseEnv,
   float  brdf       = sheenLut.SampleLevel(lutUv, 0.0F).r;
   return sheenLight * sheenColor * brdf;
 }
-float3 getIBLCharlie(SamplerCube diffuseEnv,
-                     Sampler2D   sheenLut,
-                     float3      n,
-                     float3      v,
-                     float       sheenRoughness,
-                     float3      sheenColor,
-                     float       envRotation,
-                     float       envIntensity)
+float3 getIBLCharlie(SamplerCube diffuseEnv, Sampler2D sheenLut, float3 n, float3 v, float sheenRoughness, float3 sheenColor, float envRotation, float envIntensity)
 {
   return getIBLCharlie(diffuseEnv, sheenLut, n, v, sheenRoughness, sheenColor, quatFromYaw(envRotation), envIntensity);
 }
@@ -207,13 +193,13 @@ struct IBLLobes
   float3 f_metal_specular;       // metal specular IBL radiance (anisotropic-aware, pre-Fresnel)
   float3 f_dielectric_specular;  // dielectric specular IBL radiance (typically same as f_metal_specular)
   float3 f_metal_fresnel;        // Fdez-Aguera multiscatter Fresnel at NdotV, F0 = baseColor
-  float3 f_dielectric_fresnel;   // Fdez-Aguera multiscatter Fresnel at NdotV, F0 = f0_dielectric, specularWeight folded in
-  float3 f_sheen;                // Charlie env (stand-in) * sheenColor * sheen LUT
-  float3 f_clearcoat;            // GGX env on Nc at clearcoatRoughness
-  float3 clearcoatFresnel;       // F_Schlick(clearcoatF0, 1, clearcoatNdotV); precomputed by caller
-  float3 irid_dielectric;        // iridescence Fresnel for the dielectric specular lobe (or 0)
-  float3 irid_metallic;          // iridescence Fresnel for the metal specular lobe (or 0)
-  float  iridescenceFactor;      // 0 disables the iridescence blends below
+  float3 f_dielectric_fresnel;  // Fdez-Aguera multiscatter Fresnel at NdotV, F0 = f0_dielectric, specularWeight folded in
+  float3 f_sheen;               // Charlie env (stand-in) * sheenColor * sheen LUT
+  float3 f_clearcoat;           // GGX env on Nc at clearcoatRoughness
+  float3 clearcoatFresnel;      // F_Schlick(clearcoatF0, 1, clearcoatNdotV); precomputed by caller
+  float3 irid_dielectric;       // iridescence Fresnel for the dielectric specular lobe (or 0)
+  float3 irid_metallic;         // iridescence Fresnel for the metal specular lobe (or 0)
+  float  iridescenceFactor;     // 0 disables the iridescence blends below
 };
 
 /*-------------------------------------------------------------------------------------------------
@@ -239,13 +225,12 @@ float3 _composeIBLAnalyticKhronosCore(PbrMaterial mat, IBLLobes lobes, float she
   if(lobes.iridescenceFactor > 0.0F)
   {
     f_metal_brdf_ibl = lerp(f_metal_brdf_ibl, lobes.f_metal_specular * lobes.irid_metallic, lobes.iridescenceFactor);
-    f_dielectric_brdf_ibl = lerp(f_dielectric_brdf_ibl,
-                                 mix_rgb(lobes.f_diffuse, lobes.f_dielectric_specular, lobes.irid_dielectric),
-                                 lobes.iridescenceFactor);
+    f_dielectric_brdf_ibl =
+        lerp(f_dielectric_brdf_ibl, mix_rgb(lobes.f_diffuse, lobes.f_dielectric_specular, lobes.irid_dielectric), lobes.iridescenceFactor);
   }
 
-  return layeredCompositeKhronos(f_dielectric_brdf_ibl, f_metal_brdf_ibl, mat.metallic, lobes.f_sheen,
-                                 sheenScale, lobes.f_clearcoat, mat.clearcoat, lobes.clearcoatFresnel);
+  return layeredCompositeKhronos(f_dielectric_brdf_ibl, f_metal_brdf_ibl, mat.metallic, lobes.f_sheen, sheenScale,
+                                 lobes.f_clearcoat, mat.clearcoat, lobes.clearcoatFresnel);
 }
 
 float3 composeIBLAnalyticKhronos(PbrMaterial mat, IBLLobes lobes, float3 V, Sampler2D sheenLut)
@@ -327,22 +312,22 @@ void _evalKhronosIBLFillCommon(PbrMaterial mat,
                                bool        haveTransmissionSample,
                                NVSHADERS_INOUT_TYPE(IBLLobes) lobes)
 {
-  float  NdotV               = clampedDot(mat.N, V);
-  float  perceptualRoughness = sqrt(mat.roughness.y);
-  bool   isAnisotropic       = abs(mat.roughness.x - mat.roughness.y) > 1e-6F;
-  float  anisotropyStrength  = isAnisotropic
-                                   ? sqrt(saturate((mat.roughness.x - mat.roughness.y) / max(1.0F - mat.roughness.y, 1e-5F)))
-                                   : 0.0F;
-  float3 f0_dielectric       = khronosDielectricF0(mat);
+  float NdotV               = clampedDot(mat.N, V);
+  float perceptualRoughness = sqrt(mat.roughness.y);
+  bool  isAnisotropic       = abs(mat.roughness.x - mat.roughness.y) > 1e-6F;
+  float anisotropyStrength =
+      isAnisotropic ? sqrt(saturate((mat.roughness.x - mat.roughness.y) / max(1.0F - mat.roughness.y, 1e-5F))) : 0.0F;
+  float3 f0_dielectric = khronosDielectricF0(mat);
 
   lobes.f_diffuse = getIBLDiffuse(diffuseEnv, mat.N, envRotation, envIntensity) * mat.baseColor;
 
   // Diffuse transmission: back-hemisphere irradiance + volume absorption.
   if(mat.diffuseTransmissionFactor > 0.0F)
   {
-    float3 diffuseTransIBL = getIBLDiffuse(diffuseEnv, -mat.N, envRotation, envIntensity) * mat.diffuseTransmissionColor;
+    float3 diffuseTransIBL = getIBLDiffuse(diffuseEnv, -mat.N, envRotation, envIntensity) * mat.diffuseTransmissionColorFactor;
     if(diffuseTransmissionThickness > 0.0F)
-      diffuseTransIBL = applyVolumeAttenuation(diffuseTransIBL, diffuseTransmissionThickness, mat.attenuationColor, mat.attenuationDistance);
+      diffuseTransIBL =
+          applyVolumeAttenuation(diffuseTransIBL, diffuseTransmissionThickness, mat.attenuationColor, mat.attenuationDistance);
     lobes.f_diffuse = lerp(lobes.f_diffuse, diffuseTransIBL, mat.diffuseTransmissionFactor);
   }
 
@@ -351,9 +336,10 @@ void _evalKhronosIBLFillCommon(PbrMaterial mat,
     lobes.f_diffuse = lerp(lobes.f_diffuse, transmissionRadiance, mat.transmission);
 
   // Specular IBL -- metal and dielectric share the radiance; anisotropy bends the reflection.
-  float3 f_specular_ibl = isAnisotropic ? getIBLAnisotropy(glossyEnv, mat.N, V, perceptualRoughness,
-                                                           anisotropyStrength, mat.B, envRotation, envIntensity)
-                                        : getIBLRadianceGGX(glossyEnv, mat.N, V, perceptualRoughness, envRotation, envIntensity);
+  float3 f_specular_ibl =
+      isAnisotropic ?
+          getIBLAnisotropy(glossyEnv, mat.N, V, perceptualRoughness, anisotropyStrength, mat.B, envRotation, envIntensity) :
+          getIBLRadianceGGX(glossyEnv, mat.N, V, perceptualRoughness, envRotation, envIntensity);
   lobes.f_metal_specular      = f_specular_ibl;
   lobes.f_dielectric_specular = f_specular_ibl;
 
@@ -362,9 +348,9 @@ void _evalKhronosIBLFillCommon(PbrMaterial mat,
   lobes.f_dielectric_fresnel = getIBLGGXFresnelMS(ggxLut, mat.N, V, perceptualRoughness, f0_dielectric, mat.specular);
 
   // Clearcoat IBL on its own normal + Schlick Fresnel the composer needs.
-  lobes.f_clearcoat      = (mat.clearcoat > 0.0F)
-                              ? getIBLRadianceGGX(glossyEnv, mat.Nc, V, mat.clearcoatRoughness, envRotation, envIntensity)
-                              : float3(0.0F);
+  lobes.f_clearcoat = (mat.clearcoat > 0.0F) ?
+                          getIBLRadianceGGX(glossyEnv, mat.Nc, V, mat.clearcoatRoughness, envRotation, envIntensity) :
+                          float3(0.0F);
   lobes.clearcoatFresnel = khronosClearcoatFresnel(mat, V);
 
   // Iridescence Fresnel evaluated at NdotV (matches `pbr.frag:134-140`).
@@ -394,9 +380,9 @@ float3 evalKhronosIBL(PbrMaterial mat,
   IBLLobes lobes;
   _evalKhronosIBLFillCommon(mat, V, diffuseEnv, glossyEnv, ggxLut, envRotation, envIntensity,
                             diffuseTransmissionThickness, transmissionRadiance, haveTransmissionSample, lobes);
-  lobes.f_sheen = (max3(mat.sheenColor) > 0.0F)
-                      ? getIBLCharlie(diffuseEnv, sheenLut, mat.N, V, mat.sheenRoughness, mat.sheenColor, envRotation, envIntensity)
-                      : float3(0.0F);
+  lobes.f_sheen = (max3(mat.sheenColor) > 0.0F) ?
+                      getIBLCharlie(diffuseEnv, sheenLut, mat.N, V, mat.sheenRoughness, mat.sheenColor, envRotation, envIntensity) :
+                      float3(0.0F);
   return composeIBLAnalyticKhronos(mat, lobes, V, sheenLut);
 }
 

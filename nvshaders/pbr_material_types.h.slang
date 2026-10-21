@@ -60,8 +60,8 @@ struct PbrMaterial
   float  attenuationDistance;  //
   float  thickness;            // KHR_materials_volume thicknessFactor * thicknessTexture (object-space)
 
-  float3 scatterCoefficient;   // KHR_materials_scatter: σ_s (scattering coefficient)
-  float  scatterAnisotropy;    // KHR_materials_scatter: g parameter for Henyey-Greenstein
+  float3 scatterCoefficient;  // KHR_materials_scatter: σ_s (scattering coefficient)
+  float  scatterAnisotropy;   // KHR_materials_scatter: g parameter for Henyey-Greenstein
 
   float  clearcoat;           // KHR_materials_clearcoat
   float  clearcoatRoughness;  //
@@ -75,7 +75,7 @@ struct PbrMaterial
   float  sheenRoughness;
 
   float  diffuseTransmissionFactor;  // KHR_materials_diffuse_transmission
-  float3 diffuseTransmissionColor;
+  float3 diffuseTransmissionColorFactor;
 
   float retroreflection;  // KHR_materials_retroreflection [0,1] MRM blend
 };
@@ -126,8 +126,8 @@ PbrMaterial defaultPbrMaterial()
   mat.sheenRoughness = 0.0F;
   mat.occlusion      = 1.0F;
 
-  mat.diffuseTransmissionFactor = 0.0F;
-  mat.diffuseTransmissionColor  = float3(1.0F);
+  mat.diffuseTransmissionFactor      = 0.0F;
+  mat.diffuseTransmissionColorFactor = float3(1.0F);
 
   mat.retroreflection = 0.0F;
 

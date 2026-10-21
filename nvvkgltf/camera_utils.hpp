@@ -38,7 +38,7 @@ inline void addSceneCamerasToWidget(std::shared_ptr<nvutils::CameraManipulator> 
                                     const std::vector<nvvkgltf::RenderCamera>&  cameras,
                                     const nvutils::Bbox&                        sceneBbox)
 {
-  nvgui::SetCameraJsonFile(filename.stem());
+  nvgui::SetCameraJsonFile(filename.stem(), cameraManip);
   if(!cameras.empty())
   {
     const auto&                        camera = cameras[0];

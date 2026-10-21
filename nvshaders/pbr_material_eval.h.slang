@@ -50,8 +50,8 @@ struct MeshState
 
   float2 tc[MAT_EVAL_MESH_STATE_MAX_TEXCOORDS];  // Texture coordinates
 
-  bool   isInside = false;
-  float  texGrad  = 0.0f;  // Ray footprint for SampleGrad; 0 -> Sample() (mip 0 in RT, proper mips in fragment)
+  bool  isInside = false;
+  float texGrad  = 0.0f;  // Ray footprint for SampleGrad; 0 -> Sample() (mip 0 in RT, proper mips in fragment)
 };
 
 
@@ -236,8 +236,7 @@ PbrMaterial evaluateMaterial<F : IGltfTextureFetcher>(in GltfShadeMaterial mater
     if(isTexturePresent(material.pbrMetallicRoughnessTexture))
     {
       // Roughness is stored in the 'g' channel, metallic is stored in the 'b' channel.
-      float4 metallicRoughnessSample =
-          texFetcher.fetch(texInfos[material.pbrMetallicRoughnessTexture], state.tc, state.texGrad);
+      float4 metallicRoughnessSample = texFetcher.fetch(texInfos[material.pbrMetallicRoughnessTexture], state.tc, state.texGrad);
       roughness *= metallicRoughnessSample.g;
       metallic *= metallicRoughnessSample.b;
     }
@@ -360,15 +359,14 @@ PbrMaterial evaluateMaterial<F : IGltfTextureFetcher>(in GltfShadeMaterial mater
   }
   if(isTexturePresent(material.clearcoatRoughnessTexture))
   {
-    pbrMat.clearcoatRoughness *=
-        texFetcher.fetch(texInfos[material.clearcoatRoughnessTexture], state.tc, state.texGrad).g;
+    pbrMat.clearcoatRoughness *= texFetcher.fetch(texInfos[material.clearcoatRoughnessTexture], state.tc, state.texGrad).g;
   }
   if(isTexturePresent(material.clearcoatNormalTexture))
   {
-    float3x3 tbn         = float3x3(pbrMat.T, pbrMat.B, pbrMat.Nc);
-    float3 normal_vector = texFetcher.fetch(texInfos[material.clearcoatNormalTexture], state.tc, state.texGrad).xyz;
-    normal_vector        = normal_vector * 2.0F - 1.0F;
-    pbrMat.Nc            = normalize(mul(normal_vector, tbn));
+    float3x3 tbn           = float3x3(pbrMat.T, pbrMat.B, pbrMat.Nc);
+    float3   normal_vector = texFetcher.fetch(texInfos[material.clearcoatNormalTexture], state.tc, state.texGrad).xyz;
+    normal_vector          = normal_vector * 2.0F - 1.0F;
+    pbrMat.Nc              = normalize(mul(normal_vector, tbn));
   }
   pbrMat.clearcoatRoughness = max(pbrMat.clearcoatRoughness, 0.001F);
 
@@ -382,7 +380,7 @@ PbrMaterial evaluateMaterial<F : IGltfTextureFetcher>(in GltfShadeMaterial mater
   }
   if(isTexturePresent(material.iridescenceThicknessTexture))
   {
-    const float t = texFetcher.fetch(texInfos[material.iridescenceThicknessTexture], state.tc, state.texGrad).y;
+    const float t        = texFetcher.fetch(texInfos[material.iridescenceThicknessTexture], state.tc, state.texGrad).y;
     iridescenceThickness = lerp(material.iridescenceThicknessMinimum, material.iridescenceThicknessMaximum, t);
   }
   pbrMat.iridescence = (iridescenceThickness > 0.0f) ? iridescence : 0.0f;  // No iridescence when the thickness is zero.
@@ -455,10 +453,10 @@ PbrMaterial evaluateMaterial<F : IGltfTextureFetcher>(in GltfShadeMaterial mater
     pbrMat.diffuseTransmissionFactor *=
         texFetcher.fetch(texInfos[material.diffuseTransmissionTexture], state.tc, state.texGrad).a;
   }
-  pbrMat.diffuseTransmissionColor = material.diffuseTransmissionColor;
+  pbrMat.diffuseTransmissionColorFactor = material.diffuseTransmissionColorFactor;
   if(isTexturePresent(material.diffuseTransmissionColorTexture))
   {
-    pbrMat.diffuseTransmissionColor =
+    pbrMat.diffuseTransmissionColorFactor =
         texFetcher.fetch(texInfos[material.diffuseTransmissionColorTexture], state.tc, state.texGrad).rgb;
   }
 
@@ -534,11 +532,10 @@ PbrMaterial evaluateMaterial<F : IGltfTextureFetcher>(in GltfShadeMaterial mater
         // Each of the two diffuse lobes now carries contributions the spec colors differently, so
         // each takes the energy-weighted average of its own two shares. Both shares of a lobe have
         // the same Lambertian shape, so averaging their colors is exact, not an approximation.
-        float3 diffuseBaseColor = pbrMat.baseColor;
-        pbrMat.diffuseTransmissionColor =
-            lerp(pbrMat.diffuseTransmissionColor, multiscatterColor, forwardWeight / max(baseTransWeight + forwardWeight, 1e-6));
-        pbrMat.baseColor =
-            lerp(diffuseBaseColor, multiscatterColor, backwardWeight / max(baseReflWeight + backwardWeight, 1e-6));
+        float3 diffuseBaseColor               = pbrMat.baseColor;
+        pbrMat.diffuseTransmissionColorFactor = lerp(pbrMat.diffuseTransmissionColorFactor, multiscatterColor,
+                                                     forwardWeight / max(baseTransWeight + forwardWeight, 1e-6));
+        pbrMat.baseColor = lerp(diffuseBaseColor, multiscatterColor, backwardWeight / max(baseReflWeight + backwardWeight, 1e-6));
 
         // ...but baseColor also tints the residual specular BTDF, which the spec leaves at the
         // material's baseColor. transmissionTint cancels the blend back out for that lobe alone
@@ -574,8 +571,10 @@ PbrMaterial evaluateMaterial(in GltfShadeMaterial material,
                              Sampler2D            textures[],
                              GltfTextureInfo*     texInfos)
 {
-  float2    tcoords[MAT_EVAL_MESH_STATE_MAX_TEXCOORDS] = { texCoord, };
-  MeshState mesh       = MeshState(normal, tangent, bitangent, normal, tcoords, false, 0.0f);
+  float2 tcoords[MAT_EVAL_MESH_STATE_MAX_TEXCOORDS] = {
+    texCoord,
+  };
+  MeshState mesh = MeshState(normal, tangent, bitangent, normal, tcoords, false, 0.0f);
   return evaluateMaterial(material, mesh, textures, texInfos);
 }
 

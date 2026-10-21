@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2014-2025, NVIDIA CORPORATION.  All rights reserved.
+* Copyright (c) 2014-2026, NVIDIA CORPORATION.  All rights reserved.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 *
-* SPDX-FileCopyrightText: Copyright (c) 2014-2024, NVIDIA CORPORATION.
+* SPDX-FileCopyrightText: Copyright (c) 2014-2026, NVIDIA CORPORATION.  All rights reserved.
 * SPDX-License-Identifier: Apache-2.0
 */
 
@@ -61,9 +61,14 @@ void ProfilerGpuTimer::init(nvutils::ProfilerTimeline* profilerTimeline, VkDevic
     uint32_t        idx = nvutils::ProfilerTimeline::GpuTimeProvider::getTimerBaseIdx(sec);
     return provideTime(m_async, idx, gpuTime);
   };
+  m_timeProvider.updateFunction = [&](nvutils::ProfilerTimeline::UpdateSectionID sec, double& gpuTime) {
+    uint32_t idx = nvutils::ProfilerTimeline::GpuTimeProvider::getTimerBaseIdx(sec);
+    return provideTime(m_update, idx, gpuTime);
+  };
 
   resizePool(m_frame, PoolContainer::POOL_QUERY_COUNT);
   resizePool(m_async, PoolContainer::POOL_QUERY_COUNT);
+  resizePool(m_update, PoolContainer::POOL_QUERY_COUNT);
 
   m_useLabels = useLabels && (vkCmdBeginDebugUtilsLabelEXT != nullptr) && (vkCmdEndDebugUtilsLabelEXT != nullptr);
 }
@@ -84,6 +89,12 @@ void ProfilerGpuTimer::deinit()
     vkDestroyQueryPool(m_device, it, nullptr);
   }
   m_async = {};
+
+  for(auto& it : m_update.queryPools)
+  {
+    vkDestroyQueryPool(m_device, it, nullptr);
+  }
+  m_update = {};
 
   m_device           = nullptr;
   m_profilerTimeline = nullptr;
@@ -127,6 +138,46 @@ void ProfilerGpuTimer::cmdFrameEndSection(VkCommandBuffer cmd, nvutils::Profiler
     vkCmdEndDebugUtilsLabelEXT(cmd);
   }
   m_profilerTimeline->frameEndSection(sec);
+}
+
+nvutils::ProfilerTimeline::UpdateSectionID ProfilerGpuTimer::cmdUpdateBeginSection(VkCommandBuffer cmd, const std::string& name)
+{
+  nvutils::ProfilerTimeline::UpdateSectionID sec = m_profilerTimeline->updateBeginSection(name, &m_timeProvider);
+  uint32_t                                   idx = nvutils::ProfilerTimeline::GpuTimeProvider::getTimerBaseIdx(sec);
+
+  uint32_t    idxInPool;
+  VkQueryPool queryPool = getPool(m_update, idx, idxInPool);
+
+  if(m_useLabels)
+  {
+    VkDebugUtilsLabelEXT label = {VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT};
+    label.pLabelName           = name.c_str();
+    label.color[1]             = 1.0f;
+    vkCmdBeginDebugUtilsLabelEXT(cmd, &label);
+  }
+
+  vkResetQueryPool(m_device, queryPool, idxInPool, 2);
+
+  m_profilerTimeline->updateResetCpuBegin(sec);
+
+  // log timestamp
+  vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, queryPool, idxInPool);
+
+  return sec;
+}
+
+void ProfilerGpuTimer::cmdUpdateEndSection(VkCommandBuffer cmd, nvutils::ProfilerTimeline::UpdateSectionID sec)
+{
+  uint32_t    idx = nvutils::ProfilerTimeline::GpuTimeProvider::getTimerBaseIdx(sec) + 1;
+  uint32_t    idxInPool;
+  VkQueryPool queryPool = getPool(m_update, idx, idxInPool);
+
+  vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool, idxInPool);
+  if(m_useLabels)
+  {
+    vkCmdEndDebugUtilsLabelEXT(cmd);
+  }
+  m_profilerTimeline->updateEndSection(sec);
 }
 
 nvutils::ProfilerTimeline::AsyncSectionID ProfilerGpuTimer::cmdAsyncBeginSection(VkCommandBuffer cmd, const std::string& name)
@@ -201,12 +252,13 @@ VkQueryPool ProfilerGpuTimer::getPool(PoolContainer& container, uint32_t idx, ui
   idxInPool = idx % PoolContainer::POOL_QUERY_COUNT;
 
   // early out
-  if(idx <= container.queryPoolSize)
+  if(idx < container.queryPoolSize)
   {
     return container.queryPools[idx / PoolContainer::POOL_QUERY_COUNT];
   }
 
-  resizePool(container, idx);
+  // resizePool takes a query count
+  resizePool(container, idx + 1);
   return container.queryPools[idx / PoolContainer::POOL_QUERY_COUNT];
 }
 
