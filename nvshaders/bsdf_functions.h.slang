@@ -126,7 +126,7 @@ result.
 -------------------------------------------------------------------------------------------------*/
 float3 volumeExtinctionCoefficient(PbrMaterial mat)
 {
-  return -log(max(mat.attenuationColor, float3(0.001))) / max(mat.attenuationDistance, 0.001);
+  return volumeExtinctionCoefficient(mat.attenuationColor, mat.attenuationDistance);
 }
 
 /*-------------------------------------------------------------------------------------------------

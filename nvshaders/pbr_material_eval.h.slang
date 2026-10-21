@@ -490,11 +490,10 @@ PbrMaterial evaluateMaterial<F : IGltfTextureFetcher>(in GltfShadeMaterial mater
       // Volumetric mode (KHR_materials_volume with thickness > 0): the surface BSDF is untouched.
       // Split the attenuation coefficient sigma_t into scattering and absorption with the
       // strength-scaled single-scatter albedo; sigma_s drives the in-medium phase function.
-      // The sigma_t expression must match volumeExtinctionCoefficient() in bsdf_functions.h.slang.
       float3 singleScatterAlbedo = multiToSingleScatterAlbedo(scatterStrength * multiscatterColor, g);
-      float3 attenuationCoef = -log(max(pbrMat.attenuationColor, float3(0.001))) / max(pbrMat.attenuationDistance, 0.001);
-      pbrMat.scatterCoefficient = attenuationCoef * singleScatterAlbedo;
-      pbrMat.scatterAnisotropy  = g;
+      float3 attenuationCoef     = volumeExtinctionCoefficient(pbrMat.attenuationColor, pbrMat.attenuationDistance);
+      pbrMat.scatterCoefficient  = attenuationCoef * singleScatterAlbedo;
+      pbrMat.scatterAnisotropy   = g;
     }
     else
     {

@@ -150,4 +150,18 @@ PbrMaterial defaultPbrMaterial(float3 baseColor, float metallic, float roughness
 
   return mat;
 }
+
+/*
+Volumetric extinction coefficient `sigma_t = -log(c) / d` of a KHR_materials_volume medium, from
+its attenuation color `c` and distance `d` (scene units). The one definition of sigma_t: every
+consumer -- Beer's law, free-flight sampling, the scatter split -- must call it, so they all see
+the same medium. The PbrMaterial overload in bsdf_functions.h.slang documents its use.
+
+`c` is floored so a black channel stays finite (log(0) is -inf). `d` is only kept off zero: any
+positive distance is valid and must be honored, however dense the medium it describes.
+*/
+float3 volumeExtinctionCoefficient(float3 attenuationColor, float attenuationDistance)
+{
+  return -log(max(attenuationColor, float3(0.001))) / max(attenuationDistance, 1e-6);
+}
 #endif  // NVVKHL_PBR_MAT_STRUCT_H
