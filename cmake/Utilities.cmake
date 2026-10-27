@@ -48,7 +48,8 @@ endmacro()
 # * FILES: List of files to copy to the build directory and INSTALL_DIR.
 # * PROGRAMS: Same as FILES except it uses install(PROGRAMS), which sets a+x on Linux.
 # * SUBDIRECTORY: Subdirectory where FILES and PROGRAMS will be placed.
-#     Defaults to empty (no subdirectory); useful for placing D3D12 Agility SDK DLLs in a subdirectory.
+#     Defaults to empty (no subdirectory). The D3D12 Agility SDK runtime goes to "D3D12",
+#     the directory nvdx12 exports as D3D12SDKPath.
 # * NVSHADERS_FILES: List of files to copy to INSTALL_DIR/nvshaders.
 # * AUTO: Copies all shared libraries CMake knows the target links with to the build directory and INSTALL_DIR.
 #

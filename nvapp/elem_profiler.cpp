@@ -17,6 +17,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <cassert>
+
 #include <nvgui/fonts.hpp>
 #include <nvvk/debug_util.hpp>
 #include <nvutils/logger.hpp>
@@ -223,9 +225,17 @@ uint32_t ElementProfiler::addEntries(const nvutils::ProfilerTimeline::Snapshot& 
   return endIndex;
 }
 
-void ElementProfiler::displayTableNode(const EntryNode& node, bool detailed, uint32_t defaultOpenLevels, uint32_t depth)
+void ElementProfiler::displayTableNode(const EntryNode& node, bool detailed, uint32_t defaultOpenLevels, uint32_t depth, double gpuTotal, double cpuTotal)
 {
   ImGuiTableFlags flags = ImGuiTreeNodeFlags_SpanFullWidth | ImGuiTreeNodeFlags_SpanAllColumns;
+
+  // The root of a table is the whole of it, so its own time is what every bar below is a share
+  // of. Taken here rather than passed in by the caller, so each table scales to itself.
+  if(depth == 0)
+  {
+    gpuTotal = node.timerInfo.gpu.average;
+    cpuTotal = node.timerInfo.cpu.average;
+  }
 
   ImGui::TableNextRow();
   ImGui::TableNextColumn();
@@ -245,9 +255,39 @@ void ElementProfiler::displayTableNode(const EntryNode& node, bool detailed, uin
   const bool hasCpu = info.numAveraged != 0;
   const bool hasGpu = hasCpu && node.hasGpu;
 
+  // Same number, with its share of the root drawn behind it. Compact view only: the detailed one
+  // has eight columns and no width to spare. Low alpha so the figure stays the thing you read.
+  auto drawShare = [](bool hasData, double value, double total, ImU32 color) {
+    if(!hasData || value < 0)
+    {
+      ImGui::TextDisabled("--");
+      return;
+    }
+    const float  width    = ImGui::GetContentRegionAvail().x;
+    const double fraction = (total > 0.0) ? (value >= total ? 1.0 : value / total) : 0.0;
+    if(fraction > 0.0 && width > 0.0f)
+    {
+      // Grown from the RIGHT edge inwards: the figures are left-aligned, so a bar starting
+      // there hides under them just as it becomes short enough to need reading.
+      const ImVec2 position = ImGui::GetCursorScreenPos();
+      const float  right    = position.x + width;
+      ImDrawList*  drawList = ImGui::GetWindowDrawList();
+      assert(drawList && "No current window to draw into");
+      drawList->AddRectFilled(ImVec2(right - width * float(fraction), position.y),
+                              ImVec2(right, position.y + ImGui::GetTextLineHeight()), color);
+    }
+    ImGui::Text("%3.3f", value / 1000.0f);
+  };
+
+  const ImU32 gpuBar = IM_COL32(90, 140, 210, 70);
+  const ImU32 cpuBar = IM_COL32(210, 150, 70, 70);
+
   ImGui::PushFont(nvgui::getMonospaceFont());
   ImGui::TableNextColumn();
-  drawValue(hasGpu, info.gpu.average);
+  if(detailed)
+    drawValue(hasGpu, info.gpu.average);
+  else
+    drawShare(hasGpu, info.gpu.average, gpuTotal, gpuBar);
   if(detailed)
   {
     ImGui::TableNextColumn();
@@ -258,7 +298,10 @@ void ElementProfiler::displayTableNode(const EntryNode& node, bool detailed, uin
     drawValue(hasGpu, info.gpu.absMaxValue);
   }
   ImGui::TableNextColumn();
-  drawValue(hasCpu, info.cpu.average);
+  if(detailed)
+    drawValue(hasCpu, info.cpu.average);
+  else
+    drawShare(hasCpu, info.cpu.average, cpuTotal, cpuBar);
   if(detailed)
   {
     ImGui::TableNextColumn();
@@ -274,7 +317,7 @@ void ElementProfiler::displayTableNode(const EntryNode& node, bool detailed, uin
   {
     for(int child_n = 0; child_n < static_cast<int>(node.child.size()); child_n++)
     {
-      displayTableNode(node.child[child_n], detailed, defaultOpenLevels, depth + 1);
+      displayTableNode(node.child[child_n], detailed, defaultOpenLevels, depth + 1, gpuTotal, cpuTotal);
     }
     ImGui::TreePop();
   }

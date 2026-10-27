@@ -19,8 +19,8 @@ small and composable:
   not interrupt rendering. Tools that access unsynchronized application state
   explicitly opt into short application-thread handlers, which `onUpdate()`
   keeps available when rendering is skipped. The MCP element opts into bounded
-  presentation waits so applications without MCP retain their original
-  blocking swapchain behavior.
+  presentation waits so applications without MCP keep the default infinite
+  acquire wait.
 - Parameters require an explicit allowlist by default. This makes the sample
   owner choose stable, meaningful agent controls instead of accidentally
   exposing every CLI option or internal variable.

@@ -33,7 +33,7 @@
 
 #include "../nvshaders/hdr_io.h.slang"  // shaderio::EnvAccel (used by buildEnvAliasmap)
 #include "descriptors.hpp"
-#include "env_aliasmap.hpp"  // re-export nvvk::buildEnvAliasmap for callers already including hdr_ibl.hpp
+#include "env_aliasmap.hpp"  // nvvk::buildEnvAliasmap
 #include "resource_allocator.hpp"
 #include "sampler_pool.hpp"
 #include "uploader_interface.hpp"
@@ -90,11 +90,15 @@ public:
   // a prior initGpuWriter() call.
   //
   // Blocking on the host: importance is copied to a host-visible staging buffer, the queue is
-  // waited on, and the CPU Vose builds the alias table. See § Preview vs Commit in the plan
-  // -- this is a parameter-commit path (~20 ms on a ~1024x512 image), not a per-frame path.
+  // waited on, and the CPU Vose builds the alias table. This is a parameter-commit path (~20 ms
+  // on a ~1024x512 image), not a per-frame path.
   //
-  // Neither `latlongImage` nor `importanceBuf` is taken over. The producer (typically
-  // EnvBaker) retains ownership across the lifetime of this HdrIbl. `latlongImage` must be in
+  // The current environment (its alias buffer, and its image when loadEnvironment() allocated it)
+  // is destroyed and descriptor set 0 is rewritten on entry, so the caller must ensure no
+  // submitted work still uses them, e.g. by waiting for the device to be idle, before calling.
+  //
+  // Neither `latlongImage` nor `importanceBuf` is taken over: the producer retains ownership
+  // across the lifetime of this HdrIbl. `latlongImage` must be in
   // `VK_IMAGE_LAYOUT_GENERAL` on entry, with `latlongImage.descriptor.imageLayout` reflecting
   // this: `env_write_pdf.slang` binds it as `VK_DESCRIPTOR_TYPE_STORAGE_IMAGE` to write the
   // PDF into the alpha channel, which per spec requires `GENERAL`. The descriptor's `sampler`

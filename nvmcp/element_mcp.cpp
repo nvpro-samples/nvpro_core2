@@ -43,10 +43,9 @@
 namespace nvmcp {
 namespace {
 
-constexpr std::string_view noArgumentsSchema  = R"({"type":"object","additionalProperties":false})";
-constexpr size_t           maxLogEntries      = 2000;
-constexpr size_t           maxLogBytes        = 1024 * 1024;
-constexpr size_t           maxLogQueryEntries = 1000;
+constexpr size_t maxLogEntries      = 2000;
+constexpr size_t maxLogBytes        = 1024 * 1024;
+constexpr size_t maxLogQueryEntries = 1000;
 
 const char* logLevelName(nvutils::Logger::LogLevel level)
 {
@@ -396,7 +395,10 @@ public:
         throw std::runtime_error("unknown MCP tool: " + name);
       if(it->second.inputSchema == noArgumentsSchema)
         requireEmptyArguments(arguments, name);
-      return it->second.handler(arguments);
+      ToolResult result = it->second.handler(arguments);
+      if(!mcp::json::accept(result.json))
+        return ToolResult::error(mcp::json{{"error", "tool handler returned invalid JSON"}, {"tool", name}}.dump());
+      return result;
     }
     catch(const std::exception& e)
     {
@@ -469,9 +471,8 @@ public:
     }
   }
 
-  ToolResult applicationState(std::string_view arguments) const
+  ToolResult applicationState(std::string_view /*arguments*/) const
   {
-    requireEmptyArguments(arguments, "nvpro_get_application_state");
     if(!app)
       return ToolResult::error(R"({"error":"application is not attached"})");
 
@@ -491,18 +492,16 @@ public:
                                    .dump(2));
   }
 
-  ToolResult shutdown(std::string_view arguments)
+  ToolResult shutdown(std::string_view /*arguments*/)
   {
-    requireEmptyArguments(arguments, "nvpro_shutdown");
     if(!app)
       return ToolResult::error(R"({"error":"application is not attached"})");
     app->close();
     return ToolResult::success(R"({"status":"shutdown-requested"})");
   }
 
-  ToolResult captureScreenshot(std::string_view arguments) const
+  ToolResult captureScreenshot(std::string_view /*arguments*/) const
   {
-    requireEmptyArguments(arguments, "nvpro_capture_screenshot");
     if(!app)
       return ToolResult::error(R"({"error":"application is not attached"})");
     if(app->isHeadless())
@@ -576,10 +575,8 @@ public:
                                    .dump(2));
   }
 
-  ToolResult profilerSnapshot(std::string_view arguments) const
+  ToolResult profilerSnapshot(std::string_view /*arguments*/) const
   {
-    requireEmptyArguments(arguments, "nvpro_get_profiler_snapshot");
-
     std::vector<nvutils::ProfilerTimeline::Snapshot> frameSnapshots;
     std::vector<nvutils::ProfilerTimeline::Snapshot> asyncSnapshots;
     profiler->getSnapshots(frameSnapshots, asyncSnapshots);
@@ -618,7 +615,7 @@ public:
     size_t limit = 100;
     if(parsed.contains("limit"))
     {
-      if(!parsed["limit"].is_number_unsigned() && !parsed["limit"].is_number_integer())
+      if(!parsed["limit"].is_number_integer())
         throw std::invalid_argument("nvpro_get_logs limit must be an integer");
       const int64_t requestedLimit = parsed["limit"].get<int64_t>();
       if(requestedLimit < 1 || requestedLimit > static_cast<int64_t>(maxLogQueryEntries))
@@ -899,7 +896,7 @@ void Element::onAttach(nvapp::Application* app)
   app->setSwapchainAcquireTimeout(m_impl->appliedAcquireTimeout);
   m_impl->frameIndex = 0;
   m_impl->attached   = true;
-  LOGI("MCP server starting at http://%s:%u%s\n", m_impl->info.host.c_str(), m_impl->info.port, m_impl->info.endpoint.c_str());
+  LOGI("MCP server listening at http://%s:%u%s\n", m_impl->info.host.c_str(), m_impl->info.port, m_impl->info.endpoint.c_str());
 }
 
 void Element::onUpdate()

@@ -22,6 +22,8 @@
 #include <vector>
 #include <string>
 #include <filesystem>
+#include <cstdint>
+#include <span>
 
 #pragma push_macro("None")
 #pragma push_macro("Bool")
@@ -39,8 +41,11 @@
 //--------------------------------------------------------------------------------------------------
 // Slang Compiler
 //
+// Compiles to SPIR-V by default (defaultTarget) or to DXIL for Direct3D 12 (dxilTarget).
+// SPIR-V holds every entry point of the module in one blob; DXIL is one blob per entry point.
+//
 // Usage:
-//   see usage_SlangCompiler
+//   see usage_SlangCompiler and usage_SlangCompilerDxil
 //--------------------------------------------------------------------------------------------------
 
 namespace nvslang {
@@ -58,6 +63,11 @@ public:
 
   void defaultTarget();   // Default target is SPIR-V with spirv_1_6 profile
   void defaultOptions();  // Default options are EmitSpirvDirectly, VulkanUseEntryPointName
+
+  // Replaces the targets with DXIL for the given shader model. The compiled code is one
+  // blob per entry point, read with getCode(entryPointIndex); the SPIR-V accessors return nothing.
+  // Returns false and keeps the current targets when the profile is unknown.
+  bool dxilTarget(const char* profile = "sm_6_6");
 
   void addOption(const slang::CompilerOptionEntry& option) { m_options.push_back(option); }
   void clearOptions() { m_options.clear(); }
@@ -90,6 +100,13 @@ public:
   const uint32_t* getSpirv() const;
   // Get the number of bytes in the compiled SPIR-V.
   size_t getSpirvSize() const;
+  // Compiled code of the target as bytes: for SPIR-V the whole program (entryPointIndex is
+  // ignored), for DXIL the code of one entry point in the module's definition order. Empty
+  // when the compilation failed.
+  std::span<const uint8_t> getCode(uint32_t entryPointIndex = 0) const;
+  // Entry points of the compiled module, in definition order; the names match [shader] functions.
+  uint32_t    getEntryPointCount() const;
+  const char* getEntryPointName(uint32_t entryPointIndex) const;
   // Gets the linked Slang program; does not add a reference to it.
   // This is usually what you want for reflection.
   slang::IComponentType* getSlangProgram() const;
@@ -97,8 +114,9 @@ public:
   // useful for reflection if you need a list of functions.
   slang::IModule* getSlangModule() const;
 
-  // Use for Dump or Aftermath
-  void setCompileCallback(std::function<void(const std::filesystem::path& sourceFile, const uint32_t* spirvCode, size_t spirvSize)> callback)
+  // Use for Dump or Aftermath. Receives whatever the target produced after compileFile():
+  // the SPIR-V module, or the DXIL of the first entry point; `codeSize` is in bytes.
+  void setCompileCallback(std::function<void(const std::filesystem::path& sourceFile, const uint32_t* code, size_t codeSize)> callback)
   {
     m_callback = callback;
   }
@@ -120,11 +138,12 @@ private:
   Slang::ComPtr<slang::ISession>            m_session;
   Slang::ComPtr<slang::IModule>             m_module;
   Slang::ComPtr<slang::IComponentType>      m_linkedProgram;
-  Slang::ComPtr<ISlangBlob>                 m_spirv;
+  Slang::ComPtr<ISlangBlob>                 m_spirv;           // Whole-program code of a SPIR-V target
+  std::vector<Slang::ComPtr<ISlangBlob>>    m_entryPointCode;  // Per-entry-point code of any other target (DXIL)
   std::vector<slang::PreprocessorMacroDesc> m_macros;
   SlangProfileID                            m_profileID{SLANG_PROFILE_UNKNOWN};
 
-  std::function<void(const std::filesystem::path& sourceFile, const uint32_t* spirvCode, size_t spirvSize)> m_callback;
+  std::function<void(const std::filesystem::path& sourceFile, const uint32_t* code, size_t codeSize)> m_callback;
 
   // Store the last diagnostic message
   std::string m_lastDiagnosticMessage;

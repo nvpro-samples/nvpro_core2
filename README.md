@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-A modular C++ framework for Vulkan 1.4+ and OpenGL 4.6 development, designed as the successor to [nvpro_core](https://github.com/nvpro-samples/nvpro_core). This framework provides a collection of static libraries that make it easier to create high-performance research and sample graphics applications.
+A modular C++ framework for Vulkan 1.4+, Direct3D 12 and OpenGL 4.6 development, designed as the successor to [nvpro_core](https://github.com/nvpro-samples/nvpro_core). This framework provides a collection of static libraries that make it easier to create high-performance research and sample graphics applications.
 
 ## Overview
 
@@ -12,9 +12,14 @@ Vulkan:
 - [**nvvk**](nvvk): Vulkan helper functions and abstractions
 - [**nvvkglsl**](nvvkglsl): Vulkan GLSL compiler support (uses shaderc from Vulkan SDK)
 - [**nvvkgltf**](nvvkgltf): GLTF model loading and rendering support
-- [**nvapp**](nvapp): Application framework and window management
+- [**nvapp**](nvapp): Application framework and window management. `nvapp::Application` is the Vulkan application; `nvapp::ApplicationBase` is the API-agnostic part (window, ImGui, elements, main loop) that other back ends build on. Without `nvvk`, the library contains only `ApplicationBase`, the `nvapp::detail` helpers and `nvapp::FramePacer`
 - [**nvshaders**](nvshaders): Useful shaders and functions for BxDFs, skies, tonemapping, and more. Many functions can also be used from GLSL or C++ using slang_types.h
 - [**nvshaders_host**](nvshaders_host): Host code for some pre-defined shader pipelines
+
+Direct3D 12:
+- [**nvdx12**](nvdx12): Direct3D 12 helper functions and abstractions, the counterpart of `nvvk` (opt-in: `NVPRO2_ENABLE_nvdx12`)
+- [**nvdx12app**](nvdx12app): Direct3D 12 application framework on `nvapp::ApplicationBase` (opt-in: `NVPRO2_ENABLE_nvdx12app`, with `nvdx12`, `nvapp` and `nvgui`)
+- [**nvshaders_host**](nvshaders_host): Direct3D 12 hosts of the sky and tone mapper shaders (opt-in: `NVPRO2_NVSHADERS_HOST_DX12`, with `nvdx12` and `NVPRO2_DXC_DIR` set to the directory of `dxcompiler.dll`)
 
 OpenGL:
 - [**nvgl**](nvgl): OpenGL helper functions and legacy application framework
@@ -44,6 +49,7 @@ Key improvements in `nvpro_core2` compared to previous [nvpro_core](https://gith
 ## Requirements
 
 - [Vulkan 1.4 SDK](https://vulkan.lunarg.com/sdk/home)
+- For the Direct3D 12 libraries: 64-bit Windows. Configuring `nvdx12` downloads the DirectX 12 Agility SDK unless `DX12AgilitySdk_ROOT` points to one ([FindDX12AgilitySdk.cmake](cmake/FindDX12AgilitySdk.cmake) lists the variables and where the runtime DLLs go). `nvdx12::ShaderCompiler` compiles HLSL at run time with `dxcompiler.dll` and `dxil.dll`, by default from the executable's directory ([FindDXC.cmake](cmake/FindDXC.cmake) downloads them).
 - [CMake 3.22 or higher](https://cmake.org/download/)
 - 64-bit Windows or Linux OS
 - Compiler supporting basic C++20 features 
@@ -161,6 +167,7 @@ copy_to_runtime_and_install(${PROJECT_NAME} AUTO)
 This project embeds or includes (as filtered [third_party](third_party) subfolders) several open-source libraries and/or code derived from them. All such libraries' licenses are included in the [PACKAGE-LICENSES](PACKAGE-LICENSES) folder.
 
 Key third-party dependencies include:
+- [D3D12 Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/D3D12MemoryAllocator) - Direct3D 12 memory management
 - [{fmt}](https://github.com/fmtlib/fmt) - Formatting library
 - [Dear ImGui](https://github.com/ocornut/imgui) - Immediate mode GUI
 - [GLFW](https://github.com/glfw/glfw) - Window management

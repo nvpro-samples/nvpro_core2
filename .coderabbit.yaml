@@ -1,0 +1,6 @@
+# CodeRabbit review settings; settings not listed here come from the repository and organization.
+inheritance: true
+reviews:
+  path_filters:
+    # Filtered copies of upstream libraries (third_party/dev-rebuild-filtered-repos.py), reviewed upstream.
+    - "!third_party/**"

@@ -275,6 +275,7 @@ VkResult nvvk::Swapchain::acquireNextImage(VkDevice device, uint64_t timeout)
       return result;
 
     case VK_TIMEOUT:
+    case VK_NOT_READY:  // A zero timeout and no image available yet
       return result;
 
     case VK_ERROR_OUT_OF_DATE_KHR:  // The swapchain is no longer compatible with the surface and needs to be recreated

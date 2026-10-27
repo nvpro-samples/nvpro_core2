@@ -204,9 +204,9 @@ public:
   void submitResourceFree(std::function<void()>&& func);
 
   // Utilities
-  bool     isVsync() const { return m_vsyncWanted; }                        // Return true if V-Sync is on
-  void     setVsync(bool v);                                                // Set V-Sync on or off
-  bool     isHeadless() const { return m_headless; }                        // Return true if headless
+  bool     isVsync() const { return m_vsyncWanted; }                 // Return true if V-Sync is on
+  void     setVsync(bool v);                                         // Set V-Sync on or off
+  bool     isHeadless() const { return m_headless; }                 // Return true if headless
   bool     getPersistSettings() const { return m_persistSettings; }  // Return true if <exe>.ini is restored/saved
   void     setRenderWhileMinimized(bool v) { m_renderWhileMinimized = v; }  // Continue rendering when minimized
   uint32_t getHeadlessFrameCount() const { return m_headlessFrameCount; }   // Number of frames to render in headless
@@ -296,8 +296,9 @@ public:
   VkResult saveImageToFile(VkImage                      srcImage,
                            VkExtent2D                   srcSize,
                            const std::filesystem::path& filename,
-                           int                          quality   = 100,
-                           VkImageLayout                srcLayout = VK_IMAGE_LAYOUT_GENERAL);
+                           int                          quality          = 100,
+                           VkImageLayout                srcLayout        = VK_IMAGE_LAYOUT_GENERAL,
+                           bool                         forceOpaqueAlpha = false);
 
 
 protected:

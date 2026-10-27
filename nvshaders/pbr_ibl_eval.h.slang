@@ -31,7 +31,7 @@ All evaluators take their textures/samplers as explicit parameters so this heade
 descriptor-set assumptions. World-space directions go in; the environment's rotation is applied
 internally so callers stay in their native frame. `envRotation` is a unit quaternion (x, y, z, w)
 taking the cubemaps' frame to world; every evaluator also has an overload taking a single angle
-about +Y, in radians, as they did before.
+about +Y, in radians.
 -------------------------------------------------------------------------------------------------*/
 
 #include "bsdf_functions.h.slang"  // applyVolumeAttenuation

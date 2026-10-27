@@ -228,6 +228,15 @@ if(NOT TARGET tinyobjloader)
   set_property(TARGET tinyobjloader PROPERTY FOLDER "ThirdParty")
 endif()
 
+# d3d12ma: the D3D12 Memory Allocator; nvdx12/d3d12ma.cpp compiles its
+# implementation against the Agility SDK headers.
+if(NOT TARGET d3d12ma AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/d3d12ma)
+  set(D3D12MA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/d3d12ma/include)
+  add_library(d3d12ma INTERFACE ${D3D12MA_DIR}/D3D12MemAlloc.h)
+  target_include_directories(d3d12ma INTERFACE ${D3D12MA_DIR})
+  set_property(TARGET d3d12ma PROPERTY FOLDER "ThirdParty")
+endif()
+
 # vma
 if(NOT TARGET vma AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vma)
   set(VMA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/vma/include)

@@ -45,6 +45,12 @@ bool StagingCopyBatch::isAppendedEmpty() const
 
 void StagingCopyBatch::cmdCopyAppended(VkCommandBuffer cmd)
 {
+  cmdRecordAppended(cmd);
+  reset();
+}
+
+void StagingCopyBatch::cmdRecordAppended(VkCommandBuffer cmd) const
+{
   if(enableLayoutBarriers)
   {
     pre.cmdPipelineBarrier(cmd, 0);
@@ -53,24 +59,24 @@ void StagingCopyBatch::cmdCopyAppended(VkCommandBuffer cmd)
   size_t regionOffset = 0;
   for(size_t i = 0; i < copyBufferInfos.size(); i++)
   {
-    copyBufferInfos[i].pRegions = &copyBufferRegions[regionOffset];
-    regionOffset += copyBufferInfos[i].regionCount;
-    vkCmdCopyBuffer2(cmd, &copyBufferInfos[i]);
+    VkCopyBufferInfo2 copyInfo = copyBufferInfos[i];
+    copyInfo.pRegions          = &copyBufferRegions[regionOffset];
+    regionOffset += copyInfo.regionCount;
+    vkCmdCopyBuffer2(cmd, &copyInfo);
   }
   regionOffset = 0;
   for(size_t i = 0; i < copyBufferImageInfos.size(); i++)
   {
-    copyBufferImageInfos[i].pRegions = &copyBufferImageRegions[regionOffset];
-    regionOffset += copyBufferImageInfos[i].regionCount;
-    vkCmdCopyBufferToImage2(cmd, &copyBufferImageInfos[i]);
+    VkCopyBufferToImageInfo2 copyInfo = copyBufferImageInfos[i];
+    copyInfo.pRegions                 = &copyBufferImageRegions[regionOffset];
+    regionOffset += copyInfo.regionCount;
+    vkCmdCopyBufferToImage2(cmd, &copyInfo);
   }
 
   if(enableLayoutBarriers || enableOwnerBarriers)
   {
     post.cmdPipelineBarrier(cmd, 0);
   }
-
-  reset();
 }
 
 void StagingCopyBatch::reset()

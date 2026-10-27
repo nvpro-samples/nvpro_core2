@@ -23,7 +23,6 @@
 #include <nvvk/semaphore.hpp>
 #include <nvvk/staging.hpp>
 #include <nvvk/buffer_circular_allocator.hpp>
-#include <nvvk/command_pools.hpp>
 
 #include <nvvk/uploader_interface.hpp>
 
@@ -67,6 +66,9 @@ public:
 
   void updateFrameSemaphoreState(const nvvk::SemaphoreState& semaphoreState);
   void releaseCompletedAllocations(bool forceAll = false);
+
+  // copies of the last `cmdUploadAppended`
+  const Stats& getStats() const { return m_stats; }
 
   //////////////////////////////////////////////////////////////////////////
   // UploaderInterface

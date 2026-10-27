@@ -27,7 +27,6 @@
 #include <cstring>
 #include <memory>
 #include <span>
-#include <numeric>
 #include <limits>
 
 #include <glm/glm.hpp>
@@ -43,7 +42,6 @@
 
 #include "check_error.hpp"
 #include "commands.hpp"
-#include "command_pools.hpp"
 #include "compute_pipeline.hpp"
 #include "debug_util.hpp"
 #include "default_structs.hpp"
@@ -178,8 +176,7 @@ void HdrIbl::loadEnvironment(VkCommandBuffer cmd, nvvk::CmdUploaderInterface& st
   if(m_valid)
   {
     assert(pixels);
-    VkDeviceSize buffer_size = width * height * 4 * sizeof(float);
-    VkExtent2D   imgSize{static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
+    VkExtent2D imgSize{static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
 
     m_hdrImageSize = imgSize;
     m_samplingGrid = imgSize;  // createEnvironmentAccel builds one alias entry per texel
@@ -203,7 +200,7 @@ void HdrIbl::loadEnvironment(VkCommandBuffer cmd, nvvk::CmdUploaderInterface& st
         NVVK_DBG_NAME(m_accelImpSmpl.buffer);
 
         NVVK_CHECK(m_alloc->createImage(m_texHdr, imageInfo, DEFAULT_VkImageViewCreateInfo));
-        NVVK_CHECK(staging.appendImage(m_texHdr, std::span(pixels, buffer_size / sizeof(float)), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
+        NVVK_CHECK(staging.appendImage(m_texHdr, rgbaPixels, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
         NVVK_DBG_NAME(m_texHdr.image);
       }
     }
@@ -224,8 +221,8 @@ void HdrIbl::loadEnvironment(VkCommandBuffer cmd, nvvk::CmdUploaderInterface& st
     m_hdrImageSize = {1, 1};
     m_samplingGrid = {1, 1};
 
-    // One whole alias entry that always picks its own texel. The buffer used to be sized from the
-    // 4-byte colour above, half an entry, so a shader sampling the dummy read past its end.
+    // One whole alias entry that always picks its own texel. Sizing the buffer from the 4-byte
+    // color above would give half an entry, and a shader sampling the dummy would read past its end.
     std::vector<shaderio::EnvAccel> accel{{.alias = 0, .q = 1.0F}};
     NVVK_CHECK(m_alloc->createBuffer(m_accelImpSmpl, std::span(accel).size_bytes(), VK_BUFFER_USAGE_2_STORAGE_BUFFER_BIT));
     NVVK_CHECK(staging.appendBuffer(m_accelImpSmpl, 0, std::span(accel)));
@@ -474,10 +471,6 @@ void HdrIbl::updateFromGpuImage(const nvvk::QueueInfo& queueInfo,
   std::unique_ptr<shaderio::EnvAccel[]> envAccel = std::make_unique_for_overwrite<shaderio::EnvAccel[]>(cellCount);
   m_integral                                     = buildEnvAliasmap(importance, std::span(envAccel.get(), cellCount));
   m_alloc->destroyBuffer(stagingReadback);
-  if(m_integral == 0.0f)
-  {
-    m_integral = 1.0f;
-  }
   // Approximation of the CIE-luminance average the file path computes: this integral is in
   // max-channel * solid-angle units rather than CIE-luminance units, but the ratio is roughly
   // constant across physical HDRs and only feeds tonemapper auto-exposure heuristics. Divided by
@@ -573,9 +566,8 @@ void HdrIbl::updateFromGpuImage(const nvvk::QueueInfo& queueInfo,
 
   // -- Step 6: adopt the image and rebind sampling descriptors ------------------------------
   // m_texHdr is what getHdrImage() returns, and downstream consumers bind it into their own
-  // descriptor sets (vk_gltf_renderer puts it in `texturesHdr[HDR_IMAGE_INDEX]`). It has to name
-  // the image we just bound, or getHdrImage() keeps returning the zeroed handle destroyEnvironment
-  // left behind and the caller writes a dangling descriptor.
+  // descriptor sets. It has to name the image we just bound, or getHdrImage() keeps returning the
+  // zeroed handle destroyEnvironment left behind and the caller writes a dangling descriptor.
   //
   // m_hdrImageIsOwned stays false: we reference latlongImage, we do not own it, so
   // destroyEnvironment() must not free it on the next teardown.
@@ -588,9 +580,8 @@ void HdrIbl::updateFromGpuImage(const nvvk::QueueInfo& queueInfo,
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
 
-// The Vose alias-map builder used to live here; it moved to `env_aliasmap.{hpp,cpp}` so CPU
-// tests can link it directly without dragging in the whole Vulkan/VMA stack. The declaration
-// stays reachable through `hdr_ibl.hpp` (which now re-includes `env_aliasmap.hpp`).
+// The Vose alias-map builder is in `env_aliasmap.{hpp,cpp}`, so CPU tests can link it without
+// the Vulkan/VMA stack.
 
 // CIE luminance
 inline static float luminance(const float* color)
@@ -648,10 +639,6 @@ inline std::vector<shaderio::EnvAccel> createEnvironmentAccel(float*&         pi
   // each smaller radiance texel will be assigned an "alias" with higher emitted radiance
   // As a byproduct this function also returns the integral of the radiance emitted by the environment
   integral = buildEnvAliasmap(importance_data, env_accel);
-  if(integral == 0.0f)
-  {
-    integral = 1.0f;
-  }
 
   // We deduce the PDF of each texel by normalizing its emitted radiance by the radiance integral
   const float inv_env_integral = 1.0F / integral;

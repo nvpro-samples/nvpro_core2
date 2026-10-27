@@ -114,8 +114,8 @@ VkResult nvvk::imageToLinear(VkCommandBuffer  cmd,
 
 namespace {
 
-// One-shot readback waits for all prior device work before changing the source
-// layout. This preserves the established saveImageToFile synchronization contract.
+// One-shot readback: waits for all prior device work before changing the source
+// layout, so callers need no synchronization of their own.
 VkResult imageToLinearBlocking(VkDevice         device,
                                VkPhysicalDevice physicalDevice,
                                VkCommandPool    cmdPool,
@@ -142,6 +142,39 @@ void destroyLinearImage(VkDevice device, VkImage image, VkDeviceMemory memory)
     vkDestroyImage(device, image, nullptr);
   if(memory)
     vkFreeMemory(device, memory, nullptr);
+}
+
+// Writes alpha as 1 in a mapped linear RGBA8 or RGBA32F readback. Renderers
+// often keep render data (depth guides, masks) in alpha; written as-is, the
+// file reads as partly transparent in any viewer that honors PNG alpha.
+VkResult forceOpaqueAlphaInLinear(VkDevice device, VkImage linearImage, VkDeviceMemory linearMemory, VkExtent2D size, VkFormat format)
+{
+  VkImageSubresource  subResource{VK_IMAGE_ASPECT_COLOR_BIT, 0, 0};
+  VkSubresourceLayout subResourceLayout{};
+  vkGetImageSubresourceLayout(device, linearImage, &subResource, &subResourceLayout);
+
+  uint8_t* data = nullptr;
+  NVVK_FAIL_RETURN(vkMapMemory(device, linearMemory, 0, VK_WHOLE_SIZE, 0, reinterpret_cast<void**>(&data)));
+
+  uint8_t* row = data + subResourceLayout.offset;
+  for(uint32_t y = 0; y < size.height; y++)
+  {
+    if(format == VK_FORMAT_R32G32B32A32_SFLOAT)
+    {
+      float* texels = reinterpret_cast<float*>(row);
+      for(uint32_t x = 0; x < size.width; x++)
+        texels[x * 4 + 3] = 1.0f;
+    }
+    else
+    {
+      for(uint32_t x = 0; x < size.width; x++)
+        row[x * 4 + 3] = 255;
+    }
+    row += subResourceLayout.rowPitch;
+  }
+
+  vkUnmapMemory(device, linearMemory);
+  return VK_SUCCESS;
 }
 
 }  // namespace
@@ -282,13 +315,16 @@ VkResult nvvk::saveImageToFile(VkDevice                     device,
                                VkExtent2D                   size,
                                const std::filesystem::path& filename,
                                int                          quality,
-                               VkImageLayout                srcLayout)
+                               VkImageLayout                srcLayout,
+                               bool                         forceOpaqueAlpha)
 {
   const VkFormat dstFormat = nvutils::extensionMatches(filename, ".hdr") ? VK_FORMAT_R32G32B32A32_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
   VkImage        dstImage{};
   VkDeviceMemory dstImageMemory{};
   VkResult result = imageToLinearBlocking(device, physicalDevice, cmdPool, queue, srcImage, size, dstFormat, srcLayout,
                                           dstImage, dstImageMemory);
+  if(result == VK_SUCCESS && forceOpaqueAlpha)
+    result = forceOpaqueAlphaInLinear(device, dstImage, dstImageMemory, size, dstFormat);
   if(result == VK_SUCCESS)
     result = saveImageToFile(device, dstImage, dstImageMemory, size, filename, quality);
 

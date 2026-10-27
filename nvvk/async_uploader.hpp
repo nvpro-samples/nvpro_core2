@@ -13,6 +13,7 @@
 #include <nvutils/id_pool.hpp>
 #include <functional>
 #include <array>
+#include <atomic>
 
 #include <nvvk/uploader_interface.hpp>
 
@@ -106,7 +107,7 @@ public:
   // should be called at end of multiple upload append operations,
   // and/or once every frame
   // `semaphoreState` can be used to wait for anything up to this point
-  // if there is no pending work does same as `releaseSubmitted`
+  // if there is no pending work does same as `releaseCompletedAllocations`
   // on failure `outSemaphoreState` is left untouched, as the submit that
   // would signal it did not happen.
   VkResult flushPending(nvvk::SemaphoreState* outSemaphoreState = nullptr);
@@ -263,9 +264,9 @@ protected:
 
   // statistics
   // how often we had to wait for command buffer
-  uint32_t m_waitCmdCount{0};
+  std::atomic_uint32_t m_waitCmdCount{0};
   // how many submits
-  uint32_t m_submitCount{0};
+  std::atomic_uint32_t m_submitCount{0};
 
   mutable std::mutex       m_allocLock;
   nvvk::BufferSubAllocator m_bufferSubAllocator;

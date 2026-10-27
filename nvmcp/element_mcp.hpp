@@ -71,11 +71,14 @@ struct ToolAnnotations
   bool openWorldHint{true};
 };
 
+// Input schema of a tool that takes no arguments; such tools accept an absent or empty argument object.
+inline constexpr std::string_view noArgumentsSchema = R"({"type":"object","additionalProperties":false})";
+
 struct Tool
 {
   std::string                                 name;
   std::string                                 description;
-  std::string                                 inputSchema{R"({"type":"object","additionalProperties":false})"};
+  std::string                                 inputSchema{noArgumentsSchema};
   std::function<ToolResult(std::string_view)> handler;
   ToolAnnotations                             annotations;
   // Worker threads are the default so tool work does not interrupt rendering.
@@ -89,8 +92,7 @@ struct ElementCreateInfo
   std::string serverName{"nvpro_core2"};
   std::string serverVersion{"0.1.0"};
   std::string instructions{"Tools inspect and control a live development application. Follow each tool's description and annotations."};
-  // The first implementation is intentionally unauthenticated and therefore
-  // accepts loopback hosts only.
+  // The endpoint is unauthenticated, so it accepts loopback hosts only.
   std::string               host{"127.0.0.1"};
   uint16_t                  port{7671};
   std::string               endpoint{"/mcp"};

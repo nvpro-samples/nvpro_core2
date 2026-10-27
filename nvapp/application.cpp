@@ -31,7 +31,6 @@
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
 #include <fmt/ranges.h>
-#include <imgui_internal.h>
 #include <implot/implot.h>
 #define NVLOGGER_ENABLE_FMT
 #include <nvutils/logger.hpp>
@@ -43,10 +42,9 @@
 #include <nvvk/commands.hpp>
 #include <nvvk/helpers.hpp>
 
-#include <nvgui/fonts.hpp>
-#include <nvgui/style.hpp>
 
 #include "application.hpp"
+#include "detail.hpp"
 
 // GLFW Callback for file drop
 static void dropCb(GLFWwindow* window, int count, const char** paths)
@@ -60,10 +58,7 @@ static void dropCb(GLFWwindow* window, int count, const char** paths)
 
 nvapp::Application::Application(void)
 {
-  glfwInit();
-  IMGUI_CHECKVERSION();
-  ImGui::CreateContext();
-  ImPlot::CreateContext();
+  detail::initContexts();
 }
 
 // Provides additional diagnostic information about which GPUs can be used with
@@ -155,8 +150,7 @@ VkResult nvapp::Application::init(ApplicationCreateInfo& info)
     info.imguiConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
   }
 
-  // Get the executable path and set the ini file name
-  m_iniFilename = nvutils::utf8FromPath(nvutils::getExecutablePath().replace_extension(".ini"));
+  m_iniFilename = detail::defaultIniFilename();
 
   // Initialize ImGui Context and settings handler, and load window size/pos from ini
   initializeImGuiContextAndSettings();
@@ -225,19 +219,11 @@ VkResult nvapp::Application::init(ApplicationCreateInfo& info)
 
 VkResult nvapp::Application::initGlfw(ApplicationCreateInfo& info)
 {
-  glfwInit();
-
-  // Create the GLFW Window
-  glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-  glfwWindowHint(GLFW_SCALE_TO_MONITOR, GLFW_TRUE);  // Aware of DPI scaling
-  m_windowHandle = glfwCreateWindow(m_windowSize.width, m_windowSize.height, info.name.c_str(), nullptr, nullptr);
+  m_windowHandle = detail::createWindow(info.name.c_str(), {m_windowSize.width, m_windowSize.height}, m_winPos, this, &dropCb);
   if(!m_windowHandle)
   {
-    LOGE("glfwCreateWindow failed (no display? set DISPLAY env for X11)\n");
     return VK_ERROR_UNKNOWN;
   }
-  glfwSetWindowSize(m_windowHandle, m_windowSize.width, m_windowSize.height);  // Sets the size of the window using the DPI scaling
-  glfwSetWindowPos(m_windowHandle, m_winPos.x, m_winPos.y);
 
   // Create the window surface. Streamline needs it created through its own
   // vkCreateWin32SurfaceKHR proxy: that is where SL learns the app's window,
@@ -276,10 +262,6 @@ VkResult nvapp::Application::initGlfw(ApplicationCreateInfo& info)
     NVVK_FAIL_RETURN(glfwCreateWindowSurface(m_instance, m_windowHandle, nullptr, reinterpret_cast<VkSurfaceKHR*>(&m_surface)));
   }
   NVVK_DBG_NAME(m_surface);
-
-  // Set the Drop callback
-  glfwSetWindowUserPointer(m_windowHandle, this);
-  glfwSetDropCallback(m_windowHandle, &dropCb);
   return VK_SUCCESS;
 }
 
@@ -470,19 +452,13 @@ void nvapp::Application::run()
     }
     glfwPollEvents();
 
-    // Check if window was resized and update m_windowSize.
-    // Skip zero-size updates: when minimized, glfwGetFramebufferSize returns (0,0).
-    // If we stored that, m_renderWhileMinimized would bypass the minimized guard and
-    // pass {0,0} to viewport/swapchain/Vulkan — invalid. Preserve last valid size.
+    // Window resize; a minimized window keeps the last valid size.
     {
-      int width, height;
-      glfwGetFramebufferSize(m_windowHandle, &width, &height);
-      VkExtent2D newSize = {static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
-      if(newSize.width > 0 && newSize.height > 0
-         && (newSize.width != m_windowSize.width || newSize.height != m_windowSize.height))
+      glm::uvec2 size{m_windowSize.width, m_windowSize.height};
+      if(detail::framebufferResized(m_windowHandle, size))
       {
-        m_windowSize = newSize;
-        m_swapchain.requestRebuild();  // Request swapchain rebuild for new size
+        m_windowSize = {size.x, size.y};
+        m_swapchain.requestRebuild();
       }
     }
 
@@ -516,22 +492,11 @@ void nvapp::Application::run()
       ImGui::EndMainMenuBar();
     }
 
-    // Handle Viewport Updates
-    VkExtent2D         viewportSize = m_windowSize;
-    const ImGuiWindow* viewport     = ImGui::FindWindowByName("Viewport");
-    if(viewport)
+    // The "Viewport" window, or the whole window without one
+    const glm::uvec2 viewportSize = detail::viewportWindowSize({m_windowSize.width, m_windowSize.height});
+    if(m_viewportSize.width != viewportSize.x || m_viewportSize.height != viewportSize.y)
     {
-      viewportSize = {uint32_t(viewport->Size.x), uint32_t(viewport->Size.y)};
-      ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-      ImGui::Begin("Viewport");
-      ImGui::End();
-      ImGui::PopStyleVar();
-    }
-
-    // Update viewport if size changed
-    if(m_viewportSize.width != viewportSize.width || m_viewportSize.height != viewportSize.height)
-    {
-      onViewportSizeChange(viewportSize);
+      onViewportSizeChange({viewportSize.x, viewportSize.y});
     }
 
     // Frame Resource Preparation
@@ -592,24 +557,7 @@ void nvapp::Application::run()
 // The central node is named "Viewport", which can be used later with Begin("Viewport")  to render the final image.
 void nvapp::Application::setupImguiDock()
 {
-  const ImGuiDockNodeFlags dockFlags = ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_NoDockingInCentralNode;
-  ImGuiID dockID = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), dockFlags);
-  // Docking layout, must be done only if it doesn't exist
-  if(!ImGui::DockBuilderGetNode(dockID)->IsSplitNode() && !ImGui::FindWindowByName("Viewport"))
-  {
-    ImGui::DockBuilderDockWindow("Viewport", dockID);  // Dock "Viewport" to  central node
-    ImGui::DockBuilderGetCentralNode(dockID)->LocalFlags |= ImGuiDockNodeFlags_NoTabBar;  // Remove "Tab" from the central node
-    if(m_dockSetup)
-    {
-      // This override allow to create the layout of windows by default.
-      m_dockSetup(dockID);
-    }
-    else
-    {
-      ImGuiID leftID = ImGui::DockBuilderSplitNode(dockID, ImGuiDir_Left, 0.2f, nullptr, &dockID);  // Split the central node
-      ImGui::DockBuilderDockWindow("Settings", leftID);  // Dock "Settings" to the left node
-    }
-  }
+  detail::setupImguiDock(m_dockSetup);
 }
 
 //-----------------------------------------------------------------------
@@ -618,11 +566,7 @@ void nvapp::Application::setupImguiDock()
 //
 void nvapp::Application::onViewportSizeChange(VkExtent2D size)
 {
-  // Check for DPI scaling and adjust the font size
-  float xscale, yscale;
-  glfwGetWindowContentScale(m_windowHandle, &xscale, &yscale);
-  ImGui::GetIO().FontGlobalScale *= xscale / m_dpiScale;
-  m_dpiScale = xscale;
+  m_dpiScale = detail::updateDpiScale(m_windowHandle, m_dpiScale);
 
   m_viewportSize = size;
   // Recreate the G-Buffer to the size of the viewport
@@ -1083,30 +1027,7 @@ VkResult nvapp::Application::createDescriptorPool()
 //
 void nvapp::Application::initializeImGuiContextAndSettings()
 {
-  nvgui::setStyle(false);
-
-  m_settingsHandler.setHandlerName("Application");
-  m_settingsHandler.setSetting("Size", &m_winSize);
-  m_settingsHandler.setSetting("Pos", &m_winPos);
-  m_settingsHandler.addImGuiHandler();
-
-  // Load the window size/pos and layout from the ini file, only for sessions that persist them.
-  // A headless, scripted or benchmark result must not depend on how the last session was left
-  // (a restored window size changes the viewport, and with it the image and the timings).
-  if(m_persistSettings)
-  {
-    ImGui::LoadIniSettingsFromDisk(m_iniFilename.c_str());
-  }
-
-  // Let ImGui auto-save only sessions that persist: otherwise an automated run would overwrite the
-  // layout of interactive sessions.
-  ImGuiIO& io    = ImGui::GetIO();
-  io.IniFilename = m_persistSettings ? m_iniFilename.c_str() : nullptr;
-
-  // Initialize fonts
-  nvgui::addDefaultFont();
-  io.FontDefault = nvgui::getDefaultFont();
-  nvgui::addMonospaceFont();
+  detail::initImGuiSettings(m_settingsHandler, m_winSize, m_winPos, m_persistSettings, m_iniFilename);
 }
 
 
@@ -1162,10 +1083,15 @@ void nvapp::Application::setupImGuiVulkanBackend(ImGuiConfigFlags configFlags)
 }
 
 
-VkResult nvapp::Application::saveImageToFile(VkImage srcImage, VkExtent2D srcSize, const std::filesystem::path& filename, int quality, VkImageLayout srcLayout)
+VkResult nvapp::Application::saveImageToFile(VkImage                      srcImage,
+                                             VkExtent2D                   srcSize,
+                                             const std::filesystem::path& filename,
+                                             int                          quality,
+                                             VkImageLayout                srcLayout,
+                                             bool                         forceOpaqueAlpha)
 {
   return nvvk::saveImageToFile(m_device, m_physicalDevice, m_transientCmdPool, m_queues[0].queue, srcImage, srcSize,
-                               filename, quality, srcLayout);
+                               filename, quality, srcLayout, forceOpaqueAlpha);
 }
 
 
@@ -1218,42 +1144,20 @@ VkResult nvapp::Application::encodeScreenShotToPng(std::vector<uint8_t>& pngData
 
 void nvapp::Application::submitResourceFree(std::function<void()>&& func)
 {
-  if(m_frameRingCurrent < m_resourceFreeQueue.size())
-  {
-    m_resourceFreeQueue[m_frameRingCurrent].emplace_back(func);
-  }
-  else
-  {
-    func();
-  }
+  detail::freeQueueSubmit(m_resourceFreeQueue, m_frameRingCurrent, std::move(func));
 }
 
 void nvapp::Application::resetFreeQueue(uint32_t size)
 {
   vkDeviceWaitIdle(m_device);
-
-  for(auto& queue : m_resourceFreeQueue)
-  {
-    // Free resources in queue
-    for(auto& func : queue)
-    {
-      func();
-    }
-    queue.clear();
-  }
-  m_resourceFreeQueue.clear();
-  m_resourceFreeQueue.resize(size);
+  detail::freeQueueReset(m_resourceFreeQueue, size);
 }
 
 // This is called to free all resources that are not used anymore
 // By using the frameRingCurrent we can free resources that are not used anymore
 void nvapp::Application::freeResourcesQueue()
 {
-  for(auto& func : m_resourceFreeQueue[m_frameRingCurrent])
-  {
-    func();  // Free resources in queue
-  }
-  m_resourceFreeQueue[m_frameRingCurrent].clear();
+  detail::freeQueueRun(m_resourceFreeQueue, m_frameRingCurrent);
 }
 
 void nvapp::Application::addWaitSemaphore(const VkSemaphoreSubmitInfo& wait)
@@ -1293,93 +1197,17 @@ void nvapp::Application::prependCommandBuffer(const VkCommandBufferSubmitInfo& c
 
 void nvapp::Application::centerOnPrimaryMonitor(const glm::ivec2& winSize, glm::ivec2& winPos)
 {
-  GLFWmonitor* primary = glfwGetPrimaryMonitor();
-  if(primary)
-  {
-    int monX, monY;
-    glfwGetMonitorPos(primary, &monX, &monY);
-    const GLFWvidmode* mode = glfwGetVideoMode(primary);
-    winPos.x                = monX + (mode->width - winSize.x) / 2;
-    winPos.y                = monY + (mode->height - winSize.y) / 2;
-  }
-  else
-  {
-    winPos.x = 0;
-    winPos.y = 0;
-  }
+  detail::centerOnPrimaryMonitor(winSize, winPos);
 }
 
 void nvapp::Application::testAndSetWindowSizeAndPos(const glm::uvec2& winSize)
 {
-  bool centerWindow = false;
-  // If winSize is provided, use it
-  if(winSize.x != 0 && winSize.y != 0)
-  {
-    m_winSize    = winSize;
-    centerWindow = true;  // When the window size is requested, it will be centered
-  }
-
-  // If m_winSize is still (0,0), set defaults
-  // Could be not zero if the user set it in the settings (see loading of the ini file)
-  if(m_winSize.x == 0 && m_winSize.y == 0)
-  {
-    if(m_headless)
-    {
-      m_winSize = {800, 600};
-    }
-    else
-    {
-      // Get 80% of primary monitor (may be NULL when no display / SSH / headless-like)
-      GLFWmonitor* primary = glfwGetPrimaryMonitor();
-      if(primary)
-      {
-        const GLFWvidmode* mode = glfwGetVideoMode(primary);
-        m_winSize.x             = static_cast<int>(mode->width * 0.8f);
-        m_winSize.y             = static_cast<int>(mode->height * 0.8f);
-      }
-      else
-      {
-        m_winSize = {800, 600};
-      }
-    }
-    if(!m_headless)
-    {
-      centerOnPrimaryMonitor(m_winSize, m_winPos);
-    }
-  }
-  else if(!m_headless)
-  {
-    if(!isWindowPosValid(m_winPos) || centerWindow)
-    {
-      centerOnPrimaryMonitor(m_winSize, m_winPos);
-    }
-  }
-
+  detail::chooseWindowSizeAndPos(winSize, m_headless, m_winSize, m_winPos);
   m_windowSize = {m_winSize.x, m_winSize.y};
 }
 
 // Check if window position is within visible monitor bounds
 bool nvapp::Application::isWindowPosValid(const glm::ivec2& winPos)
 {
-  int           monitorCount;
-  GLFWmonitor** monitors = glfwGetMonitors(&monitorCount);
-
-  // For each connected monitor
-  for(int i = 0; i < monitorCount; i++)
-  {
-    GLFWmonitor*       monitor = monitors[i];
-    const GLFWvidmode* mode    = glfwGetVideoMode(monitor);
-
-    int monX, monY;
-    glfwGetMonitorPos(monitor, &monX, &monY);
-
-    // Check if window position is within this monitor's bounds
-    // Add some margin to account for window decorations
-    if(winPos.x >= monX && winPos.x < monX + mode->width && winPos.y >= monY && winPos.y < monY + mode->height)
-    {
-      return true;
-    }
-  }
-
-  return false;
+  return detail::isWindowPosValid(winPos);
 }

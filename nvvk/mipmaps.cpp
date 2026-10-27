@@ -57,7 +57,10 @@ void nvvk::cmdGenerateMipmaps(VkCommandBuffer   cmd,
 
   if(levelCount > 1)
   {
-    // Transfer remaining mips to DST optimal.
+    // Transfer remaining mips to DST optimal. Their contents are discarded, but earlier accesses
+    // in currentLayout (e.g. sampling when regenerating) must finish before the blits overwrite them.
+    const auto [srcStageMask, srcAccessMask] = nvvk::inferPipelineStageAccessTuple(currentLayout);
+
     barrier = nvvk::makeImageMemoryBarrier({
         .image            = image,
         .oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED,
@@ -67,6 +70,8 @@ void nvvk::cmdGenerateMipmaps(VkCommandBuffer   cmd,
                              .levelCount     = VK_REMAINING_MIP_LEVELS,
                              .baseArrayLayer = 0,
                              .layerCount     = layerCount},
+        .srcStageMask     = srcStageMask,
+        .srcAccessMask    = srcAccessMask,
     });
 
     vkCmdPipelineBarrier2(cmd, &depInfo);

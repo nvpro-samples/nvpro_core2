@@ -244,6 +244,12 @@ VkResult BufferCircularAllocator::subAllocate(BufferCircularAllocation& subAlloc
     // a zero-sized request yields an invalid allocation
     return VK_SUCCESS;
   }
+  if(size > m_state.maxAllocationSize)
+  {
+    // release builds: a request larger than a block would be placed past the
+    // block's end (the assert above catches it in debug builds)
+    return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+  }
 
   // Reserve the requested size rounded up to the 16-byte offset granularity.
   // Since offsets are 16-byte aligned the next allocation starts on a 16-byte

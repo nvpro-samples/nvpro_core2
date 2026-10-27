@@ -139,11 +139,37 @@ On the other hand, if this is OFF, then you'll need to add each library you need
          ON)
 endif()
 
+# Declared before the loop: nvapp, configured before nvvk, only builds the Vulkan
+# nvapp::Application with nvvk, and nvmcp drives that Application.
+option(NVPRO2_ENABLE_nvvk "Enable nvvk" ${NVPRO2_ENABLE_DEFAULT})
+if(NVPRO2_ENABLE_nvmcp AND NOT NVPRO2_ENABLE_nvvk)
+  message(FATAL_ERROR "NVPRO2_ENABLE_nvmcp requires NVPRO2_ENABLE_nvvk")
+endif()
+
+# The Direct3D 12 libraries are opt-in whatever NVPRO2_ENABLE_DEFAULT says, so Vulkan and OpenGL
+# samples neither build them nor download the Agility SDK. nvdx12app also needs nvdx12, nvapp
+# and nvgui; their options are declared here so the loop can skip it when one is off.
+if(WIN32)
+  option(NVPRO2_ENABLE_nvdx12 "Enable nvdx12" OFF)
+  option(NVPRO2_ENABLE_nvdx12app "Enable nvdx12app" OFF)
+  option(NVPRO2_ENABLE_nvapp "Enable nvapp" ${NVPRO2_ENABLE_DEFAULT})
+  option(NVPRO2_ENABLE_nvgui "Enable nvgui" ${NVPRO2_ENABLE_DEFAULT})
+endif()
+
 # Then set up targets for all nvpro_core libraries.
 # These are in a specific order because of interdependencies.
-foreach(_LIBRARY IN ITEMS nvimageformats nvutils nvapp nvgui nvgpu_monitor nvvk nvgl nvshaders_host nvaftermath nvslang nvvkglsl nvvkgltf nvnsight nvmcp)
+foreach(_LIBRARY IN ITEMS nvimageformats nvutils nvapp nvdx12 nvdx12app nvgui nvgpu_monitor nvvk nvgl nvshaders_host nvaftermath nvslang nvvkglsl nvvkgltf nvnsight nvmcp)
+  if(NOT WIN32 AND (_LIBRARY STREQUAL "nvdx12app" OR _LIBRARY STREQUAL "nvdx12"))
+    continue()
+  endif()
+
   option(NVPRO2_ENABLE_${_LIBRARY} "Enable ${_LIBRARY}" ${NVPRO2_ENABLE_DEFAULT})
-  
+  if(_LIBRARY STREQUAL "nvdx12app" AND NVPRO2_ENABLE_nvdx12app
+     AND NOT (NVPRO2_ENABLE_nvdx12 AND NVPRO2_ENABLE_nvapp AND NVPRO2_ENABLE_nvgui))
+    message(WARNING "nvdx12app needs nvdx12, nvapp and nvgui; it is not built.")
+    continue()
+  endif()
+
   if(NVPRO2_ENABLE_${_LIBRARY})
     add_subdirectory(${_LIBRARY})
 

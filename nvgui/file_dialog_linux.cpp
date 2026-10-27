@@ -144,9 +144,14 @@ std::filesystem::path nvgui::windowOpenFileDialog(struct GLFWwindow*           g
 {
   [[maybe_unused]] Window hwnd = glfwGetX11Window(glfwin);
 
-  std::vector<std::string> filterArgs = toFilterArgs(exts);
-  std::string              initialPath =
-      !initialFilename.empty() ? initialFilename.string() : (initialDir.empty() ? "." : initialDir.string());
+  std::vector<std::string> filterArgs  = toFilterArgs(exts);
+  std::string              initialPath = initialDir.empty() ? "." : initialDir.string();
+  if(!initialFilename.empty())
+  {
+    // A relative filename is relative to initialDir, as on Win32
+    initialPath = (initialFilename.is_relative() && !initialDir.empty()) ? (initialDir / initialFilename).string() :
+                                                                           initialFilename.string();
+  }
   std::vector<std::string> resultVector = open_file(title, initialPath, filterArgs).result();
   assert(resultVector.size() <= 1);
   std::filesystem::path result = resultVector.empty() ? "" : std::move(resultVector[0]);

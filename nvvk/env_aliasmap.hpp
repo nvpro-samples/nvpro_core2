@@ -22,7 +22,7 @@
 
 // Vose alias-table builder for environment-map importance sampling.
 //
-// Split out of `hdr_ibl.hpp` so CPU unit tests (and any host-side tool) can pin the algorithm
+// Kept in its own header so CPU unit tests (and any host-side tool) can pin the algorithm
 // without linking against the full Vulkan / VMA / descriptor stack. It has zero Vulkan
 // dependency by design -- the only type it references is the shader-side `shaderio::EnvAccel`
 // POD carried by the `hdr_io.h.slang` header (a plain struct of two uint32_t + one float).
@@ -32,7 +32,6 @@
 // pins both producer flows.
 
 #include <span>
-#include <vector>
 
 #include "../nvshaders/hdr_io.h.slang"  // shaderio::EnvAccel
 
@@ -45,8 +44,7 @@ namespace nvvk {
 // divide by zero.
 //
 // Spans rather than vectors so a caller can hand over memory it already has -- a mapped staging
-// buffer, say -- instead of copying into a vector first. A `std::vector` still converts
-// implicitly, so existing callers are unaffected.
+// buffer, say -- instead of copying into a vector first. A `std::vector` converts implicitly.
 //
 // `accel` is written before it is read, so it does not need to be zero-initialised; and it is
 // read back during the build, so it must not be write-combined memory.

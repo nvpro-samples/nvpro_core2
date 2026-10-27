@@ -88,8 +88,8 @@ public:
 
   // if `outSemaphoreState` is provided it will store the semaphore state that can be
   // used to track completion
-  // if `consumeMapping_ == true`, then we transfer ownership of the mapping into the uploader,
-  // at that point don't call consumeMapping manually.
+  // if `commitMapping_ == true`, then we transfer ownership of the mapping into the uploader,
+  // at that point don't call commitMapping manually.
 
   virtual VkResult appendBufferRange(const nvvk::BufferRange& bufferRange, const void* data, nvvk::SemaphoreState* outSemaphoreState) = 0;
   virtual VkResult appendBufferRangeMappings(size_t                    rangeCount,

@@ -113,6 +113,15 @@ namespace nvvk {
   return access;
 }
 
+//--
+// Destination access of an inferred barrier: the reads and the writes of
+// `stage`, so that both reads and writes after the barrier see earlier writes
+//
+[[nodiscard]] constexpr VkAccessFlags2 inferDstAccessMaskFromStage(VkPipelineStageFlags2 stage)
+{
+  return inferAccessMaskFromStage(stage, true) | inferAccessMaskFromStage(stage, false);
+}
+
 //
 // Maps image layouts to appropriate pipeline stages and access flags
 // Used for synchronizing image state transitions in the pipeline
@@ -218,7 +227,7 @@ struct ImageMemoryBarrierParams
   else if(params.dstAccessMask == INFER_BARRIER_PARAMS)
   {
     assert(params.dstStageMask != INFER_BARRIER_PARAMS);
-    barrier.dstAccessMask = inferAccessMaskFromStage(params.dstStageMask, false);
+    barrier.dstAccessMask = inferDstAccessMaskFromStage(params.dstStageMask);
   }
 
   return barrier;
@@ -264,7 +273,7 @@ struct BufferMemoryBarrierParams
                                                                             inferAccessMaskFromStage(params.srcStageMask, false),
       .dstStageMask        = params.dstStageMask,
       .dstAccessMask       = params.dstAccessMask != INFER_BARRIER_PARAMS ? params.dstAccessMask :
-                                                                            inferAccessMaskFromStage(params.dstStageMask, true),
+                                                                            inferDstAccessMaskFromStage(params.dstStageMask),
       .srcQueueFamilyIndex = params.srcQueueFamilyIndex,
       .dstQueueFamilyIndex = params.dstQueueFamilyIndex,
       .buffer              = params.buffer,
@@ -288,7 +297,7 @@ void cmdBufferMemoryBarrier(VkCommandBuffer commandBuffer, const BufferMemoryBar
       .srcStageMask = srcStageMask,
       .srcAccessMask = (srcAccessMask != INFER_BARRIER_PARAMS) ? srcAccessMask : inferAccessMaskFromStage(srcStageMask, false),
       .dstStageMask = dstStageMask,
-      .dstAccessMask = (dstAccessMask != INFER_BARRIER_PARAMS) ? dstAccessMask : inferAccessMaskFromStage(dstStageMask, true)};
+      .dstAccessMask = (dstAccessMask != INFER_BARRIER_PARAMS) ? dstAccessMask : inferDstAccessMaskFromStage(dstStageMask)};
   return memoryBarrier;
 }
 

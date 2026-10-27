@@ -73,9 +73,11 @@ void FrameUploader::deinit()
 
   m_batch.reset();
   m_bufferCircularAllocator.deinit();
-  m_stagingAllocations = {};
-  m_semaphoreState     = {};
-  m_resourceAllocator  = nullptr;
+  m_stagingAllocations  = {};
+  m_semaphoreState      = {};
+  m_stats               = {};
+  m_batchFlushBlockMask = 0;
+  m_resourceAllocator   = nullptr;
 }
 
 void FrameUploader::updateFrameSemaphoreState(const nvvk::SemaphoreState& semaphoreState)
@@ -144,6 +146,9 @@ VkResult FrameUploader::acquireMapping(size_t dataSize, nvvk::BufferRange& mappi
   }
   nvvk::BufferCircularAllocation subAllocation;
   NVVK_FAIL_RETURN(acquireStagingSpace(subAllocation, mappingSpace, dataSize, nullptr));
+  // the allocation is rounded up to 16 bytes: hand out the requested size, so that
+  // the mapping matches a `dataSize` destination range (appendBufferMapping)
+  mappingSpace.range = dataSize;
 
   if(subAllocation.getBlockIndex() >= MAX_FLUSH_BLOCKS)
   {
@@ -234,8 +239,12 @@ VkResult FrameUploader::appendBufferRangeMappings(size_t                    mapp
 
   MappingHandleDetail detail{};
   detail.handle = mappingHandle.value;
-  assert(detail.valid != 0);
-  assert(detail.frameIndex == m_frameIndex);
+  // a handle from an earlier frame refers to staging that may already be recycled
+  assert(detail.valid != 0 && detail.frameIndex == m_frameIndex);
+  if(detail.valid == 0 || detail.frameIndex != m_frameIndex)
+  {
+    return VK_ERROR_UNKNOWN;
+  }
 
   // the staging slice itself is always retired per-frame, not per-mapping (see commitMapping()),
   // the commit only invalidates the handle
@@ -319,8 +328,12 @@ VkResult FrameUploader::appendImageSubMappings(nvvk::Image&           image,
 
   MappingHandleDetail detail{};
   detail.handle = mappingHandle.value;
-  assert(detail.valid != 0);
-  assert(detail.frameIndex == m_frameIndex);
+  // a handle from an earlier frame refers to staging that may already be recycled
+  assert(detail.valid != 0 && detail.frameIndex == m_frameIndex);
+  if(detail.valid == 0 || detail.frameIndex != m_frameIndex)
+  {
+    return VK_ERROR_UNKNOWN;
+  }
 
   // the staging slice itself is always retired per-frame, not per-mapping (see commitMapping()),
   // the commit only invalidates the handle
@@ -388,27 +401,20 @@ void FrameUploader::releaseCompletedAllocations(bool forceAll)
 
   nvvk::SemaphoreStateSignalCache semaphoreCache;
 
-  size_t writeIndex = 0;
-
-  for(size_t readIndex = 0; readIndex < m_stagingAllocations.size(); readIndex++)
+  // The circular allocator frees in allocation order: stop at the first
+  // allocation still in use, even if a later one (another semaphore, or no
+  // state) could go.
+  size_t freed = 0;
+  for(; freed < m_stagingAllocations.size(); freed++)
   {
-    StagingAllocation& allocation = m_stagingAllocations[readIndex];
-
-    if(forceAll || !allocation.semaphoreState.isValid() || (semaphoreCache.testSignaled(device, allocation.semaphoreState)))
+    StagingAllocation& allocation = m_stagingAllocations[freed];
+    if(!forceAll && allocation.semaphoreState.isValid() && !semaphoreCache.testSignaled(device, allocation.semaphoreState))
     {
-      m_bufferCircularAllocator.subFree(allocation.subAllocation);
+      break;
     }
-    else if(readIndex != writeIndex)
-    {
-      m_stagingAllocations[writeIndex++] = allocation;
-    }
-    else
-    {
-      writeIndex++;
-    }
+    m_bufferCircularAllocator.subFree(allocation.subAllocation);
   }
-
-  m_stagingAllocations.resize(writeIndex);
+  m_stagingAllocations.erase(m_stagingAllocations.begin(), m_stagingAllocations.begin() + freed);
 }
 
 

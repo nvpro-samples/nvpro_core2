@@ -1,0 +1,150 @@
+/*
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <nvutils/logger.hpp>
+#include <nvgui/window.hpp>
+
+#include "elem_camera.hpp"
+
+double nvdx12app::ElementCamera::wheelSpeed = -10.0;
+
+void nvdx12app::ElementCamera::updateCamera(std::shared_ptr<nvutils::CameraManipulator> m_cameraManip, ImGuiWindow* viewportWindow)
+{
+  nvutils::CameraManipulator::Inputs inputs;  // Mouse and keyboard inputs
+
+  m_cameraManip->updateAnim();  // This makes the camera to transition smoothly to the new position
+
+  // While no button is held, make sure no anchor is left over, whether or not the viewport is
+  // hovered. The press frame can be missed, since this function returns early when the viewport is
+  // not seen as hovered, and a stale anchor would otherwise silently become the pivot for a drag
+  // that starts outside and enters the viewport. Any such drag falls back to the center of
+  // interest, as it did before anchors existed.
+  if(!ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsMouseDown(ImGuiMouseButton_Middle)
+     && !ImGui::IsMouseDown(ImGuiMouseButton_Right))
+  {
+    m_cameraManip->clearAnchor();
+  }
+
+  // Check if the mouse cursor is over the "Viewport", check for all inputs that can manipulate the camera.
+  if(!nvgui::isWindowHovered(viewportWindow))
+    return;
+
+  inputs.lmb      = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+  inputs.rmb      = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+  inputs.mmb      = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+  inputs.ctrl     = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
+  inputs.shift    = ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift);
+  inputs.alt      = ImGui::IsKeyDown(ImGuiKey_LeftAlt) || ImGui::IsKeyDown(ImGuiKey_RightAlt);
+  ImVec2 mousePos = ImGui::GetMousePos();
+
+  // Begin an interaction on mouse down, which is where a subclass gets to pick an anchor
+  // point. Read before the keyboard handling below, which clears the shift and ctrl flags.
+  if(ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Middle)
+     || ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+  {
+    m_cameraManip->beginInteraction({mousePos.x, mousePos.y}, inputs);
+  }
+
+  // None of the modifiers should be pressed for the single key: WASD and arrows
+  if(!inputs.alt)
+  {
+    // Speed of the camera movement when using WASD and arrows
+    float keyMotionFactor = ImGui::GetIO().DeltaTime;
+    if(inputs.shift)
+    {
+      keyMotionFactor *= 5.0F;  // Speed up the camera movement
+    }
+    if(inputs.ctrl)
+    {
+      keyMotionFactor *= 0.1F;  // Slow down the camera movement
+    }
+
+    if(ImGui::IsKeyDown(ImGuiKey_W))
+    {
+      m_cameraManip->keyMotion({keyMotionFactor, 0}, nvutils::CameraManipulator::Actions::Dolly);
+      inputs.shift = inputs.ctrl = false;
+    }
+
+    if(ImGui::IsKeyDown(ImGuiKey_S))
+    {
+      m_cameraManip->keyMotion({-keyMotionFactor, 0}, nvutils::CameraManipulator::Actions::Dolly);
+      inputs.shift = inputs.ctrl = false;
+    }
+
+    if(ImGui::IsKeyDown(ImGuiKey_D) || ImGui::IsKeyDown(ImGuiKey_RightArrow))
+    {
+      m_cameraManip->keyMotion({keyMotionFactor, 0}, nvutils::CameraManipulator::Actions::Pan);
+      inputs.shift = inputs.ctrl = false;
+    }
+
+    if(ImGui::IsKeyDown(ImGuiKey_A) || ImGui::IsKeyDown(ImGuiKey_LeftArrow))
+    {
+      m_cameraManip->keyMotion({-keyMotionFactor, 0}, nvutils::CameraManipulator::Actions::Pan);
+      inputs.shift = inputs.ctrl = false;
+    }
+
+    if(ImGui::IsKeyDown(ImGuiKey_UpArrow))
+    {
+      m_cameraManip->keyMotion({0, keyMotionFactor}, nvutils::CameraManipulator::Actions::Pan);
+      inputs.shift = inputs.ctrl = false;
+    }
+
+    if(ImGui::IsKeyDown(ImGuiKey_DownArrow))
+    {
+      m_cameraManip->keyMotion({0, -keyMotionFactor}, nvutils::CameraManipulator::Actions::Pan);
+      inputs.shift = inputs.ctrl = false;
+    }
+  }
+
+  if(ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0F) || ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 1.0F)
+     || ImGui::IsMouseDragging(ImGuiMouseButton_Right, 1.0F))
+  {
+    // Anchor at the previous cursor position so rotation/pan follows the per-frame mouse delta.
+    // This avoids a large camera jump when a drag begins right after interacting with another
+    // window: on such a press frame the viewport may not be seen as hovered, so a click-based
+    // anchor reset would be skipped and the first motion would be computed against a stale anchor.
+    const ImVec2 delta = ImGui::GetIO().MouseDelta;
+    m_cameraManip->setMousePosition({mousePos.x - delta.x, mousePos.y - delta.y});
+    m_cameraManip->mouseMove({mousePos.x, mousePos.y}, inputs);
+  }
+
+  // Mouse Wheel
+  if(ImGui::GetIO().MouseWheel != 0.0F)
+  {
+    m_cameraManip->wheel(ImGui::GetIO().MouseWheel * nvdx12app::ElementCamera::wheelSpeed, inputs);
+  }
+}
+
+void nvdx12app::ElementCamera::onAttach(nvdx12app::Application* app)
+{
+  LOGI("Adding Camera Manipulator\n");
+}
+
+void nvdx12app::ElementCamera::onUIRender()
+{
+  assert(m_cameraManip && "Missing setCamera");
+  updateCamera(m_cameraManip, ImGui::FindWindowByName("Viewport"));
+}
+
+void nvdx12app::ElementCamera::onResize(const glm::uvec2& size)
+{
+  assert(m_cameraManip && "Missing setCamera");
+  m_cameraManip->setWindowSize(size);
+  m_cameraManip->adjustOrthographicAspect();
+}

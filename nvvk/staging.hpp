@@ -98,6 +98,10 @@ public:
   // calls `reset` after enqueuing the commands.
   void cmdCopyAppended(VkCommandBuffer cmd);
 
+  // Records the pending copy and barrier operations into `cmd` and keeps the
+  // batch state, for a caller that calls `reset` once `cmd` was submitted.
+  void cmdRecordAppended(VkCommandBuffer cmd) const;
+
   // resets all vectors and intermediate `stagingSize`
   void reset();
 

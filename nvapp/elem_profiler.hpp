@@ -126,7 +126,7 @@ private:
                       uint32_t                                   endIndex,
                       uint32_t                                   currentLevel = 0);
 
-  void displayTableNode(const EntryNode& node, bool detailed, uint32_t defaultOpenLevels, uint32_t depth);
+  void displayTableNode(const EntryNode& node, bool detailed, uint32_t defaultOpenLevels, uint32_t depth, double gpuTotal = 0.0, double cpuTotal = 0.0);
 
   void renderTable(View& view);
 

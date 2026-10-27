@@ -222,7 +222,7 @@ void HdrEnvDome::destroy()
 
   // Persistent per-target state kept for updateEnvironment() -- released here on shutdown.
   // Vulkan destroys and nvvk helpers are no-ops on VK_NULL_HANDLE, so we don't guard the calls
-  // (matches the pattern above for m_domePipeline / m_textures).
+  // (as for m_textures above).
   auto releaseCtx = [&](PrefilterCtx& ctx) {
     m_samplerPool->releaseSampler(ctx.scratch.descriptor.sampler);
     m_alloc->destroyImage(ctx.scratch);
@@ -453,9 +453,14 @@ void HdrEnvDome::prefilterHdrRun(VkCommandBuffer cmd, nvvk::Image& target, Prefi
   NVVK_DBG_SCOPE(cmd);
 
   // Bring scratch into the layout renderToCube expects; renderToCube transitions target itself.
-  // Using UNDEFINED as the old layout is legal per the Vulkan spec when the previous contents
-  // don't need to be preserved, which is true here (we're about to overwrite every texel).
-  nvvk::cmdImageMemoryBarrier(cmd, {ctx.scratch.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL});
+  // UNDEFINED discards the previous contents, which are about to be overwritten. On an
+  // updateEnvironment() call a previous submit may still be using scratch, so the source scope
+  // is ALL_COMMANDS rather than the NONE that UNDEFINED would infer.
+  nvvk::cmdImageMemoryBarrier(cmd, {.image         = ctx.scratch.image,
+                                    .oldLayout     = VK_IMAGE_LAYOUT_UNDEFINED,
+                                    .newLayout     = VK_IMAGE_LAYOUT_GENERAL,
+                                    .srcStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                                    .srcAccessMask = VK_ACCESS_2_NONE});
 
   std::array<VkDescriptorSet, 2> dstSets{ctx.descPack.getSet(0), m_hdrEnvSet};
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, ctx.pipelineLayout, 0,
@@ -467,9 +472,8 @@ void HdrEnvDome::prefilterHdrRun(VkCommandBuffer cmd, nvvk::Image& target, Prefi
 
 
 //--------------------------------------------------------------------------------------------------
-// One-shot allocate + dispatch used by create(). Preserves the original per-target-submit
-// behaviour so existing callers see zero change; updateEnvironment() prefers a batched submit
-// on a caller-owned command buffer instead.
+// One-shot allocate + dispatch used by create(), with one submit per target. updateEnvironment()
+// records into a caller-owned command buffer instead.
 //
 void HdrEnvDome::prefilterHdr(uint32_t dim, nvvk::Image& target, PrefilterCtx& ctx, const std::span<const uint32_t>& spirvCode, bool doMipmap, uint32_t lowestMipLevel)
 {
@@ -485,10 +489,10 @@ void HdrEnvDome::prefilterHdr(uint32_t dim, nvvk::Image& target, PrefilterCtx& c
 
 
 //--------------------------------------------------------------------------------------------------
-// Re-run only the diffuse + glossy prefilter dispatches against the existing cubes. Used by the
-// producer (nvvk::HdrIbl or an equivalent) on every environment commit after the HDR content
-// backing `hdrEnvSet` has been updated. See the header comment on the declaration for the caller
-// contract.
+// Re-run only the diffuse and, with eAll, glossy prefilter dispatches against the existing cubes.
+// Used by the producer (nvvk::HdrIbl or an equivalent) on every environment commit after the HDR
+// content backing `hdrEnvSet` has been updated. See the header comment on the declaration for the
+// caller contract.
 //
 void HdrEnvDome::updateEnvironment(VkCommandBuffer cmd, VkDescriptorSet hdrEnvSet, PrefilterSet which)
 {
@@ -532,9 +536,16 @@ void HdrEnvDome::renderToCube(const VkCommandBuffer& cmd,
   for(auto& m : mv)
     m = glm::inverse(m);
 
-  // Change image layout for all cubemap faces to transfer destination
+  // Change image layout for all cubemap faces to transfer destination. The previous contents
+  // are discarded, but on an updateEnvironment() call submitted work may still be sampling the
+  // cube, so the source scope is ALL_COMMANDS rather than the NONE that UNDEFINED would infer.
   VkImageSubresourceRange subresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, numMips, 0, 6};
-  nvvk::cmdImageMemoryBarrier(cmd, {target.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, subresourceRange});
+  nvvk::cmdImageMemoryBarrier(cmd, {.image            = target.image,
+                                    .oldLayout        = VK_IMAGE_LAYOUT_UNDEFINED,
+                                    .newLayout        = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                    .subresourceRange = subresourceRange,
+                                    .srcStageMask     = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                                    .srcAccessMask    = VK_ACCESS_2_NONE});
 
 
   // Image barrier for compute stage

@@ -59,6 +59,8 @@ VkResult saveImageToFile(VkDevice                     device,
 
 // Saves an arbitrary image through a blocking linear readback. This waits for
 // the device to become idle and submits a temporary command buffer on queue.
+// `forceOpaqueAlpha` writes alpha as 1 for images whose alpha channel carries
+// render data rather than coverage.
 VkResult saveImageToFile(VkDevice                     device,
                          VkPhysicalDevice             physicalDevice,
                          VkCommandPool                cmdPool,
@@ -66,8 +68,9 @@ VkResult saveImageToFile(VkDevice                     device,
                          VkImage                      srcImage,
                          VkExtent2D                   size,
                          const std::filesystem::path& filename,
-                         int                          quality   = 100,
-                         VkImageLayout                srcLayout = VK_IMAGE_LAYOUT_GENERAL);
+                         int                          quality          = 100,
+                         VkImageLayout                srcLayout        = VK_IMAGE_LAYOUT_GENERAL,
+                         bool                         forceOpaqueAlpha = false);
 
 // Encodes an RGBA8 linear image as PNG bytes in memory.
 VkResult encodeImageToPng(VkDevice device, VkImage dstImage, VkDeviceMemory dstImageMemory, VkExtent2D size, std::vector<uint8_t>& pngData);

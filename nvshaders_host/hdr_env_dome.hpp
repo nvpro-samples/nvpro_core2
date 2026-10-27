@@ -65,16 +65,6 @@ public:
               const std::span<const uint32_t>& spirvIntegrateBrdf,
               const std::span<const uint32_t>& spirvDrawDome);
 
-  // Re-run only the diffuse + glossy prefilter dispatches against the existing cubes.
-  // Intended for environment-image producers (nvvk::HdrIbl or an equivalent) that have just
-  // updated the HDR content that `hdrEnvSet` samples from; the caller owns `cmd` and is
-  // responsible for the surrounding begin / end / submit. Skips re-creating the cube images
-  // and the BRDF LUT (both allocated once by create()), avoiding the multi-hundred-millisecond
-  // teardown-and-realloc that a full create() would incur.
-  //
-  // `hdrEnvSet` may be the same descriptor set passed to create() (contents rewritten by the
-  // producer) or a new one; either way it must be bound-compatible with the layout passed to
-  // create().
   // Which prefiltered cubes updateEnvironment() re-dispatches.
   //
   // The two are not the same price: the glossy cube is 512x512x6 with a mip chain and costs
@@ -88,6 +78,15 @@ public:
     eDiffuseOnly,  // Diffuse only. For per-frame refreshes during an interaction.
   };
 
+  // Re-run only the diffuse and, with eAll, glossy prefilter dispatches against the existing cubes.
+  // Intended for environment-image producers (nvvk::HdrIbl or an equivalent) that have just
+  // updated the HDR content that `hdrEnvSet` samples from; the caller owns `cmd` and is
+  // responsible for the surrounding begin / end / submit. The cube images and the BRDF LUT
+  // allocated by create() are reused.
+  //
+  // `hdrEnvSet` may be the same descriptor set passed to create() (contents rewritten by the
+  // producer) or a new one; either way it must be bound-compatible with the layout passed to
+  // create().
   void updateEnvironment(VkCommandBuffer cmd, VkDescriptorSet hdrEnvSet, PrefilterSet which = PrefilterSet::eAll);
 
   void setOutImage(const VkDescriptorImageInfo& outimage);
@@ -176,8 +175,7 @@ private:
                             bool                             doMipmap,
                             uint32_t                         lowestMipLevel = 0);
   void prefilterHdrRun(VkCommandBuffer cmd, nvvk::Image& target, PrefilterCtx& ctx);
-  // Thin allocate + one-shot dispatch wrapper used only by create() -- preserves the original
-  // one-submit-per-target behaviour so existing callers see zero change.
+  // Thin allocate + one-shot dispatch wrapper used only by create(), with one submit per target.
   void prefilterHdr(uint32_t                         dim,
                     nvvk::Image&                     target,
                     PrefilterCtx&                    ctx,

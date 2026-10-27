@@ -147,14 +147,6 @@ VkResult AsyncUploader::submitBatch()
 
   releaseStagingAllocations(false);
 
-  // Snapshot the ownership-acquisition barriers before cmdCopyAppended() consumes the batch. The
-  // record is only published to m_targetBarriers after a successful submit (below), so a failed
-  // vkQueueSubmit2() leaves no record whose semaphore would never be signaled.
-  TargetBarriers record{
-      .ownerAcquisitionBarriers = m_batch.acquire,
-      .semaphoreState           = m_transferSubmitState,
-  };
-
   VkCommandBufferBeginInfo cmdBegin{
       .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
       .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
@@ -170,14 +162,14 @@ VkResult AsyncUploader::submitBatch()
   {
     flushBatchBlocks();
   }
-  m_batch.cmdCopyAppended(cmd);
+  // The batch is only reset after a successful submit (below), so a failed submit keeps its
+  // copies and ownership barriers for the next one, which signals the same timeline value.
+  m_batch.cmdRecordAppended(cmd);
   if(m_info.onSubmitCallback)
   {
     m_info.onSubmitCallback(cmd, m_submitCount, m_transferSubmitState, false, payload);
   }
   NVVK_FAIL_RETURN(vkEndCommandBuffer(cmd));
-  m_waitCmdCount = m_transferCmdPool.getWaitCount();
-  m_submitCount++;
 
   VkCommandBufferSubmitInfo cmdSubmitInfo = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO};
   cmdSubmitInfo.commandBuffer             = cmd;
@@ -193,12 +185,20 @@ VkResult AsyncUploader::submitBatch()
 
   // submit to queue
   NVVK_FAIL_RETURN(vkQueueSubmit2(m_info.transferQueue.queue, 1, &submitInfo2, VK_NULL_HANDLE));
+  m_waitCmdCount = m_transferCmdPool.getWaitCount();
+  m_submitCount++;
 
   // submit succeeded: now retain the ownership-barrier record for cmdDrainOwnershipBarriers()
+  if(!m_batch.acquire.memoryBarriers.empty() || !m_batch.acquire.bufferBarriers.empty()
+     || !m_batch.acquire.imageBarriers.empty())
   {
     std::lock_guard lock(m_targetLock);
-    m_targetBarriers.push_back(record);
+    m_targetBarriers.push_back({
+        .ownerAcquisitionBarriers = std::move(m_batch.acquire),
+        .semaphoreState           = m_transferSubmitState,
+    });
   }
+  m_batch.reset();
 
   m_transferTimelineValue++;
   m_transferSubmitState = nvvk::SemaphoreState::makeFixed(m_transferTimelineSemaphore, m_transferTimelineValue);
@@ -812,11 +812,14 @@ VkResult AsyncUploader::flushPending(nvvk::SemaphoreState* outSemaphoreState)
 
 VkResult AsyncUploader::waitForCompletion()
 {
-  if(m_transferTimelineValue == 1)
+  nvvk::SemaphoreState sem;
+  {
+    std::lock_guard lock(m_appendLock);
+    sem = getLastSubmitState();
+  }
+  if(!sem.isValid())
     return VK_SUCCESS;
 
-  // current value is always for next submit, hence -1
-  nvvk::SemaphoreState sem = nvvk::SemaphoreState::makeFixed(m_transferTimelineSemaphore, m_transferTimelineValue - 1);
   return sem.wait(m_info.allocator->getDevice(), ~0ull);
 }
 
@@ -885,8 +888,6 @@ void AsyncUploader::cmdDrainOwnershipBarriers(VkCommandBuffer cmd)
   {
     // AsyncUploader submits copy batches on a dedicated transfer queue.
     // Before using uploaded resources on the graphics queue, call cmdDrainOwnershipBarriers().
-
-    // We show
 
     VkDevice                device{};
     nvvk::ResourceAllocator resourceAllocator;  // EX. initialize somehow

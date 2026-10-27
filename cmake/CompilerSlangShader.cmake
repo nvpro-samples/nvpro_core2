@@ -1,10 +1,10 @@
 #==================================================================================================
-# compile_slang: Compile Slang shaders into C++ headers and SPIR-V binaries
+# compile_slang: Compile Slang shaders into C++ headers and SPIR-V (or DXIL) binaries
 #==================================================================================================
 #
 # This function compiles Slang shader files using slangc, generating:
-#   - Embedded C++ headers (.h) with SPIR-V code as text
-#   - Binary SPIR-V files (.spv)
+#   - Embedded C++ headers (.h) with SPIR-V code as text (uint32_t words; DXIL: unsigned char bytes)
+#   - Binary SPIR-V files (.spv) (DXIL: .dxil)
 #   - Dependency files (.dep) for incremental builds
 #
 # Basic usage:
@@ -28,8 +28,16 @@
 #
 # Compiler target & language:
 #   LANGUAGE <lang>                - Source language: slang, glsl, hlsl (default: slang)
-#   PROFILE <profile>              - Target profile (default: spirv_1_6)
-#   TARGET <target>                - Code generation target (default: spirv)
+#   PROFILE <profile>              - Target profile (default: spirv_1_6, or sm_6_6 with TARGET dxil)
+#   DXC_DIR <dir>                  - Directory of dxcompiler.dll, put on slangc's PATH for TARGET dxil
+#   TARGET <target>                - Code generation target: spirv (default) or dxil. DXIL drops the
+#                                    SPIR-V flags (direct emission, scalar layout, Vulkan entry point
+#                                    names) and keeps -matrix-layout-row-major.
+#   ENTRY_POINTS <name1> <name2>.. - One output per entry point, named <shader>_<entry>.slang(.h)
+#                                    with the variable <shader>_<entry>_slang. Without it the shader
+#                                    is compiled as a whole: every entry point for SPIR-V, a library
+#                                    (lib_6_x, for state objects only) for DXIL, so compute and
+#                                    graphics DXIL name their entry points.
 #
 # Capabilities:
 #   CAPABILITIES <cap1> <cap2>...  - SPIR-V capabilities (joined with + for slangc)
@@ -52,7 +60,7 @@
 #
 # Output variables:
 #   HEADERS_VAR <variable_name>    - Variable to receive list of generated .h files
-#   SPVS_VAR <variable_name>       - Variable to receive list of generated .spv files
+#   SPVS_VAR <variable_name>       - Variable to receive list of generated .spv files (.dxil with TARGET dxil)
 #   At least one must be provided; output type is inferred from which are present.
 #
 # Other options:
@@ -92,6 +100,17 @@
 #     SHOW_TIMING ON
 #   )
 #
+#   # Direct3D 12: DXIL for Shader Model 6.6, one header per compute entry point
+#   # (tonemapper_Tonemap.slang.h, tonemapper_Histogram.slang.h, ...)
+#   compile_slang(
+#     "${CMAKE_SOURCE_DIR}/shaders/tonemapper.slang"
+#     "${OUTPUT_DIR}"
+#     HEADERS_VAR MY_DXIL_HEADERS
+#     TARGET dxil
+#     DXC_DIR "${MY_DXC_DIR}"                          # The Slang package has no dxcompiler.dll
+#     ENTRY_POINTS Tonemap Histogram AutoExposure
+#   )
+#
 #==================================================================================================
 
 option(COMPILE_SHADER_VERBOSE "Show full Slang compiler command lines" OFF)
@@ -123,6 +142,7 @@ function(compile_slang SHADER_FILES OUTPUT_DIR)
     LANGUAGE
     PROFILE
     TARGET
+    DXC_DIR
     DEBUG_LEVEL
     OPTIMIZATION_LEVEL
     HEADERS_VAR
@@ -135,6 +155,7 @@ function(compile_slang SHADER_FILES OUTPUT_DIR)
 
   set(multiValueArgs
     CAPABILITIES
+    ENTRY_POINTS
     EXTRA_FLAGS
   )
 
@@ -194,12 +215,34 @@ function(compile_slang SHADER_FILES OUTPUT_DIR)
     set(COMPILE_SHADER_LANGUAGE "slang")
   endif()
 
-  if(NOT DEFINED COMPILE_SHADER_PROFILE)
-    set(COMPILE_SHADER_PROFILE "spirv_1_6")
-  endif()
-
   if(NOT DEFINED COMPILE_SHADER_TARGET)
     set(COMPILE_SHADER_TARGET "spirv")
+  endif()
+
+  # DXIL: shader-model profile, .dxil binaries, no SPIR-V flags
+  string(TOLOWER "${COMPILE_SHADER_TARGET}" _TARGET_LOWER)
+  if(_TARGET_LOWER STREQUAL "dxil")
+    set(_TARGET_DXIL TRUE)
+    set(_BINARY_EXT "dxil")
+  else()
+    set(_TARGET_DXIL FALSE)
+    set(_BINARY_EXT "spv")
+  endif()
+  # slangc emits DXIL through dxcompiler.dll; DXC_DIR puts it on the PATH of the command.
+  set(_SLANGC ${Slang_SLANGC_EXECUTABLE})
+  if(_TARGET_DXIL AND COMPILE_SHADER_DXC_DIR)
+    set(_PATH "${COMPILE_SHADER_DXC_DIR};$ENV{PATH}")
+    string(REPLACE ";" "$<SEMICOLON>" _PATH "${_PATH}")  # one argument; the separators come back at generate time
+    set(_SLANGC ${CMAKE_COMMAND} -E env "PATH=${_PATH}" ${Slang_SLANGC_EXECUTABLE})
+  endif()
+  list(LENGTH _SLANGC _SLANGC_LENGTH)
+
+  if(NOT DEFINED COMPILE_SHADER_PROFILE)
+    if(_TARGET_DXIL)
+      set(COMPILE_SHADER_PROFILE "sm_6_6")
+    else()
+      set(COMPILE_SHADER_PROFILE "spirv_1_6")
+    endif()
   endif()
 
   if(NOT DEFINED COMPILE_SHADER_DEBUG_LEVEL)
@@ -228,12 +271,18 @@ function(compile_slang SHADER_FILES OUTPUT_DIR)
   set(SHADER_HEADERS "")
   set(SHADER_SPVS "")
 
-  set(_CORE_FLAGS
-    -emit-spirv-directly
-    -matrix-layout-row-major
-    -force-glsl-scalar-layout
-    -fvk-use-entrypoint-name
-  )
+  if(_TARGET_DXIL)
+    set(_CORE_FLAGS
+      -matrix-layout-row-major
+    )
+  else()
+    set(_CORE_FLAGS
+      -emit-spirv-directly
+      -matrix-layout-row-major
+      -force-glsl-scalar-layout
+      -fvk-use-entrypoint-name
+    )
+  endif()
 
   set(_CONFIGURABLE_FLAGS
     -lang ${COMPILE_SHADER_LANGUAGE}
@@ -271,87 +320,123 @@ function(compile_slang SHADER_FILES OUTPUT_DIR)
   #------------------------------------------------------------------------------------------------
 
   foreach(SHADER ${SHADER_FILES})
-    get_filename_component(SHADER_NAME ${SHADER} NAME)
-    string(APPEND SHADER_NAME "${COMPILE_SHADER_NAME_SUFFIX}")
-
-    # Generate valid C/C++ variable name (e.g. "shader.comp.slang" -> "shader_comp_slang")
-    string(REPLACE "." "_" _EMBED_NAME ${SHADER_NAME})
-
-    set(OUTPUT_FILE ${OUTPUT_DIR}/${SHADER_NAME})
-    set(OUTPUT_H_FILE "${OUTPUT_FILE}.h")
-    set(OUTPUT_SPV_FILE "${OUTPUT_FILE}.spv")
-    set(OUTPUT_DEP_FILE "${OUTPUT_FILE}.dep")
-
-    set(_COMMANDS)
-    set(_OUTPUT_FILES)
-    set(_DEPFILE_ADDED FALSE)
-
-    # Generate embedded header (.h)
-    if(_GENERATE_HEADER)
-      set(_COMMAND_H ${Slang_SLANGC_EXECUTABLE}
-        -depfile "${OUTPUT_DEP_FILE}"
-        -source-embed-name ${_EMBED_NAME}
-        -source-embed-style text
-        ${_SLANG_FLAGS}
-        -o "${OUTPUT_H_FILE}"
-        ${SHADER}
-      )
-      set(_DEPFILE_ADDED TRUE)
-
-      list(APPEND _COMMANDS COMMAND ${CMAKE_COMMAND} -E echo "  Generating header: ${SHADER_NAME}.h")
-      if(COMPILE_SHADER_VERBOSE)
-        string(REPLACE ";" " " _COMMAND_H_STR "${_COMMAND_H}")
-        list(APPEND _COMMANDS COMMAND ${CMAKE_COMMAND} -E echo "  ${_COMMAND_H_STR}")
-      endif()
-      if(COMPILE_SHADER_SHOW_TIMING)
-        list(APPEND _COMMANDS COMMAND ${CMAKE_COMMAND} -E time ${_COMMAND_H})
-      else()
-        list(APPEND _COMMANDS COMMAND ${_COMMAND_H})
-      endif()
-
-      list(APPEND _OUTPUT_FILES "${OUTPUT_H_FILE}")
-      list(APPEND SHADER_HEADERS "${OUTPUT_H_FILE}")
+    # Output names of this shader: one, or one per entry point (<stem>_<entry><ext>)
+    set(_OUTPUT_NAMES)
+    if(COMPILE_SHADER_ENTRY_POINTS)
+      get_filename_component(_SHADER_STEM ${SHADER} NAME_WLE)
+      get_filename_component(_SHADER_EXT ${SHADER} LAST_EXT)
+      foreach(_ENTRY ${COMPILE_SHADER_ENTRY_POINTS})
+        list(APPEND _OUTPUT_NAMES "${_SHADER_STEM}_${_ENTRY}${_SHADER_EXT}")
+      endforeach()
+    else()
+      get_filename_component(_SHADER_FILE_NAME ${SHADER} NAME)
+      list(APPEND _OUTPUT_NAMES "${_SHADER_FILE_NAME}")
     endif()
 
-    # Generate SPIR-V binary (.spv)
-    if(_GENERATE_SPV)
-      set(_COMMAND_S ${Slang_SLANGC_EXECUTABLE}
-        ${_SLANG_FLAGS}
-        -o "${OUTPUT_SPV_FILE}"
-        ${SHADER}
-      )
-      if(NOT _DEPFILE_ADDED)
-        list(INSERT _COMMAND_S 1 -depfile "${OUTPUT_DEP_FILE}")
+    list(LENGTH _OUTPUT_NAMES _OUTPUT_COUNT)
+    math(EXPR _OUTPUT_LAST "${_OUTPUT_COUNT} - 1")
+    foreach(_OUTPUT_INDEX RANGE 0 ${_OUTPUT_LAST})
+      list(GET _OUTPUT_NAMES ${_OUTPUT_INDEX} SHADER_NAME)
+      string(APPEND SHADER_NAME "${COMPILE_SHADER_NAME_SUFFIX}")
+
+      set(_ENTRY_FLAGS)
+      if(COMPILE_SHADER_ENTRY_POINTS)
+        list(GET COMPILE_SHADER_ENTRY_POINTS ${_OUTPUT_INDEX} _ENTRY)
+        set(_ENTRY_FLAGS -entry ${_ENTRY})
       endif()
 
-      list(APPEND _COMMANDS COMMAND ${CMAKE_COMMAND} -E echo "  Generating SPIR-V: ${SHADER_NAME}.spv")
-      if(COMPILE_SHADER_VERBOSE)
-        string(REPLACE ";" " " _COMMAND_S_STR "${_COMMAND_S}")
-        list(APPEND _COMMANDS COMMAND ${CMAKE_COMMAND} -E echo "  ${_COMMAND_S_STR}")
-      endif()
-      if(COMPILE_SHADER_SHOW_TIMING)
-        list(APPEND _COMMANDS COMMAND ${CMAKE_COMMAND} -E time ${_COMMAND_S})
-      else()
-        list(APPEND _COMMANDS COMMAND ${_COMMAND_S})
+      # Generate valid C/C++ variable name (e.g. "shader.comp.slang" -> "shader_comp_slang")
+      string(REPLACE "." "_" _EMBED_NAME ${SHADER_NAME})
+
+      set(OUTPUT_FILE ${OUTPUT_DIR}/${SHADER_NAME})
+      set(OUTPUT_H_FILE "${OUTPUT_FILE}.h")
+      set(OUTPUT_SPV_FILE "${OUTPUT_FILE}.${_BINARY_EXT}")
+      set(OUTPUT_DEP_FILE "${OUTPUT_FILE}.dep")
+
+      set(_COMMANDS)
+      set(_OUTPUT_FILES)
+      set(_DEPFILE_ADDED FALSE)
+
+      # Generate embedded header (.h)
+      if(_GENERATE_HEADER)
+        set(_COMMAND_H ${_SLANGC}
+          -depfile "${OUTPUT_DEP_FILE}"
+          -source-embed-name ${_EMBED_NAME}
+          -source-embed-style text
+          ${_SLANG_FLAGS}
+          ${_ENTRY_FLAGS}
+          -o "${OUTPUT_H_FILE}"
+          ${SHADER}
+        )
+        set(_DEPFILE_ADDED TRUE)
+
+        list(APPEND _COMMANDS COMMAND ${CMAKE_COMMAND} -E echo "  Generating header: ${SHADER_NAME}.h")
+        if(COMPILE_SHADER_VERBOSE)
+          string(REPLACE ";" " " _COMMAND_H_STR "${_COMMAND_H}")
+          list(APPEND _COMMANDS COMMAND ${CMAKE_COMMAND} -E echo "  ${_COMMAND_H_STR}")
+        endif()
+        if(COMPILE_SHADER_SHOW_TIMING)
+          list(APPEND _COMMANDS COMMAND ${CMAKE_COMMAND} -E time ${_COMMAND_H})
+        else()
+          list(APPEND _COMMANDS COMMAND ${_COMMAND_H})
+        endif()
+
+        list(APPEND _OUTPUT_FILES "${OUTPUT_H_FILE}")
+        list(APPEND SHADER_HEADERS "${OUTPUT_H_FILE}")
       endif()
 
-      list(APPEND _OUTPUT_FILES "${OUTPUT_SPV_FILE}")
-      list(APPEND SHADER_SPVS "${OUTPUT_SPV_FILE}")
-    endif()
+      # Generate SPIR-V (or DXIL) binary
+      if(_GENERATE_SPV)
+        set(_COMMAND_S ${_SLANGC}
+          ${_SLANG_FLAGS}
+          ${_ENTRY_FLAGS}
+          -o "${OUTPUT_SPV_FILE}"
+          ${SHADER}
+        )
+        if(NOT _DEPFILE_ADDED)
+          list(INSERT _COMMAND_S ${_SLANGC_LENGTH} -depfile "${OUTPUT_DEP_FILE}")
+        endif()
 
-    # Single custom command per shader: all outputs built together so that
-    # VS right-click "Compile" on a .slang file produces everything.
-    # Cross-shader parallelism is still achieved since each shader has its own command.
-    if(_OUTPUT_FILES)
-      add_custom_command(
-        OUTPUT ${_OUTPUT_FILES}
-        ${_COMMANDS}
-        MAIN_DEPENDENCY ${SHADER}
-        DEPFILE "${OUTPUT_DEP_FILE}"
-        COMMENT "Compiling Slang shader: ${SHADER_NAME}"
-        VERBATIM
-      )
-    endif()
+        if(_TARGET_DXIL)
+          list(APPEND _COMMANDS COMMAND ${CMAKE_COMMAND} -E echo "  Generating DXIL: ${SHADER_NAME}.dxil")
+        else()
+          list(APPEND _COMMANDS COMMAND ${CMAKE_COMMAND} -E echo "  Generating SPIR-V: ${SHADER_NAME}.spv")
+        endif()
+        if(COMPILE_SHADER_VERBOSE)
+          string(REPLACE ";" " " _COMMAND_S_STR "${_COMMAND_S}")
+          list(APPEND _COMMANDS COMMAND ${CMAKE_COMMAND} -E echo "  ${_COMMAND_S_STR}")
+        endif()
+        if(COMPILE_SHADER_SHOW_TIMING)
+          list(APPEND _COMMANDS COMMAND ${CMAKE_COMMAND} -E time ${_COMMAND_S})
+        else()
+          list(APPEND _COMMANDS COMMAND ${_COMMAND_S})
+        endif()
+
+        list(APPEND _OUTPUT_FILES "${OUTPUT_SPV_FILE}")
+        list(APPEND SHADER_SPVS "${OUTPUT_SPV_FILE}")
+      endif()
+
+      # Single custom command per output: header and binary built together so that
+      # VS right-click "Compile" on a .slang file produces everything.
+      # Cross-shader parallelism is still achieved since each shader has its own command.
+      # A source file may be the MAIN_DEPENDENCY of one command only: the other
+      # entry points of a shader depend on it the regular way.
+      if(_OUTPUT_FILES)
+        if(_OUTPUT_INDEX EQUAL 0)
+          set(_SOURCE_DEPENDENCY MAIN_DEPENDENCY ${SHADER})
+        else()
+          set(_SOURCE_DEPENDENCY DEPENDS ${SHADER})
+        endif()
+        add_custom_command(
+          OUTPUT ${_OUTPUT_FILES}
+          ${_COMMANDS}
+          ${_SOURCE_DEPENDENCY}
+          DEPFILE "${OUTPUT_DEP_FILE}"
+          COMMENT "Compiling Slang shader: ${SHADER_NAME}"
+          VERBATIM
+        )
+      endif()
+    endforeach()
 
   endforeach()
 

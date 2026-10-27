@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2023-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -112,9 +112,10 @@ void nvshaders::Tonemapper::deinit()
   vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
   m_descriptorPack.deinit();
 
-  m_pipelineLayout  = VK_NULL_HANDLE;
-  m_tonemapPipeline = VK_NULL_HANDLE;
-  m_device          = VK_NULL_HANDLE;
+  m_pipelineLayout   = VK_NULL_HANDLE;
+  m_tonemapPipeline  = VK_NULL_HANDLE;
+  m_device           = VK_NULL_HANDLE;
+  m_histogramCleared = false;
 }
 
 
@@ -149,11 +150,10 @@ void nvshaders::Tonemapper::runCompute(VkCommandBuffer                 cmd,
   // Run auto-exposure histogram/exposure if enabled
   if(tonemapper.isActive && tonemapper.autoExposure)
   {
-    static bool firstRun = true;
-    if(firstRun)
+    if(!m_histogramCleared)
     {
       clearHistogram(cmd);
-      firstRun = false;
+      m_histogramCleared = true;
     }
 
     runAutoExposureHistogram(cmd, size, inImage);
@@ -196,6 +196,8 @@ void nvshaders::Tonemapper::clearHistogram(VkCommandBuffer cmd)
 {
   std::array<uint32_t, EXPOSURE_HISTOGRAM_SIZE> histogramData{0};
   vkCmdUpdateBuffer(cmd, m_histogramBuffer.buffer, 0, sizeof(uint32_t) * EXPOSURE_HISTOGRAM_SIZE, histogramData.data());
+  // The exposure pass blends with the previous luminance, so it must not start from uninitialized memory
+  vkCmdFillBuffer(cmd, m_exposureBuffer.buffer, 0, VK_WHOLE_SIZE, 0);
 
   // Add barrier to ensure update buffer completes before compute shader writes to the buffer
   nvvk::cmdBufferMemoryBarrier(cmd, {.buffer        = m_histogramBuffer.buffer,
@@ -203,4 +205,9 @@ void nvshaders::Tonemapper::clearHistogram(VkCommandBuffer cmd)
                                      .dstStageMask  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                                      .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
                                      .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT});
+  nvvk::cmdBufferMemoryBarrier(cmd, {.buffer        = m_exposureBuffer.buffer,
+                                     .srcStageMask  = VK_PIPELINE_STAGE_2_CLEAR_BIT,
+                                     .dstStageMask  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                     .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                     .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT});
 }
