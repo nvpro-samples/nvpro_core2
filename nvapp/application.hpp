@@ -171,6 +171,7 @@ struct ApplicationCreateInfo
   // Headless
   bool     headless{false};        // Run without a window
   uint32_t headlessFrameCount{1};  // Frames to render in headless mode; 0 runs until close()
+  float    headlessFps{0};         // Headless frame rate limit, idles the GPU between frames; 0 unlimited
 
   // Swapchain
   // VK_PRESENT_MODE_MAX_ENUM_KHR means no preference
@@ -384,6 +385,7 @@ protected:
   bool     m_persistSettings{true};  // ApplicationCreateInfo::persistSettings, forced off in headless
   bool     m_headlessClose{false};
   uint32_t m_headlessFrameCount{1};
+  float    m_headlessFps{0};
   bool     m_renderWhileMinimized{false};  // Continue rendering when window minimized (for external presenters)
   bool     m_screenShotRequested = false;
   int      m_screenShotFrame     = 0;

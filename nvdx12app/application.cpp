@@ -405,6 +405,14 @@ HRESULT Application::rebuildSwapchainIfNeeded()
     NVDX12_FAIL_RETURN(acquireBackBuffer(i));
   }
   NVDX12_FAIL_RETURN(applySwapchainColorSpace());
+
+  // ResizeBuffers restarts the swapchain at back buffer 0. The frame ring
+  // indexes both the per-frame resources and the fence the next frame waits
+  // on, and prepareFrameResources() only waits for the right buffer while the
+  // two stay in phase -- otherwise a frame records into a back buffer that is
+  // still on screen. The queue is idle here, so re-phasing is safe.
+  m_frameRingCurrent = m_swapchain->GetCurrentBackBufferIndex() % m_frameRingSize;
+
   if(desc.Format != m_swapchainFormat)
   {
     // The renderer's shutdown destroys the platform windows, the main

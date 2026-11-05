@@ -346,7 +346,9 @@ bool ImTextureVisualizer::settingsWidget(Settings& settings, uint32_t mipLevels,
             {
               ImGui::SameLine();
             }
+            ImGui::PushID(channel);  // "R" etc. are also preset button labels
             modified |= ImGui::Checkbox(channelNames[channel], &settings.invertChannel[channel]);
+            ImGui::PopID();
           }
           return modified;
         },

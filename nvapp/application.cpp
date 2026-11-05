@@ -141,6 +141,7 @@ VkResult nvapp::Application::init(ApplicationCreateInfo& info)
   m_headless           = info.headless;
   m_persistSettings    = info.persistSettings && !info.headless;  // headless has no window or layout to keep
   m_headlessFrameCount = info.headlessFrameCount;
+  m_headlessFps        = info.headlessFps;
   m_viewportSize       = {};  // Will be set by the first viewport size
   m_maxTexturePool     = info.texturePoolSize;
   m_useFrameBoundary   = info.useFrameBoundary;
@@ -887,6 +888,11 @@ void nvapp::Application::headlessRun()
   // alive for an external controller until close() is requested.
   for(uint32_t frameID = 0; (m_headlessFrameCount == 0 || frameID < m_headlessFrameCount) && !m_headlessClose; frameID++)
   {
+    if(m_headlessFps > 0)
+    {
+      m_framePacer.pace(m_headlessFps);
+    }
+
     for(std::shared_ptr<IAppElement>& e : m_elements)
     {
       e->onUpdate();
