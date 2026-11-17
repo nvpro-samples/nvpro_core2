@@ -45,7 +45,10 @@ struct PbrMaterial
 
   float ior1;        // index of refraction : current medium (i.e. air)
   float ior2;        // index of refraction : the other side (i.e. glass)
-  float dispersion;  // KHR_materials_specular
+  float dispersion;  // KHR_materials_dispersion
+  // Wavelength (nm) the path carries, chosen once when it first refracts into dispersive transmissive material.
+  // 0 means the path has none yet: the transmission lobe then samples one per call (see applyDispersion).
+  float wavelength;
 
   float  specular;       // weight of the dielectric specular layer
   float3 specularColor;  // color of the dielectric specular layer
@@ -101,6 +104,7 @@ PbrMaterial defaultPbrMaterial()
   mat.ior1       = 1.0F;
   mat.ior2       = 1.5F;
   mat.dispersion = 0.0F;
+  mat.wavelength = 0.0F;
 
   mat.specular         = 1.0F;
   mat.specularColor    = float3(1.0F);

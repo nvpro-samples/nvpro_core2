@@ -445,6 +445,7 @@ PbrMaterial evaluateMaterial<F : IGltfTextureFetcher>(in GltfShadeMaterial mater
 
   // KHR_materials_dispersion
   pbrMat.dispersion = material.dispersion;
+  pbrMat.wavelength = 0.0F;  // no path wavelength yet: the transmission lobe samples one per call (see applyDispersion)
 
   // KHR_materials_diffuse_transmission
   pbrMat.diffuseTransmissionFactor = material.diffuseTransmissionFactor;

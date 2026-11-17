@@ -706,7 +706,48 @@ float3 wavelengthToRGB(float x)
   }
   return rgb;
 }
+/*-------------------------------------------------------------------------------------------------
+# Function `sampleWavelength`
+> A wavelength in nm, uniform in [WAVELENGTH_MIN, WAVELENGTH_MAX], from `xi` in [0,1].
 
+`wavelengthWeight` is the matching Monte Carlo weight: the RGB the wavelength contributes divided by
+the sampling density 1 / (WAVELENGTH_MAX - WAVELENGTH_MIN).
+-------------------------------------------------------------------------------------------------*/
+float sampleWavelength(float xi)
+{
+  return lerp(WAVELENGTH_MIN, WAVELENGTH_MAX, xi);
+}
+
+float3 wavelengthWeight(float wavelength)
+{
+  return (WAVELENGTH_MAX - WAVELENGTH_MIN) * wavelengthToRGB(wavelength);
+}
+
+/*-------------------------------------------------------------------------------------------------
+# Function `applyDispersion`
+> Disperses both indices of `ior = (current medium, other side)` for the transmission lobe.
+
+The transmissive material has one index at every wavelength, on both of its boundaries; air (1.0) stays 1.0. Dispersing
+only one side would refract an entering ray with the base index and a leaving one with the dispersed index.
+
+A path that already carries a wavelength (`mat.wavelength > 0`, chosen by the path tracer when it first
+refracted into the transmissive material, which also multiplied its throughput by `wavelengthWeight`) uses it and leaves
+`tint` alone. Without one (photon tracers, one-shot callers), a wavelength is sampled from `xi` for this call
+and its weight goes into `tint`.
+-------------------------------------------------------------------------------------------------*/
+void applyDispersion(PbrMaterial mat, float xi, inout float2 ior, inout float3 tint)
+{
+  if(mat.dispersion <= 0.0F)
+    return;
+
+  float wavelength = mat.wavelength;
+  if(wavelength <= 0.0F)
+  {
+    wavelength = sampleWavelength(rerandomize(xi));
+    tint *= wavelengthWeight(wavelength);
+  }
+  ior = float2(computeDispersedIOR(ior.x, mat.dispersion, wavelength), computeDispersedIOR(ior.y, mat.dispersion, wavelength));
+}
 
 // Evaluates the transmission lobe.
 void btdf_ggx_smith_eval(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data, PbrMaterial mat, float3 tint)
@@ -714,13 +755,7 @@ void btdf_ggx_smith_eval(NVSHADERS_INOUT_TYPE(BsdfEvaluateData) data, PbrMateria
   bool isThinWalled = (mat.thickness == 0.0F);
 
   float2 ior = float2(mat.ior1, mat.ior2);
-  if(mat.dispersion > 0.0f)
-  {
-    // Randomly choose a wavelength; for now, uniformly choose from 399-669 nm.
-    float wavelength = lerp(WAVELENGTH_MIN, WAVELENGTH_MAX, rerandomize(data.xi.z));
-    ior.x            = computeDispersedIOR(ior.x, mat.dispersion, wavelength);
-    tint *= (WAVELENGTH_MAX - WAVELENGTH_MIN) * wavelengthToRGB(wavelength);
-  }
+  applyDispersion(mat, data.xi.z, ior, tint);
 
   const float nk1 = abs(dot(data.k1, mat.N));
   float       nk2 = dot(data.k2, mat.N);
@@ -811,13 +846,7 @@ void btdf_ggx_smith_sample(NVSHADERS_INOUT_TYPE(BsdfSampleData) data, PbrMateria
   data.pdf           = 0.0f;
 
   float2 ior = float2(mat.ior1, mat.ior2);
-  if(mat.dispersion > 0.0f)
-  {
-    // Randomly choose a wavelength; for now, uniformly choose from 361-716 nm.
-    float wavelength = lerp(WAVELENGTH_MIN, WAVELENGTH_MAX, rerandomize(data.xi.z));
-    ior.x            = computeDispersedIOR(ior.x, mat.dispersion, wavelength);
-    tint *= (WAVELENGTH_MAX - WAVELENGTH_MIN) * wavelengthToRGB(wavelength);
-  }
+  applyDispersion(mat, data.xi.z, ior, tint);
 
   const float nk1 = abs(dot(data.k1, mat.N));
 

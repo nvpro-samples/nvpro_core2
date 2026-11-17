@@ -181,6 +181,9 @@ struct ApplicationCreateInfo
                                                  .surfaceFormat{VK_FORMAT_UNDEFINED, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR}};
   uint32_t            preferredImageCount     = 3;  // Triple buffering for presentation
   uint32_t            preferredFramesInFlight = 2;  // CPU-side double buffering
+  // Added to the swapchain image usage, e.g. VK_IMAGE_USAGE_SAMPLED_BIT to read the composited frame in a shader.
+  // The surface must support them (VkSurfaceCapabilitiesKHR::supportedUsageFlags).
+  VkImageUsageFlags swapchainImageUsage = 0;
 };
 
 

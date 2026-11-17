@@ -175,15 +175,16 @@ VkResult nvapp::Application::init(ApplicationCreateInfo& info)
   if(!m_headless)
   {
     nvvk::Swapchain::InitInfo swapChainInit{
-        .physicalDevice        = m_physicalDevice,
-        .device                = m_device,
-        .queue                 = m_queues[0],
-        .surface               = m_surface,
-        .cmdPool               = m_transientCmdPool,
-        .preferredVsyncOffMode = info.preferredVsyncOffMode,
-        .preferredVsyncOnMode  = info.preferredVsyncOnMode,
-        .preferredFormat       = info.preferredSurfaceFormat,
-        .imageUsage = {VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT},
+        .physicalDevice          = m_physicalDevice,
+        .device                  = m_device,
+        .queue                   = m_queues[0],
+        .surface                 = m_surface,
+        .cmdPool                 = m_transientCmdPool,
+        .preferredVsyncOffMode   = info.preferredVsyncOffMode,
+        .preferredVsyncOnMode    = info.preferredVsyncOnMode,
+        .preferredFormat         = info.preferredSurfaceFormat,
+        .imageUsage              = {VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+                                    | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | info.swapchainImageUsage},
         .preferredImageCount     = info.preferredImageCount,
         .preferredFramesInFlight = info.preferredFramesInFlight,
     };
@@ -1084,6 +1085,9 @@ void nvapp::Application::setupImGuiVulkanBackend(ImGuiConfigFlags configFlags)
                   },
           },
       .UseDynamicRendering = true,  // Dynamic rendering
+      // ImGui sizes its per-frame vertex/index buffers exactly; without headroom a growing UI
+      // reallocates device memory every frame
+      .MinAllocationSize = 1024 * 1024,
   };
   ImGui_ImplVulkan_Init(&initInfo);
 }

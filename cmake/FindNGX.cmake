@@ -14,9 +14,9 @@
 #
 # Options (all cached):
 # - DLSS_ROOT_OVERRIDE: Optional path to a pre-existing DLSS SDK. If set,
-#     skips downloading and uses this path instead. Useful for architectures
-#     not available in the public SDK (e.g., Linux aarch64).
-# - DLSS_VERSION: The SDK version. Defaults to "310.4.0".
+#     skips downloading and uses this path instead. Useful for sharing a local
+#     SDK installation or using a custom SDK package.
+# - DLSS_VERSION: The SDK version. Defaults to "310.9.16".
 #     While you can change this per-project, we recommend changing it in this
 #     file instead so that DLSS updates apply to all nvpro-samples uniformly.
 # - DLSS_USE_DEVELOP_LIBRARIES: Defaults to OFF.
@@ -41,16 +41,25 @@
 #     If multiple versions of NGX are pulled, first one wins.
 
 #-------------------------------------------------------------------------------
-# Detect platform library subdirectory.
-string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" _NGX_ARCH_PROC)
-if(_NGX_ARCH_PROC MATCHES "^(arm64|aarch64)$")
+# Detect the target architecture and platform library subdirectory.
+# Visual Studio can target a different architecture from the host processor.
+if(WIN32 AND CMAKE_VS_PLATFORM_NAME)
+  string(TOLOWER "${CMAKE_VS_PLATFORM_NAME}" _NGX_ARCH_PROC)
+else()
+  string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" _NGX_ARCH_PROC)
+endif()
+
+if(WIN32 AND _NGX_ARCH_PROC STREQUAL "arm64ec")
+  set(_NGX_ARCH "arm64ec")
+  set(_NGX_PLATFORM "Windows_arm64ec")
+elseif(_NGX_ARCH_PROC MATCHES "^(arm64|aarch64)$")
   set(_NGX_ARCH "arm64")
   if(WIN32)
-    set(_NGX_PLATFORM "Windows_arm64")
+    set(_NGX_PLATFORM "Windows_aarch64")
   else()
     set(_NGX_PLATFORM "Linux_aarch64")
   endif()
-elseif(_NGX_ARCH_PROC MATCHES "^(x86_64|amd64)$")
+elseif(_NGX_ARCH_PROC MATCHES "^(x64|x86_64|amd64)$")
   set(_NGX_ARCH "x64")
   if(WIN32)
     set(_NGX_PLATFORM "Windows_x86_64")
@@ -58,13 +67,13 @@ elseif(_NGX_ARCH_PROC MATCHES "^(x86_64|amd64)$")
     set(_NGX_PLATFORM "Linux_x86_64")
   endif()
 else()
-  message(FATAL_ERROR "FindNGX: unhandled architecture '${CMAKE_SYSTEM_PROCESSOR}'")
+  message(FATAL_ERROR "FindNGX: unhandled target architecture '${_NGX_ARCH_PROC}'")
 endif()
 
 #-------------------------------------------------------------------------------
 # Download the DLSS SDK, or use a user-provided override.
 set(DLSS_ROOT_OVERRIDE "" CACHE PATH "Path to pre-existing DLSS SDK (skips download if set).")
-set(DLSS_VERSION "310.4.0" CACHE STRING "DLSS version to download.")
+set(DLSS_VERSION "310.9.16" CACHE STRING "DLSS version to download.")
 
 if(DLSS_ROOT_OVERRIDE)
   set(DLSS_ROOT ${DLSS_ROOT_OVERRIDE})
@@ -133,14 +142,21 @@ if(_NGX_VALID)
     # STATIC IMPORTED targets only consume IMPORTED_LOCATION_*; IMPORTED_IMPLIB_*
     # is for SHARED targets on Windows (the .lib stub paired with a runtime DLL).
     if (WIN32)
+      # Windows x64 static libraries use an additional x64/ subdirectory.
+      # Windows ARM64 and ARM64EC libraries live in the platform directory.
+      set(_NGX_LIB_DIR "${DLSS_ROOT}/lib/${_NGX_PLATFORM}")
+      if(_NGX_ARCH STREQUAL "x64")
+        string(APPEND _NGX_LIB_DIR "/${_NGX_ARCH}")
+      endif()
+
       option(NGX_USE_STATIC_MSVCRT "[Deprecated?]Use NGX libs with static VC runtime (/MT), otherwise dynamic (/MD)" OFF)
 
       if(NGX_USE_STATIC_MSVCRT)
-        set_target_properties(ngx PROPERTIES IMPORTED_LOCATION_DEBUG ${DLSS_ROOT}/lib/${_NGX_PLATFORM}/${_NGX_ARCH}/nvsdk_ngx_s_dbg.lib)
-        set_target_properties(ngx PROPERTIES IMPORTED_LOCATION_RELEASE ${DLSS_ROOT}/lib/${_NGX_PLATFORM}/${_NGX_ARCH}/nvsdk_ngx_s.lib)
+        set_target_properties(ngx PROPERTIES IMPORTED_LOCATION_DEBUG ${_NGX_LIB_DIR}/nvsdk_ngx_s_dbg.lib)
+        set_target_properties(ngx PROPERTIES IMPORTED_LOCATION_RELEASE ${_NGX_LIB_DIR}/nvsdk_ngx_s.lib)
       else()
-        set_target_properties(ngx PROPERTIES IMPORTED_LOCATION_DEBUG ${DLSS_ROOT}/lib/${_NGX_PLATFORM}/${_NGX_ARCH}/nvsdk_ngx_d_dbg.lib)
-        set_target_properties(ngx PROPERTIES IMPORTED_LOCATION_RELEASE ${DLSS_ROOT}/lib/${_NGX_PLATFORM}/${_NGX_ARCH}/nvsdk_ngx_d.lib)
+        set_target_properties(ngx PROPERTIES IMPORTED_LOCATION_DEBUG ${_NGX_LIB_DIR}/nvsdk_ngx_d_dbg.lib)
+        set_target_properties(ngx PROPERTIES IMPORTED_LOCATION_RELEASE ${_NGX_LIB_DIR}/nvsdk_ngx_d.lib)
       endif()
     else ()
       set_target_properties(ngx PROPERTIES IMPORTED_LOCATION_DEBUG ${DLSS_ROOT}/lib/${_NGX_PLATFORM}/libnvsdk_ngx.a)
