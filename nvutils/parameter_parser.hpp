@@ -142,8 +142,8 @@ public:
   };
 
 private:
-  int   parseInt(const ParameterBase& parameter, const char* str, size_t a);
-  float parseFloat(const ParameterBase& parameter, const char* str, size_t a);
+  int64_t parseInt(const ParameterBase& parameter, const char* str, size_t a);
+  float   parseFloat(const ParameterBase& parameter, const char* str, size_t a);
 
   const ParameterBase* findViaExtension(const std::string& arg) const;
 

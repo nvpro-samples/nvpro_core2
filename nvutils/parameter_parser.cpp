@@ -198,11 +198,11 @@ void ParameterParser::markParsed(const ParameterBase* parameter)
 }
 
 // internal safe parsing of string to int, exit(1) on error
-int ParameterParser::parseInt(const ParameterBase& parameter, const char* str, size_t a)
+int64_t ParameterParser::parseInt(const ParameterBase& parameter, const char* str, size_t a)
 {
   try
   {
-    int value = std::stoi(std::string(str));
+    int64_t value = std::stoll(std::string(str));
     return value;
   }
   catch(const std::invalid_argument&)
@@ -296,48 +296,48 @@ size_t ParameterParser::parse(std::span<const char* const> args,
             for(uint32_t i = 0; i < parameter.argCount; i++)
             {
               parameter.destination.i8[i] =
-                  std::max(std::min(int8_t(parseInt(parameter, args[i + 1 + a], a)), parameter.minMaxValues[1].i8[i]),
-                           parameter.minMaxValues[0].i8[i]);
+                  int8_t(std::max(std::min(parseInt(parameter, args[i + 1 + a], a), int64_t(parameter.minMaxValues[1].i8[i])),
+                                  int64_t(parameter.minMaxValues[0].i8[i])));
             }
             break;
           case ParameterBase::Type::INT16:
             for(uint32_t i = 0; i < parameter.argCount; i++)
             {
               parameter.destination.i16[i] =
-                  std::max(std::min(int16_t(parseInt(parameter, args[i + 1 + a], a)), parameter.minMaxValues[1].i16[i]),
-                           parameter.minMaxValues[0].i16[i]);
+                  int16_t(std::max(std::min(parseInt(parameter, args[i + 1 + a], a), int64_t(parameter.minMaxValues[1].i16[i])),
+                                   int64_t(parameter.minMaxValues[0].i16[i])));
             }
             break;
           case ParameterBase::Type::INT32:
             for(uint32_t i = 0; i < parameter.argCount; i++)
             {
               parameter.destination.i32[i] =
-                  std::max(std::min(parseInt(parameter, args[i + 1 + a], a), parameter.minMaxValues[1].i32[i]),
-                           parameter.minMaxValues[0].i32[i]);
+                  int32_t(std::max(std::min(parseInt(parameter, args[i + 1 + a], a), int64_t(parameter.minMaxValues[1].i32[i])),
+                                   int64_t(parameter.minMaxValues[0].i32[i])));
             }
             break;
           case ParameterBase::Type::UINT8:
             for(uint32_t i = 0; i < parameter.argCount; i++)
             {
               parameter.destination.u8[i] =
-                  std::max(std::min(uint8_t(parseInt(parameter, args[i + 1 + a], a)), parameter.minMaxValues[1].u8[i]),
-                           parameter.minMaxValues[0].u8[i]);
+                  uint8_t(std::max(std::min(parseInt(parameter, args[i + 1 + a], a), int64_t(parameter.minMaxValues[1].u8[i])),
+                                   int64_t(parameter.minMaxValues[0].u8[i])));
             }
             break;
           case ParameterBase::Type::UINT16:
             for(uint32_t i = 0; i < parameter.argCount; i++)
             {
-              parameter.destination.u16[i] =
-                  std::max(std::min(uint16_t(parseInt(parameter, args[i + 1 + a], a)), parameter.minMaxValues[1].u16[i]),
-                           parameter.minMaxValues[0].u16[i]);
+              parameter.destination.u16[i] = uint16_t(
+                  std::max(std::min(parseInt(parameter, args[i + 1 + a], a), int64_t(parameter.minMaxValues[1].u16[i])),
+                           int64_t(parameter.minMaxValues[0].u16[i])));
             }
             break;
           case ParameterBase::Type::UINT32:
             for(uint32_t i = 0; i < parameter.argCount; i++)
             {
-              parameter.destination.u32[i] =
-                  std::max(std::min(uint32_t(parseInt(parameter, args[i + 1 + a], a)), parameter.minMaxValues[1].u32[i]),
-                           parameter.minMaxValues[0].u32[i]);
+              parameter.destination.u32[i] = uint32_t(
+                  std::max(std::min(parseInt(parameter, args[i + 1 + a], a), int64_t(parameter.minMaxValues[1].u32[i])),
+                           int64_t(parameter.minMaxValues[0].u32[i])));
             }
             break;
           case ParameterBase::Type::STRING:
